@@ -47,6 +47,7 @@ type AccountsConf struct {
 type SignConf struct {
 	EnablePrimary     bool `json:"enablePrimary" yaml:"enablePrimary"`
 	EnableSecondaries bool `json:"enableSecondaries" yaml:"enableSecondaries"`
+	IdentityCacheDays *int `json:"identityCacheDays" yaml:"identityCacheDays"`
 }
 
 type MixPlayConf struct {
@@ -107,6 +108,12 @@ type MusicianVipPlayConf struct {
 }
 
 func (c *Config) Validate() error {
+	if c.Sign != nil {
+		if c.Sign.IdentityCacheDays == nil {
+			days := 30
+			c.Sign.IdentityCacheDays = &days
+		}
+	}
 	return nil
 }
 

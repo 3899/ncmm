@@ -87,6 +87,10 @@ sign:
   enablePrimary: true
   # 是否启用所有辅助账号日常一键签到
   enableSecondaries: true
+  # 账号身份（如音乐人状态）的本地缓存时间（单位：天），默认永久有效。
+  # 注意：这仅用于控制避免重复请求无权限的音乐人任务接口以防风控，与账号登录 Cookie 的有效期无关。
+  # 设置为 0 代表永久有效；设置为 -1 可关闭缓存（每次均发起请求）。
+  identityCacheDays: 0
 
 # 模拟播放日推干扰配置
 mixPlay:

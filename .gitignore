@@ -8,3 +8,5 @@
 .claude/
 /run/
 /testdata/
+/pkg/log/log/
+/pkg/ncm/testdata/*-id3v2
