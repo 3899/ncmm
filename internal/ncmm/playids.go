@@ -232,8 +232,8 @@ func (c *PlayIds) execute(ctx context.Context) error {
 		if cfg.Accounts == nil {
 			return fmt.Errorf("配置文件中缺少 accounts 账号节点")
 		}
-		if cfg.PlayIds != nil && cfg.PlayIds.EnablePrimary && cfg.Accounts.Primary != "" {
-			executeQueue = append(executeQueue, cfg.Accounts.Primary)
+		if cfg.PlayIds != nil && cfg.PlayIds.EnableMain && cfg.Accounts.Main != "" {
+			executeQueue = append(executeQueue, cfg.Accounts.Main)
 		}
 		if cfg.PlayIds != nil && cfg.PlayIds.EnableSecondaries && len(cfg.Accounts.Secondary) > 0 {
 			executeQueue = append(executeQueue, cfg.Accounts.Secondary...)

@@ -102,7 +102,7 @@ version: 1.0
 # 顶级多账号管理
 accounts:
   # 音乐人主账号 Cookie 文件路径
-  primary: "${HOME}/.ncmm/cookie.json"
+  main: "${HOME}/.ncmm/cookie.json"
   # 辅助刷量账号 Cookie 列表
   secondary:
     - "${HOME}/.ncmm/fan1.json"
@@ -170,12 +170,12 @@ playids:
   # 默认歌曲 ID 文件路径（与命令行 ids-file 采用并集去重合并；支持本地路径或 http/https 远程链接）
   idsFile: ""
   # 独立播放账号控制（命令行参数未指定 --cookie-file 时生效）
-  enablePrimary: false      # 默认不启用主账号刷歌
+  enableMain: false      # 默认不启用主账号刷歌
   enableSecondaries: true   # 启用所有辅助账号刷歌
 
 # 签到任务配置
 sign:
-  enablePrimary: true       # 启用主账号日常签到
+  enableMain: true       # 启用主账号日常签到
   enableSecondaries: true   # 启用所有辅助账号日常签到（增加其账号活跃度防风控）
   identityCacheDays: 0      # 账号身份本地缓存天数
   yunbeiTask:
@@ -265,13 +265,34 @@ go build -o ncmm.exe main.go
 
 ### 1. 账号登录 (`ncmm login`)
 
-进行歌曲播放前，必须执行登录操作以保存登录凭证（Cookie 数据默认存放在家目录下的 `cookie.json` 中）。
+进行歌曲播放前，必须执行登录操作以保存登录凭证。
+
+> [!IMPORTANT]
+> **多账号管理与自动回写逻辑 (v1.1.2+)**：
+> 1. **默认身份**：所有的登录子命令（扫码、手机号、Cookie 导入、CookieCloud 同步）**默认将账号作为辅助账号（Secondary）**处理，防止误覆盖主号。
+> 2. **主账号登录**：必须显式传入 `-m` 或 `--main` 参数（例如 `ncmm login qrcode -m`），才会登录并保存为**主账号（Main）**。
+> 3. **配置自动回写**：登录成功后，程序会**自动将新账号的 Cookie 路径写入/追加至本地 `config.yaml` 配置文件**的 `accounts` 节点下。如果是主账号，更新 `accounts.main`；如果是辅助账号且该路径不在 `accounts.secondary` 中，会自动追加进去。
+> 4. **自动添加昵称注释**：回写时，程序将通过 YAML AST 语法树分析，自动在对应的账号配置行后添加 `# 昵称: 用户的实际昵称` 注释，用于直观管理区分。同时，会完整保留其他未改动账号的历史注释。
+> 5. **文件名智能推导**：
+>    - **主账号**：路径由 `accounts.main` 决定（若配置文件中没有该项，则默认保存为 `${HOME}/.ncmm/cookie.json`）。
+>    - **辅助账号**：优先根据原始输入推导文件名。如 `cookie` 导入中通过 `-f <文件名>.txt` 导入，推导为 `<文件名>.json`；使用 `phone <手机号>` 登录，推导为 `<手机号>.json`；扫码（`qrcode`）或 `cookiecloud` 同步无原始输入，则默认以 `fan_<UID>.json` 形式自动命名。
+>    - 所有的相对路径都会自适应拼装至全局 `--home` 目录下。
+
+#### 💡 顶级通用登录 Flag
+所有登录子命令均支持以下通用 Flag（可以加在子命令后）：
+- `-m` / `--main` (Bool): 是否作为主账号登录。默认 `false`，即默认作为辅助（刷歌）账号登录。
+
+---
 
 #### 二维码扫码登录 (`qrcode`)
 ```bash
-ncmm login qrcode [-t 超时时间] [-d 图片输出目录] [-l 二维码纠错等级]
-# 示例：5分钟超时，二维码图片保存在当前目录
-ncmm login qrcode -t 5m -d ./
+ncmm login qrcode [-m] [-t 超时时间] [-d 图片输出目录] [-l 二维码纠错等级]
+
+# 示例 1：作为辅助账号登录（默认），二维码图片保存在当前目录
+ncmm login qrcode
+
+# 示例 2：作为主账号登录（显式传入 -m）
+ncmm login qrcode -m
 ```
 - `-t` / `--timeout` (Duration): 扫码等待和状态轮询的超时时长，默认 `5m` (5分钟)，可填 `10m`、`30s` 等。
 - `-d` / `--dir` (String): 保存临时二维码图片 `qrcode.png` 的目录路径，默认当前工作目录。登录成功或超时后该文件会自动清理。
@@ -279,44 +300,44 @@ ncmm login qrcode -t 5m -d ./
 
 #### ~~手机号登录 (`phone`)~~ (⚠️ 存在高风控拦截风险，不推荐)
 ```bash
-# 短信验证码登录 (不指定密码时会自动发送验证码，并在控制台交互提示输入验证码)
+# 示例 1：作为辅助账号登录（控制台交互提示输入验证码）
 ncmm login phone 188xxxx8888
 
-# 密码登录
-ncmm login phone 188xxxx8888 -p "YourPassword"
+# 示例 2：作为主账号登录并提供密码
+ncmm login phone 188xxxx8888 -m -p "YourPassword"
 ```
 - `-p` / `--password` (String): 登录账号密码。不提供该参数时，系统将使用验证码登录。
 - `--countrycode` (Int): 国家及地区代码，默认 `86` (中国大陆)。
 - `-t` / `--timeout` (Duration): 登录操作的超时时间，默认 `10m` (10分钟)。
 
 #### Cookie 直接导入 (`cookie`)
-支持自动识别 Header 字符串、JSON 数组、Netscape 文件等多种 Cookie 格式，并可将解析出的标准化 JSON 格式 Cookie 写入到指定输出 file：
+支持自动识别 Header 字符串、JSON 数组、Netscape 文件等多种 Cookie 格式，并可将解析出的标准化 JSON 格式 Cookie 写入到指定输出 file，且自动登记回写至配置文件中：
 ```bash
-# 1. 导入 Cookie 字符串并默认保存至 cookie.json (对应主账号)
+# 1. 导入 Cookie 字符串（默认作为辅助账号，自动另存为 fan_<UID>.json 并自动追加到 config.yaml）
 ncmm login cookie 'MUSIC_U=xxxx; __csrf=yyyy;'
 
-# 2. 从外部 Cookie 文本文件导入（不指定 -o 时，系统会自动保存为 cookie.json）
-ncmm login cookie -f ./cookie.txt
+# 2. 显式作为主账号导入 Cookie 字符串（保存至主账号路径，默认为 cookie.json，并更新至 config.yaml）
+ncmm login cookie 'MUSIC_U=xxxx; __csrf=yyyy;' -m
 
-# 3. 导入辅助账号 Cookie 文件（不指定 -o，系统会根据输入文件名自动另存为 fan1.json）
+# 3. 从外部 Cookie 文本文件导入主账号（保存至主账号路径，默认为 cookie.json）
+ncmm login cookie -f ./cookie.txt -m
+
+# 4. 从外部文件导入辅助账号（不指定 -o，系统会根据输入文件名自动另存为 fan1.json，并自动回写追加到 config.yaml）
 ncmm login cookie -f ./fan1.txt
 
-# 4. 手动指定输出的 Cookie 文件名（例如将本地的 my_fan.txt 导入为配置文件中声明的 fan1.json）
-ncmm login cookie -f ./my_fan.txt -o fan1.json
-
-# 5. 配合 --home 指定工作目录导入辅助账号（以下命令会自动将 fan1.txt 解析并保存到 run/ 文件夹下的 fan1.json 中）
-ncmm --home run login cookie -f ./fan1.txt
+# 5. 导入辅助账号并手动指定输出的 Cookie 文件名（例如导入为 my_fan.json，相对路径自适应拼装至 --home）
+ncmm login cookie -f ./my_fan.txt -o my_fan.json
 ```
 - `-f` / `--file` (String): 存放 Cookie 的输入文件路径。如果指定此参数，将从该文件中读取 Cookie。
 - `-o` / `--output` (String): 保存解析后的 JSON Cookie 文件名。
-  - **自动保存（无需手动指定 `-o`）**：如果您使用了 `-f ./fan1.txt` 导入，系统会自动为您另存为 `fan1.json`。如果什么文件都没传（例如从命令行直接导入），默认保存为 `cookie.json`（对应主账号）。
+  - **自动保存（无需手动指定 `-o`）**：如果您使用 `-f ./fan1.txt` 导入，系统会自动为您另存为 `fan1.json`；若直接传入 Cookie 字符串导入，主账号默认保存为 `cookie.json`，辅助账号默认保存为 `fan_<UID>.json`。
   - **手动保存**：如果您想给导入的 Cookie 起个别名，也可以用 `-o` 强行指定文件名（例如 `-o fan2.json`）。
-  - **存放目录**：如果您填写的是相对路径（如 `fan1.json`），系统会自动将它保存到您通过 `--home` 参数指定的运行工作目录下，无需担心它生成到其他地方。
+  - **存放目录**：如果您填写的是相对路径（如 `fan1.json`），系统会自动将它保存到您通过 `--home` 参数指定的运行工作目录下。
 - `--format` (String): 手动指定导入 Cookie 文件的格式（支持 `json`、`netscape` 或 `header`），不指定则程序会自动探测并尝试三种格式。
 
 #### CookieCloud 同步 (`cookiecloud`)
 ```bash
-ncmm login cookiecloud -u <UUID> -p <密码> -s <服务器地址>
+ncmm login cookiecloud -u <UUID> -p <密码> -s <服务器地址> [-m]
 ```
 - `-u` / `--uuid` (String): CookieCloud 账户的 UUID，必填。
 - `-p` / `--password` (String): CookieCloud 账户的密码，必填。
@@ -535,25 +556,34 @@ run/
 
 #### 💡 多账号实战操作示例：
 
-1. **第一步：创建工作目录并放入配置文件**
-   在本地建立文件夹 `run/`，并将模板 `config.yaml` 复制进去，根据需要配置顶级的 `accounts` 节点，加入主账号和各辅助账号的文件路径。
+1. **第一步：创建工作目录并放入初始配置文件**
+   在本地建立文件夹 `run/`，并将默认的 `config.yaml` 复制进去，我们可以留空 `accounts` 节点，后续登录时系统会自动帮我们回写补全。
 
-2. **第二步：导入/登录主账号**
-   主账号为网易云音乐人账号，登录结果会默认输出至 `run/cookie.json`：
+2. **第二步：登录/导入主账号**
+   主账号为网易云音乐人账号。我们**必须显式提供 `-m` 参数**，以便让程序将其作为主账号处理并根据 `accounts.main` 的路径（或默认的 `cookie.json`）保存：
    ```bash
-   # 以扫码形式登录主账号
-   ncmm --home run login qrcode
+   # 示例 1：以扫码形式登录主账号（推荐）
+   ncmm --home run login qrcode -m
    
-   # 或使用 Cookie 导入主账号
-   ncmm --home run login cookie 'MUSIC_U=xxxx...'
+   # 示例 2：使用 Cookie 导入主账号
+   ncmm --home run login cookie 'MUSIC_U=xxxx...' -m
    ```
+   *登录成功后，主账号的 Cookie 路径（例如 `cookie.json`）与对应昵称注释会自动回写并绑定在 `run/config.yaml` 的 `accounts.main` 下。*
 
-3. **第三步：导入/登录各辅助账号**
-   辅助账号为刷播账号。我们使用 `-o` 参数分别将 Cookie 输出重定向为 `fan1.json`、`fan2.json` ... （输入文件可以是外部导出的 Cookie 文本，且 `-o` 使用相对路径时将自适应基于 `--home` 目录）：
+3. **第三步：登录/导入各辅助账号**
+   辅助账号为刷播放量的粉丝小号。所有的登录子命令默认即登录为辅助账号，无需特别指定。
+   我们只需使用 `-f` 导入（或直接登录），程序会**自动根据输入文件名推导目标 `.json` 文件名并保存，同时自动追加路径回写至 `run/config.yaml` 中的 `accounts.secondary` 配置列表中**，无须手动编辑配置文件：
    ```bash
-   ncmm --home run login cookie -f run/fan1.txt -o fan1.json
-   ncmm --home run login cookie -f run/fan2.txt -o fan2.json
+   # 示例 1：导入小号 fan1.txt，系统会自动推导并保存为 fan1.json 并回写配置
+   ncmm --home run login cookie -f run/fan1.txt
+   
+   # 示例 2：导入小号 fan2.txt
+   ncmm --home run login cookie -f run/fan2.txt
+   
+   # 示例 3：如果希望手动强制另存为特定文件名，依然可以使用 -o 指定
+   ncmm --home run login cookie -f run/other.txt -o another_fan.json
    ```
+   *每一次导入/登录成功后，`config.yaml` 中都将自动增加对应行的 `# 昵称: xxx` 注释，帮助直观辨别各账号。*
 
 4. **第四步：一键运行签到与黑胶进阶任务**
    ```bash
@@ -571,11 +601,16 @@ run/
 ### 📌 v1.1.2
 - **✨ 新增功能**：
   - 配置文件全面支持多源加载，核心配置项兼容本地文件 / 远程链接，支持单路径或 YAML 数组格式。
+  - 多账号登录配置自动回写：登录成功后，自动将 Cookie 路径写入 / 追加至 `config.yaml` 配置文件。
+  - 账号智能注释：自动为配置文件添加用户昵称注释，直观区分多个辅助账号。
+  - 智能文件命名：辅助账号自动生成规范命名文件，无参数时自动兜底命名。
+  - 主账号显式登录：新增命令行参数，可指定登录主账号，防止误覆盖原有主账号。
 - **💫 体验优化**：
   - 播放任务支持高容错运行，单源加载失败不影响整体任务执行。
   - 新增网络超时限制，防止无效链接导致程序卡死。
   - 完善笔记发布图片多源与智能探测机制，支持本地图片、直链及包含链接的文本列表。
   - 优化笔记发布图片下载逻辑，支持随机重试，提升发布成功率。
+  - 配置文件无感自动升级：启动时自动兼容旧版配置字段，完整保留文件格式与用户自定义注释。
 
 ### 📌 v1.1.1
 - **✨ 新增功能**：

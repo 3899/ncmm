@@ -25,10 +25,11 @@ type RootOpts struct {
 }
 
 type Root struct {
-	Cfg  *config.Config
-	Opts RootOpts
-	cmd  *cobra.Command
-	l    *log.Logger
+	Cfg     *config.Config
+	CfgPath string
+	Opts    RootOpts
+	cmd     *cobra.Command
+	l       *log.Logger
 }
 
 func New() *Root {
@@ -51,7 +52,11 @@ func New() *Root {
 			if !utils.FileExists(c.Opts.Config) {
 				return fmt.Errorf("config file not exists: %s", c.Opts.Config)
 			}
-			c.Cfg, err = config.New(c.Opts.Config)
+			c.CfgPath = c.Opts.Config
+			if err := config.MigrateConfigFile(c.CfgPath); err != nil {
+				return fmt.Errorf("migrate config file error: %w", err)
+			}
+			c.Cfg, err = config.New(c.CfgPath)
 			if err != nil {
 				return fmt.Errorf("init config error: %s", err)
 			}
@@ -59,13 +64,16 @@ func New() *Root {
 			autoCfgPath := filepath.Join(home, "config.yaml")
 			if utils.FileExists(autoCfgPath) {
 				var err error
-				cfgPath = autoCfgPath
+				c.CfgPath = autoCfgPath
+				if err := config.MigrateConfigFile(c.CfgPath); err != nil {
+					return fmt.Errorf("migrate config file error: %w", err)
+				}
 				c.Cfg, err = config.New(autoCfgPath)
 				if err != nil {
 					return fmt.Errorf("init config error: %s", err)
 				}
 			} else {
-				cfgPath = "default"
+				c.CfgPath = "default"
 				c.Cfg = config.GetDefault()
 			}
 		}

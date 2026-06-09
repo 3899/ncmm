@@ -272,24 +272,24 @@ func (c *loginCookieCmd) execute(ctx context.Context, args []string) error {
 		c.Output = nameWithoutExt + ".json"
 	}
 
-	// 如果指定了输出路径，临时切换 cookie 文件路径
+	// 临时/最终 Cookie 文件路径决策
 	networkCfg := c.root.root.Cfg.Network
+	var tempCookieFile string
+	var outputPath string
+
 	if c.Output != "" {
-		outputPath := c.Output
+		outputPath = c.Output
 		if !filepath.IsAbs(outputPath) {
-			// 获取配置中解析好的默认 cookie 文件夹路径
 			var defaultDir string
 			if c.root.root.Cfg != nil && c.root.root.Cfg.Network != nil && c.root.root.Cfg.Network.Cookie.Filepath != "" {
 				defaultDir = filepath.Dir(c.root.root.Cfg.Network.Cookie.Filepath)
 			}
 			if defaultDir == "" {
-				// 获取指定的 home 目录进行拼接
 				home := c.root.root.Opts.Home
 				if home == "" {
 					home = config.HomeDir
 				}
 				home = filepath.Clean(home)
-				// 如果没有传特定的工作目录（即使用默认的用户家目录），则收归在隐藏的 .ncmm 文件夹内保存
 				if home == filepath.Clean(config.HomeDir) {
 					home = filepath.Join(home, ".ncmm")
 				}
@@ -297,7 +297,27 @@ func (c *loginCookieCmd) execute(ctx context.Context, args []string) error {
 			}
 			outputPath = filepath.Join(defaultDir, outputPath)
 		}
-		// 复制配置，修改 cookie filepath 指向指定文件
+		tempCookieFile = outputPath
+	} else if !c.root.isMain {
+		var defaultDir string
+		if networkCfg.Cookie.Filepath != "" {
+			defaultDir = filepath.Dir(networkCfg.Cookie.Filepath)
+		} else {
+			home := c.root.root.Opts.Home
+			if home == "" {
+				home = config.HomeDir
+			}
+			home = filepath.Clean(home)
+			if home == filepath.Clean(config.HomeDir) {
+				home = filepath.Join(home, ".ncmm")
+			}
+			defaultDir = home
+		}
+		tempCookieFile = filepath.Join(defaultDir, "temp_cookie.json")
+		outputPath = tempCookieFile
+	}
+
+	if outputPath != "" {
 		networkCfgCopy := *networkCfg
 		networkCfgCopy.Cookie.Filepath = outputPath
 		networkCfg = &networkCfgCopy
@@ -319,6 +339,11 @@ func (c *loginCookieCmd) execute(ctx context.Context, args []string) error {
 		return fmt.Errorf("GetUserInfo: %s", err)
 	}
 	c.cmd.Printf("login success: uid=%d nickname=%s\n", user.Account.Id, user.Profile.Nickname)
+
+	err = c.root.saveLoginResult(ctx, user.Profile.Nickname, user.Account.Id, tempCookieFile, "", c.File)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 

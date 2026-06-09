@@ -28,11 +28,13 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/3899/ncmm/api"
 	"github.com/3899/ncmm/api/weapi"
+	"github.com/3899/ncmm/config"
 	"github.com/3899/ncmm/pkg/cookiecloud"
 	"github.com/3899/ncmm/pkg/log"
 
@@ -101,7 +103,30 @@ func (c *loginCookieCloudCmd) execute(_ctx context.Context, _ []string) error {
 	ctx, cancel := context.WithTimeout(_ctx, c.timeout)
 	defer cancel()
 
-	cli, err := api.NewClient(c.root.root.Cfg.Network, c.l)
+	networkCfg := c.root.root.Cfg.Network
+	var tempCookieFile string
+	if !c.root.isMain {
+		var targetDir string
+		if networkCfg.Cookie.Filepath != "" {
+			targetDir = filepath.Dir(networkCfg.Cookie.Filepath)
+		} else {
+			home := c.root.root.Opts.Home
+			if home == "" {
+				home = config.HomeDir
+			}
+			home = filepath.Clean(home)
+			if home == filepath.Clean(config.HomeDir) {
+				home = filepath.Join(home, ".ncmm")
+			}
+			targetDir = home
+		}
+		tempCookieFile = filepath.Join(targetDir, "temp_cookie.json")
+		networkCfgCopy := *networkCfg
+		networkCfgCopy.Cookie.Filepath = tempCookieFile
+		networkCfg = &networkCfgCopy
+	}
+
+	cli, err := api.NewClient(networkCfg, c.l)
 	if err != nil {
 		return fmt.Errorf("NewClient: %w", err)
 	}
@@ -169,6 +194,11 @@ func (c *loginCookieCloudCmd) execute(_ctx context.Context, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("GetUserInfo: %s", err)
 	}
-	c.cmd.Printf("login success: %+v\n", user)
+	c.cmd.Printf("login success: uid=%d nickname=%s\n", user.Account.Id, user.Profile.Nickname)
+
+	err = c.root.saveLoginResult(ctx, user.Profile.Nickname, user.Account.Id, tempCookieFile, "", "")
+	if err != nil {
+		return err
+	}
 	return nil
 }

@@ -89,9 +89,9 @@ func (c *SignIn) execute(ctx context.Context) error {
 	var hasExecuted bool
 
 	// 1. 主账号一键签到
-	if cfg.Sign != nil && cfg.Sign.EnablePrimary && cfg.Accounts.Primary != "" {
-		c.cmd.Printf("[sign] >>>>>> 开始主账号签到 (%s) <<<<<<\n", cfg.Accounts.Primary)
-		if err := c.runSignForCookie(ctx, cfg.Accounts.Primary, true); err != nil {
+	if cfg.Sign != nil && cfg.Sign.EnableMain && cfg.Accounts.Main != "" {
+		c.cmd.Printf("[sign] >>>>>> 开始主账号签到 (%s) <<<<<<\n", cfg.Accounts.Main)
+		if err := c.runSignForCookie(ctx, cfg.Accounts.Main, true); err != nil {
 			c.cmd.Printf("[sign] ❌ 主账号签到失败: %s\n", err)
 		}
 		hasExecuted = true

@@ -135,7 +135,7 @@ func (c *MusicianVip) execute(ctx context.Context) error {
 			} else {
 				c.cmd.Println("[musician-vip] 处理笔记任务...")
 				n := NewNote(c.root, c.l)
-				_, err := n.ExecuteForCookie(ctx, c.root.Cfg.Accounts.Primary)
+				_, err := n.ExecuteForCookie(ctx, c.root.Cfg.Accounts.Main)
 				if err != nil {
 					log.Error("[musician-vip] 笔记任务执行失败: %s", err)
 					c.cmd.Printf("[musician-vip] ❌ 笔记任务失败: %s\n", err)
@@ -211,9 +211,9 @@ func (c *MusicianVip) handlePlayTask(ctx context.Context, cli *api.Client, sub e
 	var playAccounts []string
 	if c.root.Cfg.Accounts != nil && len(c.root.Cfg.Accounts.Secondary) > 0 {
 		playAccounts = c.root.Cfg.Accounts.Secondary
-	} else if c.root.Cfg.Accounts != nil && c.root.Cfg.Accounts.Primary != "" {
+	} else if c.root.Cfg.Accounts != nil && c.root.Cfg.Accounts.Main != "" {
 		c.cmd.Println("[musician-vip] [WARN] 未配置辅助账号池 (accounts.secondary)，将直接使用主账号自己为自己刷播")
-		playAccounts = []string{c.root.Cfg.Accounts.Primary}
+		playAccounts = []string{c.root.Cfg.Accounts.Main}
 	} else {
 		return fmt.Errorf("未配置任何账号，请在 config.yaml 的 accounts 节点下配置 primary 或 secondary")
 	}
@@ -424,6 +424,6 @@ func parseCookieString(s string) []*http.Cookie {
 // testNoteTask 用于单独运行图文笔记任务的测试
 func (c *MusicianVip) testNoteTask(ctx context.Context) error {
 	n := NewNote(c.root, c.l)
-	_, err := n.ExecuteForCookie(ctx, c.root.Cfg.Accounts.Primary)
+	_, err := n.ExecuteForCookie(ctx, c.root.Cfg.Accounts.Main)
 	return err
 }

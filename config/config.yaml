@@ -4,7 +4,7 @@ version: 1.0
 # 顶级多账号管理
 accounts:
   # 音乐人主账号 Cookie 文件路径
-  primary: "${HOME}/.ncmm/cookie.json"
+  main: "${HOME}/.ncmm/cookie.json"
   # 辅助刷播放量账号 Cookie 列表
   secondary:
     - "${HOME}/.ncmm/fan1.json"
@@ -81,7 +81,7 @@ playids:
     - "https://spoo.me/gtlf6x2"
     # - "local/ids.txt"
   # 播放账号控制（命令行参数未指定 --cookie-file 时生效）
-  enablePrimary: false      # 默认不启用主账号刷歌
+  enableMain: false      # 默认不启用主账号刷歌
   enableSecondaries: true   # 启用所有辅助账号刷歌
 
 # 签到任务配置
@@ -89,7 +89,7 @@ sign:
   # 是否在签到过程中自动领取/完成日常云贝、VIP等进阶任务奖励
   automatic: true
   # 是否启用主账号日常一键签到（云贝、音乐人、黑胶 VIP 签到）
-  enablePrimary: true
+  enableMain: true
   # 是否启用所有辅助账号日常一键签到
   enableSecondaries: true
   # 账号身份（如音乐人状态）的本地缓存时间（单位：天），默认永久有效。

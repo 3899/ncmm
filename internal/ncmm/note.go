@@ -55,10 +55,10 @@ func NewNote(root *Root, l *log.Logger) *Note {
 func (c *Note) execute(ctx context.Context) error {
 	cookieFile := c.opts.CookieFile
 	if cookieFile == "" {
-		if c.root.Cfg.Accounts != nil && c.root.Cfg.Accounts.Primary != "" {
-			cookieFile = c.root.Cfg.Accounts.Primary
+		if c.root.Cfg.Accounts != nil && c.root.Cfg.Accounts.Main != "" {
+			cookieFile = c.root.Cfg.Accounts.Main
 		} else {
-			return fmt.Errorf("cookie file must be specified via --cookie-file or configured in config.yaml accounts.primary")
+			return fmt.Errorf("cookie file must be specified via --cookie-file or configured in config.yaml accounts.main")
 		}
 	}
 	_, err := c.ExecuteForCookie(ctx, cookieFile)
