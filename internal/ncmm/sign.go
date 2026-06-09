@@ -587,6 +587,26 @@ func (c *SignIn) handleReserveYunbei(ctx context.Context, eapiRequest *eapi.Api)
 		})
 		if err == nil && receive.Code == 200 {
 			c.cmd.Printf("  🎉 预约活动奖励领取成功，获得云贝数量：%v\n", receive.Data.CurrentAmount)
+			
+			// 领取成功后，重新获取最新的预约信息并执行自动预约新活动
+			c.cmd.Println("  👉 奖励领取成功，正在检查并自动预约新活动...")
+			info, err = eapiRequest.YunbeiReserveInfo(ctx, &eapi.YunbeiReserveInfoReq{})
+			if err == nil && info.Code == 200 {
+				chineseStatus = getReserveStatusChinese(info.Data.Type)
+				if strings.Contains(info.Data.Type, "NO_BOOK") {
+					c.cmd.Printf("  👉 检测到当前预约状态: [%s]，开始执行预约...\n", chineseStatus)
+					booked, err := eapiRequest.YunbeiReserveBooked(ctx, &eapi.YunbeiReserveBookedReq{ReqId: info.Data.ReqId})
+					if err == nil && booked.Code == 200 {
+						c.cmd.Println("  ✅ 预约活动成功！")
+					} else {
+						c.cmd.Printf("  ❌ 预约活动失败: %v\n", err)
+					}
+				} else {
+					c.cmd.Printf("  ℹ️ 当前预约状态: [%s]，无须做预约操作\n", chineseStatus)
+				}
+			} else {
+				c.cmd.Printf("  ❌ 重新获取活动预约状态失败: %v\n", err)
+			}
 		} else {
 			c.cmd.Printf("  ❌ 领取预约活动奖励失败: %v\n", err)
 		}
