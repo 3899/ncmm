@@ -1,3 +1,6 @@
+// Copyright (c) 2026 @3899. All rights reserved.
+// Use of this source code is governed by a MIT-style license that can be found in the LICENSE file.
+
 // Upload 工具函数 — NOS 文件上传
 // 提供 getUploadNode 和 rawUpload 方法供 event.go 和 mlog.go 使用
 

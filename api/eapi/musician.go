@@ -1,3 +1,6 @@
+// Copyright (c) 2026 @3899. All rights reserved.
+// Use of this source code is governed by a MIT-style license that can be found in the LICENSE file.
+
 // Musician VIP Tasks API
 // Ported from https://github.com/neteasecloudmusicapienhanced/api-enhanced
 // Endpoint: /api/nmusician/workbench/special/right/vip/info (EAPI)

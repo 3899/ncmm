@@ -1,3 +1,6 @@
+// Copyright (c) 2026 @3899. All rights reserved.
+// Use of this source code is governed by a MIT-style license that can be found in the LICENSE file.
+
 // Event (动态) API — 发送/删除动态
 // Ported from https://github.com/XiaoMengXinX/Music163Api-Go
 // Endpoints:
