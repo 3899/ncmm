@@ -71,10 +71,18 @@ type SignConf struct {
 }
 
 type TaskConf struct {
-	Sign     bool `json:"sign" yaml:"sign"`
-	PlayIds  bool `json:"playids" yaml:"playids"`
-	Musician bool `json:"musician" yaml:"musician"`
-	Note     bool `json:"note" yaml:"note"`
+	Sign      bool `json:"sign" yaml:"sign"`
+	PlayIds   bool `json:"playids" yaml:"playids"`
+	Musician  bool `json:"musician" yaml:"musician"`
+	Note      bool `json:"note" yaml:"note"`
+	FansGroup bool `json:"fansGroup" yaml:"fansGroup"`
+}
+
+// FansGroupConf 乐迷团任务配置
+type FansGroupConf struct {
+	EnableMain        bool  `json:"enableMain" yaml:"enableMain"`
+	EnableSecondaries bool  `json:"enableSecondaries" yaml:"enableSecondaries"`
+	AutoDeleteNote    *bool `json:"autoDeleteNote" yaml:"autoDeleteNote"`
 }
 
 type MixPlayConf struct {
@@ -125,9 +133,10 @@ type Config struct {
 	PlayIds     *PlayIdsConfig   `json:"playids" yaml:"playids"`
 	Sign        *SignConf        `json:"sign" yaml:"sign"`
 	MixPlay     *MixPlayConf     `json:"mixPlay" yaml:"mixPlay"`
-	Note        *NoteConf        `json:"note" yaml:"note"`
-	Musician *MusicianConf `json:"musician" yaml:"musician"`
-	Task     *TaskConf     `json:"task" yaml:"task"`
+	Note      *NoteConf      `json:"note" yaml:"note"`
+	Musician  *MusicianConf  `json:"musician" yaml:"musician"`
+	FansGroup *FansGroupConf `json:"fansGroup" yaml:"fansGroup"`
+	Task      *TaskConf      `json:"task" yaml:"task"`
 }
 
 // MusicianConf 音乐人任务配置
