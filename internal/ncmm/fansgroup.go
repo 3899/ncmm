@@ -88,7 +88,7 @@ func (c *FansGroup) execute(ctx context.Context) error {
 
 	for _, cookie := range queue {
 		c.cmd.Printf("[fansgroup] 开始处理账号 (%s)\n", cookie)
-		if err := c.executeForCookie(ctx, cookie); err != nil {
+		if err := c.ExecuteForCookie(ctx, cookie); err != nil {
 			c.cmd.Printf("[fansgroup] 账号处理失败 (%s): %v\n", cookie, err)
 		}
 		c.cmd.Println("[fansgroup] --------------------------------------------------")
@@ -96,7 +96,7 @@ func (c *FansGroup) execute(ctx context.Context) error {
 	return nil
 }
 
-func (c *FansGroup) executeForCookie(ctx context.Context, cookieFile string) error {
+func (c *FansGroup) ExecuteForCookie(ctx context.Context, cookieFile string) error {
 	networkCfg := c.root.Cfg.Network
 	absPath, err := filepath.Abs(cookieFile)
 	if err != nil {
