@@ -7,7 +7,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math/rand"
+	"net/http"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -16,6 +18,7 @@ import (
 
 	"github.com/3899/ncmm/api"
 	"github.com/3899/ncmm/api/eapi"
+	"github.com/3899/ncmm/api/types"
 	"github.com/3899/ncmm/api/weapi"
 	"github.com/3899/ncmm/pkg/log"
 
@@ -179,7 +182,7 @@ func (c *FansGroup) ExecuteForCookie(ctx context.Context, cookieFile string) err
 		case strings.Contains(m.Title, "点赞"):
 			c.doLikeNotes(ctx, eapiCli, fansGroupId, user.Account.Id, m)
 		case strings.Contains(m.Title, "播放"):
-			c.doPlaySong(ctx, weapiCli, m)
+			c.doPlaySong(ctx, cli, weapiCli, m)
 		case strings.Contains(m.Title, "分享"):
 			c.doShareSong(ctx, eapiCli, m)
 		case strings.Contains(m.Title, "笔记") || strings.Contains(m.Title, "发布"):
@@ -219,11 +222,11 @@ func missionRemaining(current, total int) int {
 	return remaining
 }
 
-func (c *FansGroup) doPlaySong(ctx context.Context, weapiCli *weapi.Api, m eapi.FansGroupMissionItem) {
+func (c *FansGroup) doPlaySong(ctx context.Context, cli *api.Client, weapiCli *weapi.Api, m eapi.FansGroupMissionItem) {
 	remaining := missionRemaining(m.CurrentProgress, m.AllProgress)
 	c.cmd.Printf("[fansgroup] 处理播放任务 [%s]（剩余 %d/%d）\n", m.Title, remaining, m.AllProgress)
 
-	songIds := parseSongIdsFromButton(m.Button.Url)
+	songIds := parseSongIdsFromMission(m)
 	if len(songIds) == 0 {
 		c.cmd.Println("  无法从任务中解析歌曲列表")
 		return
@@ -232,7 +235,12 @@ func (c *FansGroup) doPlaySong(ctx context.Context, weapiCli *weapi.Api, m eapi.
 	for i := 0; i < remaining; i++ {
 		songId := songIds[c.rng.Intn(len(songIds))]
 		songIdStr := fmt.Sprintf("%d", songId)
-		c.cmd.Printf("  触发 startplay，选择歌曲 %s\n", songIdStr)
+		c.cmd.Printf("  [%d/%d] 准备真实播放歌曲 %s\n", i+1, remaining, songIdStr)
+
+		songName, source, sourceId, songTime := c.fetchFansGroupSongPlaybackMeta(ctx, weapiCli, songIdStr)
+		if songName != "" {
+			c.cmd.Printf("  [%d/%d] 歌曲：%s，时长=%d秒\n", i+1, remaining, songName, songTime)
+		}
 
 		resp, err := weapiCli.WebLog(ctx, &weapi.WebLogReq{
 			Logs: []map[string]interface{}{
@@ -255,12 +263,128 @@ func (c *FansGroup) doPlaySong(ctx context.Context, weapiCli *weapi.Api, m eapi.
 			c.cmd.Printf("  startplay 返回异常 code=%d\n", resp.Code)
 			continue
 		}
+		c.cmd.Printf("  [%d/%d] 已上报 startplay\n", i+1, remaining)
 
-		c.cmd.Printf("  已上报 startplay (%d/%d)\n", i+1, remaining)
+		playerResp, err := weapiCli.SongPlayerV1(ctx, &weapi.SongPlayerV1Req{
+			Ids:        types.IntsString([]int64{songId}),
+			Level:      types.LevelExhigh,
+			EncodeType: "aac",
+		})
+		if err != nil {
+			c.cmd.Printf("  [%d/%d] 获取播放地址失败: %v\n", i+1, remaining, err)
+			continue
+		}
+		if playerResp.Code != 200 || len(playerResp.Data) == 0 || playerResp.Data[0].Url == "" || playerResp.Data[0].Code != 200 {
+			c.cmd.Printf("  [%d/%d] 播放地址返回异常 code=%d dataLen=%d\n", i+1, remaining, playerResp.Code, len(playerResp.Data))
+			continue
+		}
+
+		playerData := playerResp.Data[0]
+		if playerData.Time > 0 {
+			songTime = int(playerData.Time / 1000)
+		}
+		c.cmd.Printf("  [%d/%d] 已获取播放地址，开始拉取音频资源\n", i+1, remaining)
+		if err := fetchFansGroupAudioProbe(ctx, cli, playerData.Url); err != nil {
+			c.cmd.Printf("  [%d/%d] 拉取音频资源失败: %v\n", i+1, remaining, err)
+			continue
+		}
+		c.cmd.Printf("  [%d/%d] 音频资源拉取完成\n", i+1, remaining)
+
+		playSeconds := 3 + c.rng.Intn(3)
+		if songTime > 0 && songTime < playSeconds {
+			playSeconds = songTime
+		}
+		playResp, err := weapiCli.WebLog(ctx, &weapi.WebLogReq{
+			Logs: []map[string]interface{}{
+				{
+					"action": "play",
+					"json": map[string]interface{}{
+						"type":     "song",
+						"wifi":     0,
+						"download": 0,
+						"id":       songId,
+						"time":     playSeconds,
+						"end":      "interrupt",
+						"source":   source,
+						"sourceId": sourceId,
+						"mainsite": "1",
+						"content":  fmt.Sprintf("id=%s", sourceId),
+					},
+				},
+			},
+		})
+		if err != nil {
+			c.cmd.Printf("  [%d/%d] 上报 play 失败: %v\n", i+1, remaining, err)
+			continue
+		}
+		if playResp.Code != 200 {
+			c.cmd.Printf("  [%d/%d] play 返回异常 code=%d\n", i+1, remaining, playResp.Code)
+			continue
+		}
+
+		c.cmd.Printf("  [%d/%d] 播放链路完成\n", i+1, remaining)
 		if i < remaining-1 {
 			time.Sleep(time.Duration(2+c.rng.Intn(4)) * time.Second)
 		}
 	}
+}
+
+func fetchFansGroupAudioProbe(ctx context.Context, cli *api.Client, songURL string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, songURL, nil)
+	if err != nil {
+		return fmt.Errorf("new audio request: %w", err)
+	}
+	req.Header.Set("Connection", "keep-alive")
+	req.Header.Set("Accept", "*/*")
+	req.Header.Set("Referer", "https://music.163.com/")
+	req.Header.Set("Accept-Encoding", "identity")
+	req.Header.Set("Accept-Language", "zh-CN,zh-Hans;q=0.9")
+	req.Header.Set("User-Agent", cli.UserAgent(api.CryptoModeWEAPI))
+	req.Header.Set("Range", "bytes=0-")
+
+	resp, err := cli.GetClient().Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		return fmt.Errorf("http status code: %d", resp.StatusCode)
+	}
+
+	_, err = io.CopyN(io.Discard, resp.Body, 512*1024)
+	if err != nil && err != io.EOF {
+		return err
+	}
+	return nil
+}
+
+func (c *FansGroup) fetchFansGroupSongPlaybackMeta(ctx context.Context, weapiCli *weapi.Api, songId string) (name, source, sourceId string, songTime int) {
+	source = "toplist"
+	sourceId = ""
+	songTime = 3
+
+	detail, err := weapiCli.SongDetail(ctx, &weapi.SongDetailReq{
+		C: []weapi.SongDetailReqList{{Id: songId, V: 0}},
+	})
+	if err != nil {
+		c.cmd.Printf("  获取歌曲详情失败，继续播放链路: %v\n", err)
+		return name, source, sourceId, songTime
+	}
+	if detail.Code != 200 || len(detail.Songs) == 0 {
+		c.cmd.Printf("  歌曲详情返回异常 code=%d songs=%d，继续播放链路\n", detail.Code, len(detail.Songs))
+		return name, source, sourceId, songTime
+	}
+
+	song := detail.Songs[0]
+	name = song.Name
+	if song.Dt > 0 {
+		songTime = int(song.Dt / 1000)
+	}
+	if song.Al.Id > 0 {
+		source = "album"
+		sourceId = strconv.FormatInt(song.Al.Id, 10)
+	}
+	return name, source, sourceId, songTime
 }
 
 func (c *FansGroup) doPublishNote(ctx context.Context, eapiCli *eapi.Api, boardId, groupName string, m eapi.FansGroupMissionItem) {
