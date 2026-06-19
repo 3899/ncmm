@@ -124,6 +124,7 @@ func (c *FansGroup) ExecuteForCookie(ctx context.Context, cookieFile string) err
 	if user.Code != 200 || user.Profile == nil || user.Account == nil {
 		return fmt.Errorf("user not logged in or session expired")
 	}
+	syncSessionConfig(ctx, cli, cookieFile, user.Account.Id, nil, c.root.Cfg.Database)
 	c.cmd.Printf("[fansgroup] 当前账号: uid=%v nickname=%q\n", user.Account.Id, user.Profile.Nickname)
 
 	fansGroupId := defaultFansGroupId

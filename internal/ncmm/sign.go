@@ -6,7 +6,9 @@ package ncmm
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"path/filepath"
+	"time"
 
 	"github.com/3899/ncmm/api"
 	"github.com/3899/ncmm/api/weapi"
@@ -224,6 +226,12 @@ func (c *SignIn) RunSignForCookie(ctx context.Context, cookieFile string, isPrim
 	refresh, err := request.TokenRefresh(ctx, &weapi.TokenRefreshReq{})
 	if err != nil || refresh.Code != 200 {
 		log.Debug("TokenRefresh err: %s", err)
+	}
+
+	select {
+	case <-ctx.Done():
+	case <-time.After(time.Duration(5+rand.Intn(11)) * time.Second):
+		syncSessionConfig(ctx, cli, cookieFile, userId, nil, c.root.Cfg.Database)
 	}
 
 	c.cmd.Printf("[sign] -----------------------------------------------\n\n")

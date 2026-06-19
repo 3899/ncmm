@@ -370,6 +370,8 @@ func (c *PlayIds) executeForCookie(ctx context.Context, cookieFile string, uniqu
 	}
 	defer db.Close(ctx)
 
+	syncSessionConfig(ctx, cli, cookieFile, user.Account.Id, db, nil)
+
 	expire, err := utils.TimeUntilMidnight("Local")
 	if err != nil {
 		return 0, fmt.Errorf("获取午夜过期时间失败: %w", err)

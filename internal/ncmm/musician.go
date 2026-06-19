@@ -178,6 +178,8 @@ func (c *Musician) initMusicianContext(ctx context.Context, cookieFile string, n
 		db:      db,
 	}
 
+	syncSessionConfig(ctx, cli, cookieFile, 0, db, nil)
+
 	// 检查身份缓存
 	isMusician, cacheHit, _ := c.checkMusicianIdentityCache(ctx, db, cookieFile)
 
