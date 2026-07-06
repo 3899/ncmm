@@ -16,14 +16,15 @@ import (
 )
 
 type TaskOpts struct {
-	Sign         bool
-	PlayIds      bool
-	MusicianSign bool
-	MusicianVip  bool
-	Note         bool
-	FansGroup    bool
-	OnlyFast     bool
-	OnlySlow     bool
+	Sign           bool
+	PlayIds        bool
+	MusicianSign   bool
+	MusicianVip    bool
+	Note           bool
+	FansGroup      bool
+	DailySongShare bool
+	OnlyFast       bool
+	OnlySlow       bool
 }
 
 type Task struct {
@@ -62,6 +63,7 @@ func (c *Task) Command() *cobra.Command {
 }
 
 func (c *Task) addFlags() {
+	c.cmd.Flags().BoolVar(&c.opts.DailySongShare, "daily-song-share", false, "execute daily song share task")
 	c.cmd.Flags().BoolVar(&c.opts.Sign, "sign", false, "执行日常签到任务")
 	c.cmd.Flags().BoolVar(&c.opts.PlayIds, "playids", false, "执行播放指定歌曲任务")
 	c.cmd.Flags().BoolVar(&c.opts.MusicianSign, "musician-sign", false, "执行音乐人日常签到任务")
@@ -92,7 +94,7 @@ func (c *Task) standardizeActionKey(action string) string {
 	keys := []string{
 		"VipTask", "Reserve", "ViewVipCenter", "LikeComment", "FollowArtist",
 		"LikeSong", "CollectSong", "PublishNote", "ListenIndie", "PlayDailyRecommend",
-		"musician-sign", "note", "fansgroup", "playids", "musician-vip",
+		"musician-sign", "note", "daily-song-share", "fansgroup", "playids", "musician-vip",
 	}
 	for _, k := range keys {
 		if strings.EqualFold(k, action) {
@@ -173,6 +175,10 @@ func (c *Task) isActionEnabledForAccount(stdAction string, isMain bool) bool {
 		} else {
 			return cfg.FansGroup != nil && cfg.FansGroup.EnableSecondaries
 		}
+	}
+
+	if actionLower == "daily-song-share" {
+		return isMain && cfg.DailySongShare != nil && cfg.DailySongShare.EnableMain
 	}
 
 	return false
@@ -285,6 +291,27 @@ func (c *Task) executeAction(ctx context.Context, stdAction string, account Acco
 		return true
 	}
 
+	if stdAction == "daily-song-share" {
+		c.cmd.Printf("[task] >>> account (%s) start [daily song share] task <<<\n", account.Filepath)
+		d := NewDailySongShare(c.root, c.l)
+		cfg, err := d.getConfig()
+		if err != nil {
+			c.cmd.Printf("[task] account (%s) [daily song share] skipped: %s\n", account.Filepath, err)
+			return false
+		}
+		if err := d.validatePrerequisites(cfg); err != nil {
+			c.cmd.Printf("[task] account (%s) [daily song share] skipped: %s\n", account.Filepath, err)
+			return false
+		}
+		if _, err := d.ExecuteForCookie(ctx, account.Filepath); err != nil {
+			c.cmd.Printf("[task] account (%s) [daily song share] failed: %s\n", account.Filepath, err)
+		} else {
+			c.cmd.Printf("[task] account (%s) [daily song share] done\n", account.Filepath)
+		}
+		c.sleepBetweenTasks(ctx)
+		return true
+	}
+
 	if stdAction == "fansgroup" {
 		c.cmd.Printf("[task] >>> 账号 (%s) 开始执行 [乐迷团任务] <<<\n", account.Filepath)
 		f := NewFansGroup(c.root, c.l)
@@ -337,9 +364,10 @@ func (c *Task) execute(ctx context.Context) error {
 		c.cmd.Flags().Changed("musician-sign") ||
 		c.cmd.Flags().Changed("musician-vip") ||
 		c.cmd.Flags().Changed("note") ||
-		c.cmd.Flags().Changed("fansgroup")
+		c.cmd.Flags().Changed("fansgroup") ||
+		c.cmd.Flags().Changed("daily-song-share")
 
-	var runSign, runPlayIds, runMusicianSign, runMusicianVip, runNote, runFansGroup bool
+	var runSign, runPlayIds, runMusicianSign, runMusicianVip, runNote, runFansGroup, runDailySongShare bool
 	cfg := c.root.Cfg
 
 	if hasFlags {
@@ -349,6 +377,7 @@ func (c *Task) execute(ctx context.Context) error {
 		runMusicianVip = c.opts.MusicianVip
 		runNote = c.opts.Note
 		runFansGroup = c.opts.FansGroup
+		runDailySongShare = c.opts.DailySongShare
 	} else {
 		if cfg.Task != nil {
 			runSign = cfg.Task.Sign
@@ -357,13 +386,14 @@ func (c *Task) execute(ctx context.Context) error {
 			runMusicianVip = cfg.Task.MusicianVip
 			runNote = cfg.Task.Note
 			runFansGroup = cfg.Task.FansGroup
+			runDailySongShare = cfg.Task.DailySongShare
 		} else {
 			c.cmd.Println("[task] 提示: 配置文件中未定义 task 节点且未传递 any 命令行标志，默认不执行任何任务")
 			return nil
 		}
 	}
 
-	if !runSign && !runPlayIds && !runMusicianSign && !runMusicianVip && !runNote && !runFansGroup {
+	if !runSign && !runPlayIds && !runMusicianSign && !runMusicianVip && !runNote && !runFansGroup && !runDailySongShare {
 		c.cmd.Println("[task] 没有需要执行的任务")
 		return nil
 	}
@@ -386,6 +416,9 @@ func (c *Task) execute(ctx context.Context) error {
 	}
 	if runFansGroup {
 		activeTasks["fansgroup"] = true
+	}
+	if runDailySongShare {
+		activeTasks["daily-song-share"] = true
 	}
 
 	accounts := c.getAccounts()

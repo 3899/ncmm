@@ -113,10 +113,11 @@ func New() *Root {
 	c.Add(NewPlayIds(c, c.l).Command())
 	c.Add(NewSign(c, c.l).Command())
 	m := NewMusician(c, c.l)
-	c.Add(m.Command())       // ncmm musician
-	c.Add(m.SignCommand())    // ncmm musician-sign
-	c.Add(m.VipCommand())     // ncmm musician-vip
+	c.Add(m.Command())     // ncmm musician
+	c.Add(m.SignCommand()) // ncmm musician-sign
+	c.Add(m.VipCommand())  // ncmm musician-vip
 	c.Add(NewNote(c, c.l).Command())
+	c.Add(NewDailySongShare(c, c.l).Command())
 	c.Add(NewFansGroup(c, c.l).Command())
 	c.Add(NewTask(c, c.l).Command())
 	return c

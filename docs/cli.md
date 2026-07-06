@@ -339,7 +339,32 @@ ncmm --home run task --fansgroup
 
 ---
 
-## 6. 笔记单独发布 (`ncmm note`)
+## 6. 每日推歌发布 (`ncmm daily-song-share`)
+
+该命令用于从配置的“高分冷门”歌单中随机选择一首歌曲，复用图文发布链路生成带图片、标题、正文和话题的歌曲分享。也可以通过 `ncmm task --daily-song-share` 或配置 `task.daily-song-share: true` 由批量任务入口执行。
+
+```bash
+# 1. 使用默认配置中的账号执行每日推歌
+ncmm daily-song-share
+
+# 2. 指定单个 Cookie 文件执行
+ncmm daily-song-share --cookie-file run/cookie.json
+
+# 3. 通过批量任务入口只执行每日推歌
+ncmm --home run task --daily-song-share
+```
+
+### 💡 运行流程与原理
+1. **前置校验**：每日推歌必须使用同一移动端会话抓到的移动端 Cookie、`network.user_agent.xeapi` 和 `dailySongShare.antiCheatToken`。`antiCheatToken` 或 `network.user_agent.xeapi` 为空时，命令会直接跳过，不会发起发布或抽奖请求。
+2. **账号选择**：命令行传入 `--cookie-file` 时只执行该账号；否则只在 `dailySongShare.enableMain: true` 时读取 `accounts.main`，每日推歌不再支持 `enableSecondaries`。
+3. **歌曲选择**：若配置了 `dailySongShare.songId`，则固定分享该歌曲；留空时读取 `dailySongShare.playlistId`，默认使用 `13848930701`，从歌单歌曲中随机选择一首。
+4. **图文素材**：标题和正文优先使用 `dailySongShare` 专属配置，缺省时继承 `note` 的本地/远程内容库；图片可使用歌曲封面、歌单封面或自定义图片池。
+5. **话题挂载**：正文不追加话题文本；有话题/活动 ID 时写入 `activityInfoList`，由发布接口挂载话题。默认话题使用抓包确认的 `13827903`（音乐合伙人的乐迷团）、`195425749`（申请音乐合伙人）和 `200773579`（音乐合伙人星探计划）。
+6. **发布后抽奖**：开启 `dailySongShare.lottery.enabled` 后，会尝试报名/登记每日推歌活动、读取 guide 中的抽奖机会并调用抽奖接口；这些接口走移动端 `XEAPI/AEAPI` 请求形态。
+
+---
+
+## 7. 笔记单独发布 (`ncmm note`)
 
 该命令用于单独发布图文动态/笔记。该服务也同时被 `musician` 和 `sign` 任务内部直接调用。
 

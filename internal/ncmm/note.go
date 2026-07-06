@@ -274,7 +274,7 @@ func (c *Note) getRandomImageURL(urls []string) string {
 
 // downloadImageToTemp 下载图片到临时文件
 func downloadImageToTemp(ctx context.Context, url string) (string, error) {
-	if strings.HasPrefix(url, "/") || strings.HasPrefix(url, "./") {
+	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
 		return url, nil
 	}
 

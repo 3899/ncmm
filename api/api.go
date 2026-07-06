@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	xeapipkg "github.com/3899/ncmm/api/xeapi"
 	"github.com/3899/ncmm/pkg/cookie"
 	"github.com/3899/ncmm/pkg/crypto"
 	"github.com/3899/ncmm/pkg/log"
@@ -37,6 +38,7 @@ type UserAgentConfig struct {
 	Default string `json:"default" yaml:"default"`
 	WEAPI   string `json:"weapi" yaml:"weapi"`
 	EAPI    string `json:"eapi" yaml:"eapi"`
+	XEAPI   string `json:"xeapi" yaml:"xeapi"`
 }
 
 type Config struct {
@@ -63,6 +65,7 @@ type Client struct {
 	cli    *resty.Client
 	cookie *cookie.Cookie
 	l      *log.Logger
+	xeapi  *xeapipkg.Manager
 	// agent  *Agent
 }
 
@@ -113,6 +116,7 @@ func NewClient(cfg *Config, l *log.Logger) (*Client, error) {
 		cli:    cli,
 		cookie: jar,
 		l:      l,
+		xeapi:  xeapipkg.NewManager(xeapipkg.ManagerOptions{HTTPClient: cli.GetClient()}),
 		// agent:  NewAgent(),
 	}
 	return &c, nil
@@ -146,6 +150,8 @@ func (c *Client) UserAgent(mode CryptoMode) string {
 			return ua
 		}
 		return DefaultEAPIUserAgent
+	case CryptoModeXEAPI:
+		return strings.TrimSpace(c.cfg.UserAgent.XEAPI)
 	default:
 		if ua != "" {
 			return ua
@@ -182,6 +188,105 @@ func (c *Client) Cookie(url, name string) (http.Cookie, bool) {
 }
 
 // GetCookies 获取cookies.
+func (c *Client) cookieValue(url string, names ...string) string {
+	for _, name := range names {
+		if ck, ok := c.Cookie(url, name); ok && strings.TrimSpace(ck.Value) != "" {
+			value, err := neturl.QueryUnescape(ck.Value)
+			if err != nil {
+				value = ck.Value
+			}
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func (c *Client) MusicU() string {
+	for _, url := range []string{"https://music.163.com", "https://interface3.music.163.com"} {
+		if token := c.cookieValue(url, "MUSIC_U", "MUSIC_R_U"); token != "" {
+			return token
+		}
+	}
+	return ""
+}
+
+func (c *Client) applyXEAPIHeaders(request *resty.Request) {
+	ua := request.Header.Get("User-Agent")
+	if ua == "" {
+		ua = c.UserAgent(CryptoModeXEAPI)
+	}
+	appver, buildver := neteaseAndroidVersionFromUA(ua)
+	osver := neteaseAndroidOSVersionFromUA(ua)
+
+	setDefault := func(key, value string) {
+		if strings.TrimSpace(value) != "" && request.Header.Get(key) == "" {
+			request.SetHeader(key, value)
+		}
+	}
+	cookieValue := func(names ...string) string {
+		for _, url := range []string{"https://music.163.com", "https://interface3.music.163.com"} {
+			if value := c.cookieValue(url, names...); value != "" {
+				return value
+			}
+		}
+		return ""
+	}
+
+	if contentType := requestHeaderValue(request, "Content-Type"); contentType == "" || strings.EqualFold(strings.TrimSpace(contentType), "application/x-www-form-urlencoded") {
+		request.SetHeader("Content-Type", "application/x-www-form-urlencoded;charset=utf-8")
+	}
+	setDefault("X-Client-Enc-State", "ENCRYPTED")
+	setDefault("x-aeapi", "true")
+	setDefault("X-MAM-CustomMark", "cronet")
+	setDefault("x-os", firstNonEmpty(cookieValue("os"), "android"))
+	setDefault("x-osver", firstNonEmpty(cookieValue("osver"), osver))
+	setDefault("x-appver", firstNonEmpty(cookieValue("appver"), appver))
+	setDefault("x-buildver", firstNonEmpty(cookieValue("buildver"), buildver))
+	deviceID := firstNonEmpty(cookieValue("deviceId"), cookieValue("sDeviceId", "sdeviceId"), c.GetDeviceId())
+	setDefault("x-deviceid", deviceID)
+	setDefault("x-sdeviceid", cookieValue("sDeviceId", "sdeviceId"))
+	setDefault("x-music-u", c.MusicU())
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func neteaseAndroidVersionFromUA(ua string) (string, string) {
+	const prefix = "NeteaseMusic/"
+	idx := strings.Index(ua, prefix)
+	if idx < 0 {
+		return "", ""
+	}
+	version := ua[idx+len(prefix):]
+	if cut := strings.IndexAny(version, "(; "); cut >= 0 {
+		version = version[:cut]
+	}
+	parts := strings.Split(version, ".")
+	if len(parts) < 4 {
+		return version, ""
+	}
+	return strings.Join(parts[:3], "."), parts[3]
+}
+
+func neteaseAndroidOSVersionFromUA(ua string) string {
+	const marker = "Android "
+	idx := strings.Index(ua, marker)
+	if idx < 0 {
+		return ""
+	}
+	osver := ua[idx+len(marker):]
+	if cut := strings.IndexAny(osver, ";)"); cut >= 0 {
+		osver = osver[:cut]
+	}
+	return strings.TrimSpace(osver)
+}
+
 func (c *Client) GetCookies(url *neturl.URL) []*http.Cookie {
 	return c.cookie.Cookies(url)
 }
@@ -233,6 +338,9 @@ func (c *Client) Request(ctx context.Context, url string, req, resp interface{},
 	}
 
 	ua := c.UserAgent(opts.CryptoMode)
+	if opts.CryptoMode == CryptoModeXEAPI && strings.TrimSpace(ua) == "" {
+		return nil, fmt.Errorf("network.user_agent.xeapi is required for xeapi requests")
+	}
 
 	request := c.cli.R().
 		SetContext(ctx).
@@ -261,6 +369,9 @@ func (c *Client) Request(ctx context.Context, url string, req, resp interface{},
 		if mURL != nil {
 			request.SetCookies(c.GetCookies(mURL))
 		}
+	}
+	if opts.CryptoMode == CryptoModeXEAPI {
+		c.applyXEAPIHeaders(request)
 	}
 
 	switch opts.CryptoMode {
@@ -296,6 +407,20 @@ func (c *Client) Request(ctx context.Context, url string, req, resp interface{},
 		encryptData, err = crypto.EApiEncrypt(uri.Path, req)
 		if err != nil {
 			return nil, fmt.Errorf("EApiEncrypt: %w", err)
+		}
+	case CryptoModeXEAPI:
+		encryptData, err = c.xeapi.Encrypt(ctx, xeapipkg.EncryptRequest{
+			URI:         uri.RequestURI(),
+			Data:        req,
+			Method:      opts.Method,
+			ContentType: requestHeaderValue(request, "Content-Type"),
+			OS:          requestHeaderValue(request, "x-os"),
+			AppVersion:  requestHeaderValue(request, "x-appver"),
+			DeviceID:    firstNonEmpty(requestHeaderValue(request, "x-deviceid"), c.GetDeviceId()),
+			UserAgent:   requestHeaderValue(request, "User-Agent"),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("XEApiEncrypt: %w", err)
 		}
 	case CryptoModeWEAPI:
 		// todo: 需要替换？因为有些 https://interface.music.163.com/api 得接口也会走这个逻辑
@@ -367,19 +492,31 @@ func (c *Client) Request(ctx context.Context, url string, req, resp interface{},
 	case CryptoModeAPI:
 		// tips: api接口返回数据是明文
 		decryptData = response.Body()
-	case CryptoModeEAPI:
+	case CryptoModeEAPI, CryptoModeXEAPI:
 		decryptData = response.Body()
 		if len(decryptData) > 0 && decryptData[0] != '{' {
-			decrypted, err := crypto.EApiDecrypt(string(decryptData), "")
+			var decrypted []byte
+			if opts.CryptoMode == CryptoModeXEAPI {
+				if ssid, sskey := response.Header().Get("x-encr-ssid"), response.Header().Get("x-encr-sskey"); ssid != "" && sskey != "" {
+					c.xeapi.SetSession(ssid, sskey)
+				}
+				decrypted, err = xeapipkg.DecryptResponse(decryptData)
+			} else {
+				decrypted, err = crypto.EApiDecrypt(string(decryptData), "")
+			}
 			if err == nil {
 				decryptData = decrypted
-				if unzipped, unzipErr := gunzipPayload(decryptData); unzipErr == nil {
+				if opts.CryptoMode == CryptoModeEAPI {
+					if unzipped, unzipErr := gunzipPayload(decryptData); unzipErr == nil {
+						decryptData = unzipped
+					} else {
+						log.Warn("EAPI gzip payload decode failed: %s", unzipErr)
+					}
+				} else if unzipped, unzipErr := gunzipPayload(decryptData); unzipErr == nil {
 					decryptData = unzipped
-				} else {
-					log.Warn("EAPI gzip payload decode failed: %s", unzipErr)
 				}
 			} else {
-				log.Warn("EApiDecrypt failed: %s", err)
+				log.Warn("%s decrypt failed: %s", opts.CryptoMode, err)
 			}
 		}
 		log.Debug("[response.decrypt]: %s", string(decryptData))
@@ -511,6 +648,21 @@ func contentEncoding(c *resty.Client, resp *resty.Response) error {
 		return fmt.Errorf("not supported yet Content-Encoding: %s", kind)
 	}
 	return nil
+}
+
+func requestHeaderValue(request *resty.Request, key string) string {
+	if request == nil {
+		return ""
+	}
+	if value := request.Header.Get(key); value != "" {
+		return value
+	}
+	for name, values := range request.Header {
+		if strings.EqualFold(name, key) && len(values) > 0 {
+			return values[0]
+		}
+	}
+	return ""
 }
 
 // gunzipPayload 解开 EAPI 加密载荷内部可能包裹的 gzip 数据。

@@ -10,6 +10,7 @@ type CryptoMode string
 const (
 	CryptoModeAPI   CryptoMode = "api"
 	CryptoModeEAPI  CryptoMode = "eapi"
+	CryptoModeXEAPI CryptoMode = "xeapi"
 	CryptoModeWEAPI CryptoMode = "weapi"
 	CryptoModeLinux CryptoMode = "linux"
 )
