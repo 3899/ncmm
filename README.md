@@ -71,5 +71,6 @@
 | 项目 | 说明 |
 | :--- | :--- |
 | [chaunsin/netease-cloud-music](https://github.com/chaunsin/netease-cloud-music) | 网易云音乐 API |
-| [crossgg/netease-cloud-music](https://github.com/3899/ncmm) | 网易云音乐人任务 |
+| [3899/netease-cloud-music](https://github.com/3899/ncmm) | 网易云音乐人任务 |
+| [NeteaseCloudMusicApiEnhanced/api-enhanced](https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced) | 全网最全的网易云音乐API接口 |
 | 所有依赖的开源项目 | |
