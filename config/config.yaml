@@ -235,6 +235,9 @@ fansgroup:
   enableMain: true
   # 是否启用辅助账号执行乐迷团任务
   enableSecondaries: true
+  # Fans group IDs 自己抓包 可以多个，默认是音乐合伙人的乐迷团.
+  groupIds:
+    - "1872529203038486609"
   # 乐迷团发布笔记后是否自动删除（留空则继承 note.autoDelete 配置）
   # autoDeleteNote: true
 

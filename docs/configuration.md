@@ -129,6 +129,9 @@ fansgroup:
   enableMain: true
   # 是否使用 accounts.secondary 执行乐迷团任务
   enableSecondaries: true
+  # 需要依次执行任务的乐迷团 groupId 列表。默认乐迷团对应发布 boardId=13827903。
+  groupIds:
+    - "1872529203038486609"
   # 乐迷团发布笔记后是否自动删除（留空则继承 note.autoDelete配置）
   # autoDeleteNote: true
 

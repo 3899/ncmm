@@ -34,12 +34,12 @@ type FansGroupDetailGetResp struct {
 			FansGroupId       string `json:"fansGroupId"`
 			FansGroupName     string `json:"fansGroupName"`
 			FansGroupPureName string `json:"fansGroupPureName"`
-			HeadId            int64  `json:"headId"`         // 歌手/头像ID
-			ArtistName        string `json:"artistName"`     // 歌手名
-			BoardId           string `json:"boardId"`        // 看板ID = activityInfoList 中的 id
-			TopicId           string `json:"topicId"`        // 话题ID
-			HeadAvatarUrl     string `json:"headAvatarUrl"`  // 头像URL
-			Musician          bool   `json:"musician"`       // 是否音乐人
+			HeadId            int64  `json:"headId"`        // 歌手/头像ID
+			ArtistName        string `json:"artistName"`    // 歌手名
+			BoardId           string `json:"boardId"`       // 看板ID = activityInfoList 中的 id
+			TopicId           string `json:"topicId"`       // 话题ID
+			HeadAvatarUrl     string `json:"headAvatarUrl"` // 头像URL
+			Musician          bool   `json:"musician"`      // 是否音乐人
 		} `json:"fansGroupInfo"`
 	} `json:"data"`
 }
@@ -327,9 +327,9 @@ type FansGroupUserGroupDetailGetResp struct {
 			Joined      bool   `json:"joined"`
 			FansGroupId string `json:"fansGroupId"`
 			Level       struct {
-				Level      string `json:"level"`
-				FanTitle   string `json:"fanTitle"`
-				Segment    string `json:"segment"`
+				Level       string `json:"level"`
+				FanTitle    string `json:"fanTitle"`
+				Segment     string `json:"segment"`
 				SegmentCode string `json:"segmentCode"`
 			} `json:"level"`
 		} `json:"fansGroupMemberDetail"`
@@ -359,4 +359,3 @@ func (a *Api) FansGroupUserGroupDetailGet(ctx context.Context, req *FansGroupUse
 	_ = resp
 	return &reply, nil
 }
-

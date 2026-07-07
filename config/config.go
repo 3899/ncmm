@@ -93,9 +93,10 @@ type TaskConf struct {
 
 // FansGroupConf 乐迷团任务配置
 type FansGroupConf struct {
-	EnableMain        bool  `json:"enableMain" yaml:"enableMain"`
-	EnableSecondaries bool  `json:"enableSecondaries" yaml:"enableSecondaries"`
-	AutoDeleteNote    *bool `json:"autoDeleteNote" yaml:"autoDeleteNote"`
+	EnableMain        bool          `json:"enableMain" yaml:"enableMain"`
+	EnableSecondaries bool          `json:"enableSecondaries" yaml:"enableSecondaries"`
+	GroupIDs          StringOrSlice `json:"groupIds" yaml:"groupIds"`
+	AutoDeleteNote    *bool         `json:"autoDeleteNote" yaml:"autoDeleteNote"`
 }
 
 type MixPlayConf struct {

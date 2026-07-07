@@ -284,7 +284,7 @@ ncmm --home run musician
 
 ## 5. 乐迷团任务 (`ncmm fansgroup`)
 
-该命令用于执行当前账号已加入乐迷团的日常任务，也可以通过 `ncmm task --fansgroup` 或配置 `task.fansGroup: true` 由批量任务入口自动执行。
+该命令用于执行当前账号已加入乐迷团的日常任务，也可以通过 `ncmm task --fansgroup` 或配置 `task.fansGroup: true` 由批量任务入口自动执行。可通过 `fansgroup.groupIds` 配置多个乐迷团 `groupId`，同一账号会按配置顺序逐个查询并执行各团独立任务。
 
 ```bash
 # 1. 使用默认配置中的乐迷团账号执行
@@ -313,7 +313,7 @@ ncmm --home run task --fansgroup
 [fansgroup] 开始处理账号 (./fan1.json)
 [fansgroup] 当前账号: uid=1024****68 nickname="粉丝一号"
 [fansgroup] 查询粉丝团详情...
-[fansgroup] 粉丝团: 音乐合伙人的乐迷团 (boardId=13827903)
+[fansgroup] 粉丝团: 音乐合伙人的乐迷团 (groupId=1872529203038486609, boardId=13827903)
 [fansgroup] 已加入：Joined=true, Level=1 (萌新乐迷)
   [未完成] 播放歌曲 (0/2)
   [未完成] 发布图文笔记 (0/2)

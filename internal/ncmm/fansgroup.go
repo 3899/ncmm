@@ -20,6 +20,7 @@ import (
 	"github.com/3899/ncmm/api/eapi"
 	"github.com/3899/ncmm/api/types"
 	"github.com/3899/ncmm/api/weapi"
+	"github.com/3899/ncmm/config"
 	"github.com/3899/ncmm/pkg/log"
 
 	"github.com/spf13/cobra"
@@ -140,7 +141,54 @@ func (c *FansGroup) ExecuteForCookie(ctx context.Context, cookieFile string) err
 	syncSessionConfig(ctx, cli, cookieFile, user.Account.Id, nil, c.root.Cfg.Database)
 	c.cmd.Printf("[fansgroup] 当前账号: uid=%v nickname=%q\n", user.Account.Id, user.Profile.Nickname)
 
-	fansGroupId := defaultFansGroupId
+	groupIds := c.fansGroupIDs()
+	c.cmd.Printf("[fansgroup] 乐迷团任务数: %d\n", len(groupIds))
+	failed := 0
+	var firstErr error
+	for i, fansGroupId := range groupIds {
+		c.cmd.Printf("[fansgroup] 开始处理乐迷团 [%d/%d]: groupId=%s\n", i+1, len(groupIds), fansGroupId)
+		if err := c.executeOneFansGroup(ctx, cli, eapiCli, weapiCli, user.Account.Id, fansGroupId); err != nil {
+			failed++
+			if firstErr == nil {
+				firstErr = err
+			}
+			c.cmd.Printf("[fansgroup] 乐迷团处理失败 groupId=%s: %v\n", fansGroupId, err)
+		}
+		if i < len(groupIds)-1 {
+			sleepSec := 2 + c.rng.Intn(4)
+			c.cmd.Printf("[fansgroup] 等待 %d 秒后继续下一个乐迷团...\n", sleepSec)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(time.Duration(sleepSec) * time.Second):
+			}
+		}
+	}
+	if failed == len(groupIds) && firstErr != nil {
+		return fmt.Errorf("all configured fansgroup tasks failed: %w", firstErr)
+	}
+	return nil
+}
+
+func (c *FansGroup) fansGroupIDs() []string {
+	if c.root == nil || c.root.Cfg == nil {
+		return []string{defaultFansGroupId}
+	}
+	return configuredFansGroupIDs(c.root.Cfg.FansGroup)
+}
+
+func configuredFansGroupIDs(cfg *config.FansGroupConf) []string {
+	if cfg == nil {
+		return []string{defaultFansGroupId}
+	}
+	ids := uniqueStrings([]string(cfg.GroupIDs))
+	if len(ids) == 0 {
+		return []string{defaultFansGroupId}
+	}
+	return ids
+}
+
+func (c *FansGroup) executeOneFansGroup(ctx context.Context, cli *api.Client, eapiCli *eapi.Api, weapiCli *weapi.Api, currentUserId int64, fansGroupId string) error {
 	c.cmd.Println("[fansgroup] 查询粉丝团详情...")
 	detail, err := eapiCli.FansGroupDetailGet(ctx, &eapi.FansGroupDetailGetReq{GroupId: fansGroupId})
 	if err != nil {
@@ -152,7 +200,7 @@ func (c *FansGroup) ExecuteForCookie(ctx context.Context, cookieFile string) err
 
 	boardId := detail.Data.FansGroupInfo.BoardId
 	groupName := detail.Data.FansGroupInfo.FansGroupName
-	c.cmd.Printf("[fansgroup] 粉丝团: %s (boardId=%s)\n", groupName, boardId)
+	c.cmd.Printf("[fansgroup] 粉丝团: %s (groupId=%s, boardId=%s)\n", groupName, fansGroupId, boardId)
 
 	joined := false
 	userGrpDetail, err := eapiCli.FansGroupUserGroupDetailGet(ctx, &eapi.FansGroupUserGroupDetailGetReq{GroupId: fansGroupId})
@@ -194,7 +242,7 @@ func (c *FansGroup) ExecuteForCookie(ctx context.Context, cookieFile string) err
 
 		switch {
 		case strings.Contains(m.Title, "点赞"):
-			c.doLikeNotes(ctx, eapiCli, fansGroupId, user.Account.Id, m)
+			c.doLikeNotes(ctx, eapiCli, fansGroupId, currentUserId, m)
 		case strings.Contains(m.Title, "播放"):
 			c.doPlaySong(ctx, cli, weapiCli, m)
 		case strings.Contains(m.Title, "分享"):
