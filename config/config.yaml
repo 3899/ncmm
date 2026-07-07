@@ -173,7 +173,7 @@ dailySongShare:
   imageMode: "songCover" # 可选：songCover / playlistCover / custom
   imageUrls: []     # songCover是自动歌单封面
   titleMode: "note" # 可选：note / song
-  titles: [] 
+  titles: []
 #    - "今日推荐：{song}"
 #    - "分享一首值得听的歌"
   titlesFile: []  #titles、titlesFile、messages、messagesFile留空沿用note任务配置
