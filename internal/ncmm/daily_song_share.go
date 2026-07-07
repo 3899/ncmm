@@ -24,7 +24,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const defaultDailySongSharePlaylistId = "13848930701"
+const (
+	defaultDailySongSharePlaylistId  = "13848930701"
+	maxDailySongShareLotteryAttempts = 10
+)
 
 type DailySongShareOpts struct {
 	CookieFile string
@@ -442,6 +445,7 @@ func (c *DailySongShare) runLottery(ctx context.Context, eapiCli *eapi.Api, cfg 
 	}
 
 	activityId := parseDailySongLotteryActivityId(lotteryCfg.ActivityId)
+	lotteryAttempts := 1
 	guide, err := eapiCli.DailySongShareRegistrationGuide(ctx, &eapi.DailySongShareRegistrationGuideReq{})
 	if err != nil {
 		c.cmd.Printf("[daily-song-share] warn: fetch lottery guide failed: %v\n", err)
@@ -457,9 +461,13 @@ func (c *DailySongShare) runLottery(ctx context.Context, eapiCli *eapi.Api, cfg 
 			c.cmd.Println("[daily-song-share] no lottery chance available; skipped")
 			return
 		}
-		if g.RewardCount > 0 && g.HaveRewardCount >= g.RewardCount {
+		remaining := dailySongLotteryRemainingAttempts(g.RewardCount, g.HaveRewardCount)
+		if g.RewardCount > 0 && remaining <= 0 {
 			c.cmd.Println("[daily-song-share] lottery chance already used; skipped")
 			return
+		}
+		if remaining > 0 {
+			lotteryAttempts = remaining
 		}
 	}
 	if activityId <= 0 {
@@ -467,30 +475,51 @@ func (c *DailySongShare) runLottery(ctx context.Context, eapiCli *eapi.Api, cfg 
 		return
 	}
 
-	c.cmd.Printf("[daily-song-share] starting lottery: activityId=%d\n", activityId)
-	lottery, err := eapiCli.DailySongShareLottery(ctx, &eapi.DailySongShareLotteryReq{
-		ActivityId: activityId,
-		CheckToken: strings.TrimSpace(cfg.AntiCheatToken),
-	})
-	if err != nil {
-		c.cmd.Printf("[daily-song-share] lottery failed: %v\n", err)
-		return
+	lotteryAttempts = clampDailySongLotteryAttempts(lotteryAttempts)
+	c.cmd.Printf("[daily-song-share] starting lottery: activityId=%d attempts=%d\n", activityId, lotteryAttempts)
+	for i := 0; i < lotteryAttempts; i++ {
+		lottery, err := eapiCli.DailySongShareLottery(ctx, &eapi.DailySongShareLotteryReq{
+			ActivityId: activityId,
+			CheckToken: strings.TrimSpace(cfg.AntiCheatToken),
+		})
+		if err != nil {
+			c.cmd.Printf("[daily-song-share] lottery failed [%d/%d]: %v\n", i+1, lotteryAttempts, err)
+			return
+		}
+		if lottery.Code != 200 {
+			c.cmd.Printf("[daily-song-share] lottery failed [%d/%d]: code=%d message=%s\n", i+1, lotteryAttempts, lottery.Code, lottery.Message)
+			return
+		}
+		names := dailySongLotteryPrizeNames(lottery.Data.PrizeDetailInfoMap)
+		if len(names) == 0 {
+			c.cmd.Printf("[daily-song-share] lottery done [%d/%d], restChance=%d\n", i+1, lotteryAttempts, lottery.Data.RestChance)
+		} else {
+			c.cmd.Printf("[daily-song-share] lottery done [%d/%d]: %s, restChance=%d\n", i+1, lotteryAttempts, strings.Join(names, " / "), lottery.Data.RestChance)
+		}
 	}
-	if lottery.Code != 200 {
-		c.cmd.Printf("[daily-song-share] lottery failed: code=%d message=%s\n", lottery.Code, lottery.Message)
-		return
-	}
-	names := dailySongLotteryPrizeNames(lottery.Data.PrizeDetailInfoMap)
-	if len(names) == 0 {
-		c.cmd.Printf("[daily-song-share] lottery done, restChance=%d\n", lottery.Data.RestChance)
-		return
-	}
-	c.cmd.Printf("[daily-song-share] lottery done: %s, restChance=%d\n", strings.Join(names, " / "), lottery.Data.RestChance)
 }
 
 func parseDailySongLotteryActivityId(value string) int64 {
 	id, _ := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
 	return id
+}
+
+func dailySongLotteryRemainingAttempts(rewardCount, haveRewardCount int) int {
+	remaining := rewardCount - haveRewardCount
+	if remaining < 0 {
+		return 0
+	}
+	return remaining
+}
+
+func clampDailySongLotteryAttempts(attempts int) int {
+	if attempts <= 0 {
+		return 1
+	}
+	if attempts > maxDailySongShareLotteryAttempts {
+		return maxDailySongShareLotteryAttempts
+	}
+	return attempts
 }
 
 func dailySongLotteryPrizeNames(prizes map[string]eapi.DailySongShareLotteryPrizeDetail) []string {

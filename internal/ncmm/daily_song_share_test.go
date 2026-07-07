@@ -36,3 +36,37 @@ func TestDailySongShareBuildMessageDoesNotAppendSongOrTopics(t *testing.T) {
 		}
 	}
 }
+
+func TestDailySongLotteryRemainingAttempts(t *testing.T) {
+	tests := []struct {
+		name   string
+		reward int
+		used   int
+		want   int
+	}{
+		{name: "two chances unused", reward: 2, used: 0, want: 2},
+		{name: "one chance used", reward: 2, used: 1, want: 1},
+		{name: "all used", reward: 2, used: 2, want: 0},
+		{name: "over used", reward: 2, used: 3, want: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := dailySongLotteryRemainingAttempts(tt.reward, tt.used); got != tt.want {
+				t.Fatalf("dailySongLotteryRemainingAttempts(%d, %d) = %d, want %d", tt.reward, tt.used, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestClampDailySongLotteryAttempts(t *testing.T) {
+	if got := clampDailySongLotteryAttempts(0); got != 1 {
+		t.Fatalf("zero attempts should fall back to one draw, got %d", got)
+	}
+	if got := clampDailySongLotteryAttempts(2); got != 2 {
+		t.Fatalf("two attempts should be preserved, got %d", got)
+	}
+	if got := clampDailySongLotteryAttempts(maxDailySongShareLotteryAttempts + 1); got != maxDailySongShareLotteryAttempts {
+		t.Fatalf("attempts should be capped at %d, got %d", maxDailySongShareLotteryAttempts, got)
+	}
+}
