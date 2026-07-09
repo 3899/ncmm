@@ -33,12 +33,19 @@ type DailySongShareOpts struct {
 	CookieFile string
 }
 
+type dailySongShareProtocol struct {
+	Mode     api.CryptoMode
+	Platform string
+	CookieOS string
+}
+
 type DailySongShare struct {
-	root *Root
-	cmd  *cobra.Command
-	l    *log.Logger
-	rng  *rand.Rand
-	opts DailySongShareOpts
+	root                 *Root
+	cmd                  *cobra.Command
+	l                    *log.Logger
+	rng                  *rand.Rand
+	opts                 DailySongShareOpts
+	currentAntiCheatToken string
 }
 
 type dailySongShareSong struct {
@@ -102,6 +109,13 @@ func (c *DailySongShare) execute(ctx context.Context) error {
 		if cfg.EnableMain && c.root.Cfg.Accounts.Main != "" {
 			queue = append(queue, c.root.Cfg.Accounts.Main)
 		}
+		if cfg.EnableSecondaries && len(c.root.Cfg.Accounts.Secondary) > 0 {
+			for _, sec := range c.root.Cfg.Accounts.Secondary {
+				if sec != "" {
+					queue = append(queue, sec)
+				}
+			}
+		}
 	}
 
 	if len(queue) == 0 {
@@ -140,6 +154,12 @@ func (c *DailySongShare) ExecuteForCookie(ctx context.Context, cookieFile string
 		return 0, err
 	}
 
+	antiCheatToken := c.root.Cfg.Accounts.AntiCheatTokenFor(cookieFile)
+	if antiCheatToken == "" {
+		return 0, fmt.Errorf("accounts.antiCheatTokens 中未配置 %s 的 token，跳过", cookieFile)
+	}
+	c.currentAntiCheatToken = antiCheatToken
+
 	networkCfg := c.root.Cfg.Network
 	absPath, err := filepath.Abs(cookieFile)
 	if err != nil {
@@ -164,8 +184,13 @@ func (c *DailySongShare) ExecuteForCookie(ctx context.Context, cookieFile string
 	if user.Code != 200 || user.Profile == nil || user.Account == nil {
 		return 0, fmt.Errorf("user not logged in or session expired")
 	}
+	protocol, err := c.detectProtocol(cli, &cfgCopy)
+	if err != nil {
+		return 0, err
+	}
 	syncSessionConfig(ctx, cli, cookieFile, user.Account.Id, nil, c.root.Cfg.Database)
 	c.cmd.Printf("[daily-song-share] current account: uid=%v nickname=%q\n", user.Account.Id, user.Profile.Nickname)
+	c.cmd.Printf("[daily-song-share] api mode: %s (%s)\n", protocol.Mode, protocol.Platform)
 
 	song, playlistCover, err := c.selectSong(ctx, weapiCli, cfg)
 	if err != nil {
@@ -194,8 +219,9 @@ func (c *DailySongShare) ExecuteForCookie(ctx context.Context, cookieFile string
 		Type:             "song",
 		Pics:             pics,
 		ActivityInfoList: activityInfoList,
-		CheckToken:       strings.TrimSpace(cfg.AntiCheatToken),
+		CheckToken:       antiCheatToken,
 		Header:           "{}",
+		CryptoMode:       protocol.Mode,
 	})
 	if err != nil {
 		return 0, fmt.Errorf("publish daily song share failed: %w", err)
@@ -205,8 +231,19 @@ func (c *DailySongShare) ExecuteForCookie(ctx context.Context, cookieFile string
 	}
 	c.cmd.Printf("[daily-song-share] publish success, eventId=%d\n", resp.Id)
 
+	if protocol.Mode == api.CryptoModeEAPI {
+		if trigger, err := eapiCli.DailySongShareTrigger(ctx, &eapi.DailySongShareTriggerReq{
+			DailySongShareBaseReq: dailySongShareBaseReq(protocol),
+			SongID:                strconv.FormatInt(song.Id, 10),
+		}); err != nil {
+			c.cmd.Printf("[daily-song-share] warn: song share trigger failed: %v\n", err)
+		} else if trigger.Code != 200 {
+			c.cmd.Printf("[daily-song-share] warn: song share trigger failed: code=%d message=%s\n", trigger.Code, trigger.Message)
+		}
+	}
+
 	if cfg.Lottery != nil && cfg.Lottery.Enabled {
-		c.runLottery(ctx, eapiCli, cfg)
+		c.runLottery(ctx, eapiCli, cfg, protocol)
 	}
 
 	if cfg.AutoDelete != nil && *cfg.AutoDelete {
@@ -234,11 +271,8 @@ func (c *DailySongShare) validatePrerequisites(cfg *config.DailySongShareConf) e
 	if cfg == nil {
 		return fmt.Errorf("dailySongShare configuration is not set in config.yaml")
 	}
-	if strings.TrimSpace(cfg.AntiCheatToken) == "" {
-		return fmt.Errorf("dailySongShare.antiCheatToken is empty; daily song share requires a mobile cookie, matching mobile UA, and X-antiCheatToken captured from the same mobile session")
-	}
-	if c.root.Cfg.Network == nil || strings.TrimSpace(c.root.Cfg.Network.UserAgent.XEAPI) == "" {
-		return fmt.Errorf("network.user_agent.xeapi is empty; daily song share requires a mobile cookie, matching mobile UA, and X-antiCheatToken captured from the same mobile session")
+	if c.root.Cfg.Network == nil {
+		return fmt.Errorf("network configuration is not set")
 	}
 	return nil
 }
@@ -425,7 +459,7 @@ func (c *DailySongShare) buildMessage(cfg *config.DailySongShareConf, song daily
 	return strings.TrimSpace(applyDailySongTemplate(msg, song))
 }
 
-func (c *DailySongShare) runLottery(ctx context.Context, eapiCli *eapi.Api, cfg *config.DailySongShareConf) {
+func (c *DailySongShare) runLottery(ctx context.Context, eapiCli *eapi.Api, cfg *config.DailySongShareConf, protocol dailySongShareProtocol) {
 	lotteryCfg := cfg.Lottery
 	if lotteryCfg == nil || !lotteryCfg.Enabled {
 		return
@@ -435,8 +469,8 @@ func (c *DailySongShare) runLottery(ctx context.Context, eapiCli *eapi.Api, cfg 
 	if lotteryCfg.AutoRegister != nil {
 		autoRegister = *lotteryCfg.AutoRegister
 	}
-	if autoRegister {
-		resp, err := eapiCli.DailySongShareRegister(ctx, &eapi.DailySongShareRegisterReq{})
+	if autoRegister && protocol.Mode == api.CryptoModeXEAPI {
+		resp, err := eapiCli.DailySongShareRegister(ctx, &eapi.DailySongShareRegisterReq{DailySongShareBaseReq: dailySongShareBaseReq(protocol)})
 		if err != nil {
 			c.cmd.Printf("[daily-song-share] warn: daily song registration failed: %v\n", err)
 		} else if resp.Code != 200 {
@@ -446,12 +480,37 @@ func (c *DailySongShare) runLottery(ctx context.Context, eapiCli *eapi.Api, cfg 
 
 	activityId := parseDailySongLotteryActivityId(lotteryCfg.ActivityId)
 	lotteryAttempts := 1
-	guide, err := eapiCli.DailySongShareRegistrationGuide(ctx, &eapi.DailySongShareRegistrationGuideReq{})
+	guide, err := eapiCli.DailySongShareRegistrationGuide(ctx, &eapi.DailySongShareRegistrationGuideReq{DailySongShareBaseReq: dailySongShareBaseReq(protocol)})
 	if err != nil {
 		c.cmd.Printf("[daily-song-share] warn: fetch lottery guide failed: %v\n", err)
 	} else if guide.Code != 200 {
 		c.cmd.Printf("[daily-song-share] warn: fetch lottery guide failed: code=%d\n", guide.Code)
 	} else {
+		if protocol.Mode == api.CryptoModeEAPI && autoRegister && strings.EqualFold(strings.TrimSpace(guide.Data.RegisterStatus), "NOREGISTER") {
+			if guide.Data.ActivityId > 0 && guide.Data.ActivityCycleId > 0 {
+				resp, err := eapiCli.DailySongShareAttendanceRegister(ctx, &eapi.DailySongShareAttendanceRegisterReq{
+					DailySongShareBaseReq: dailySongShareBaseReq(protocol),
+					ActivityId:            guide.Data.ActivityId,
+					ActivityCycleId:       guide.Data.ActivityCycleId,
+					AutoRegister:          true,
+				})
+				if err != nil {
+					c.cmd.Printf("[daily-song-share] warn: iOS daily song attendance register failed: %v\n", err)
+				} else if resp.Code != 200 {
+					c.cmd.Printf("[daily-song-share] warn: iOS daily song attendance register failed: code=%d message=%s\n", resp.Code, resp.Message)
+				} else if refreshed, refreshErr := eapiCli.DailySongShareRegistrationGuide(ctx, &eapi.DailySongShareRegistrationGuideReq{DailySongShareBaseReq: dailySongShareBaseReq(protocol)}); refreshErr != nil {
+					c.cmd.Printf("[daily-song-share] warn: refresh lottery guide failed: %v\n", refreshErr)
+				} else if refreshed.Code == 200 {
+					guide = refreshed
+				}
+			} else {
+				c.cmd.Println("[daily-song-share] warn: iOS registration guide lacks activity id; skip auto register")
+			}
+		}
+		if protocol.Mode == api.CryptoModeEAPI && strings.EqualFold(strings.TrimSpace(guide.Data.RegisterStatus), "NOREGISTER") {
+			c.cmd.Println("[daily-song-share] lottery skipped: iOS daily song attendance is not registered")
+			return
+		}
 		if guide.Data.ActivityInterestId > 0 {
 			activityId = guide.Data.ActivityInterestId
 		}
@@ -479,8 +538,9 @@ func (c *DailySongShare) runLottery(ctx context.Context, eapiCli *eapi.Api, cfg 
 	c.cmd.Printf("[daily-song-share] starting lottery: activityId=%d attempts=%d\n", activityId, lotteryAttempts)
 	for i := 0; i < lotteryAttempts; i++ {
 		lottery, err := eapiCli.DailySongShareLottery(ctx, &eapi.DailySongShareLotteryReq{
-			ActivityId: activityId,
-			CheckToken: strings.TrimSpace(cfg.AntiCheatToken),
+			DailySongShareBaseReq: dailySongShareBaseReq(protocol),
+			ActivityId:            activityId,
+			CheckToken:            c.currentAntiCheatToken,
 		})
 		if err != nil {
 			c.cmd.Printf("[daily-song-share] lottery failed [%d/%d]: %v\n", i+1, lotteryAttempts, err)
@@ -534,6 +594,33 @@ func dailySongLotteryPrizeNames(prizes map[string]eapi.DailySongShareLotteryPriz
 		}
 	}
 	return uniqueStrings(names)
+}
+
+func (c *DailySongShare) detectProtocol(cli *api.Client, networkCfg *api.Config) (dailySongShareProtocol, error) {
+	cookieOS := vipMemberGiftCookieValue(cli, "os")
+	platform := vipMemberGiftPlatformFromText(cookieOS)
+	if platform == "" && networkCfg != nil {
+		platform = vipMemberGiftPlatformFromText(networkCfg.UserAgent.XEAPI)
+	}
+	if platform == "" && networkCfg != nil {
+		platform = vipMemberGiftPlatformFromText(networkCfg.UserAgent.EAPI)
+	}
+
+	switch platform {
+	case "android":
+		if strings.TrimSpace(cli.UserAgent(api.CryptoModeXEAPI)) == "" {
+			return dailySongShareProtocol{}, fmt.Errorf("network.user_agent.xeapi is empty; Android daily-song-share requires a mobile cookie and matching Android XEAPI UA")
+		}
+		return dailySongShareProtocol{Mode: api.CryptoModeXEAPI, Platform: "Android", CookieOS: cookieOS}, nil
+	case "ios":
+		return dailySongShareProtocol{Mode: api.CryptoModeEAPI, Platform: "iOS", CookieOS: cookieOS}, nil
+	default:
+		return dailySongShareProtocol{}, fmt.Errorf("could not detect mobile platform from cookie os or user_agent; daily-song-share requires Android or iOS mobile session")
+	}
+}
+
+func dailySongShareBaseReq(protocol dailySongShareProtocol) eapi.DailySongShareBaseReq {
+	return eapi.DailySongShareBaseReq{CryptoMode: protocol.Mode}
 }
 
 func (c *DailySongShare) dailyTitles(cfg *config.DailySongShareConf) []string {

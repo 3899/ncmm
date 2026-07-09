@@ -118,6 +118,7 @@ func New() *Root {
 	c.Add(m.VipCommand())  // ncmm musician-vip
 	c.Add(NewNote(c, c.l).Command())
 	c.Add(NewDailySongShare(c, c.l).Command())
+	c.Add(NewVipMemberGift(c, c.l).Command())
 	c.Add(NewFansGroup(c, c.l).Command())
 	c.Add(NewTask(c, c.l).Command())
 	return c

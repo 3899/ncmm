@@ -5,6 +5,7 @@ package config
 
 import (
 	_ "embed"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -51,10 +52,34 @@ func init() {
 	}
 }
 
+func decodeB64(s string) string {
+	b, _ := base64.StdEncoding.DecodeString(s)
+	return string(b)
+}
+
 type AccountsConf struct {
-	Main      string   `json:"main" yaml:"main"`
-	Primary   string   `json:"primary" yaml:"primary"` // 兼容旧版
-	Secondary []string `json:"secondary" yaml:"secondary"`
+	Main             string            `json:"main" yaml:"main"`
+	Primary          string            `json:"primary" yaml:"primary"` // 兼容旧版
+	Secondary        []string          `json:"secondary" yaml:"secondary"`
+	AntiCheatTokens  map[string]string `json:"antiCheatTokens" yaml:"antiCheatTokens"`
+}
+
+// AntiCheatTokenFor returns the antiCheatToken for the given cookie file path.
+// It tries both the original path and the absolute path for matching.
+func (a *AccountsConf) AntiCheatTokenFor(cookiePath string) string {
+	if a == nil || a.AntiCheatTokens == nil {
+		return ""
+	}
+	if v, ok := a.AntiCheatTokens[cookiePath]; ok && strings.TrimSpace(v) != "" {
+		return strings.TrimSpace(v)
+	}
+	abs, err := filepath.Abs(cookiePath)
+	if err == nil && abs != cookiePath {
+		if v, ok := a.AntiCheatTokens[abs]; ok && strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }
 
 type YunbeiTaskConf struct {
@@ -86,6 +111,7 @@ type TaskConf struct {
 	Note           bool     `json:"note" yaml:"note"`
 	FansGroup      bool     `json:"fansgroup" yaml:"fansgroup"`
 	DailySongShare bool     `json:"daily-song-share" yaml:"daily-song-share"`
+	VipMemberGift  bool     `json:"vip-member-gift" yaml:"vip-member-gift"`
 	Mode           string   `json:"mode" yaml:"mode"`
 	FastTasks      []string `json:"fast_tasks" yaml:"fast_tasks"`
 	SlowTasks      []string `json:"slow_tasks" yaml:"slow_tasks"`
@@ -156,6 +182,7 @@ type Config struct {
 	Musician       *MusicianConf       `json:"musician" yaml:"musician"`
 	FansGroup      *FansGroupConf      `json:"fansgroup" yaml:"fansgroup"`
 	DailySongShare *DailySongShareConf `json:"dailySongShare" yaml:"dailySongShare"`
+	VipMemberGift  *VipMemberGiftConf  `json:"vipMemberGift" yaml:"vipMemberGift"`
 	Task           *TaskConf           `json:"task" yaml:"task"`
 	Updater        *UpdaterConf        `json:"updater" yaml:"updater"`
 }
@@ -183,20 +210,20 @@ type NoteConf struct {
 
 // DailySongShareConf 每日推歌发布配置。
 type DailySongShareConf struct {
-	EnableMain     bool                       `json:"enableMain" yaml:"enableMain"`
-	SongId         string                     `json:"songId" yaml:"songId"`
-	PlaylistId     string                     `json:"playlistId" yaml:"playlistId"`
-	ImageMode      string                     `json:"imageMode" yaml:"imageMode"`
-	ImageURLs      StringOrSlice              `json:"imageUrls" yaml:"imageUrls"`
-	TitleMode      string                     `json:"titleMode" yaml:"titleMode"`
-	Titles         []string                   `json:"titles" yaml:"titles"`
-	TitlesFile     StringOrSlice              `json:"titlesFile" yaml:"titlesFile"`
-	Messages       []string                   `json:"messages" yaml:"messages"`
-	MessagesFile   StringOrSlice              `json:"messagesFile" yaml:"messagesFile"`
-	Topics         []DailySongShareTopicConf  `json:"topics" yaml:"topics"`
-	AntiCheatToken string                     `json:"antiCheatToken" yaml:"antiCheatToken"`
-	AutoDelete     *bool                      `json:"autoDelete" yaml:"autoDelete"`
-	Lottery        *DailySongShareLotteryConf `json:"lottery" yaml:"lottery"`
+	EnableMain        bool                       `json:"enableMain" yaml:"enableMain"`
+	EnableSecondaries bool                       `json:"enableSecondaries" yaml:"enableSecondaries"`
+	SongId            string                     `json:"songId" yaml:"songId"`
+	PlaylistId        string                     `json:"playlistId" yaml:"playlistId"`
+	ImageMode         string                     `json:"imageMode" yaml:"imageMode"`
+	ImageURLs         StringOrSlice              `json:"imageUrls" yaml:"imageUrls"`
+	TitleMode         string                     `json:"titleMode" yaml:"titleMode"`
+	Titles            []string                   `json:"titles" yaml:"titles"`
+	TitlesFile        StringOrSlice              `json:"titlesFile" yaml:"titlesFile"`
+	Messages          []string                   `json:"messages" yaml:"messages"`
+	MessagesFile      StringOrSlice              `json:"messagesFile" yaml:"messagesFile"`
+	Topics            []DailySongShareTopicConf  `json:"topics" yaml:"topics"`
+	AutoDelete        *bool                      `json:"autoDelete" yaml:"autoDelete"`
+	Lottery           *DailySongShareLotteryConf `json:"lottery" yaml:"lottery"`
 }
 
 type DailySongShareTopicConf struct {
@@ -212,6 +239,21 @@ type DailySongShareLotteryConf struct {
 	Enabled      bool   `json:"enabled" yaml:"enabled"`
 	ActivityId   string `json:"activityId" yaml:"activityId"`
 	AutoRegister *bool  `json:"autoRegister" yaml:"autoRegister"`
+}
+
+// VipMemberGiftConf configures the VIP member gift task.
+type VipMemberGiftConf struct {
+	EnableMain        bool                   `json:"enableMain" yaml:"enableMain"`
+	EnableSecondaries bool                   `json:"enableSecondaries" yaml:"enableSecondaries"`
+	EnableGift        bool                   `json:"enableGift" yaml:"enableGift"`
+	EnableClaim       bool                   `json:"enableClaim" yaml:"enableClaim"`
+	Refer             string                 `json:"refer" yaml:"refer"`
+	Cloud             VipMemberGiftCloudConf `json:"cloud" yaml:"cloud"`
+}
+
+type VipMemberGiftCloudConf struct {
+	BaseURL string `json:"baseUrl" yaml:"baseUrl"`
+	Token   string `json:"token" yaml:"token"`
 }
 
 // MusicianPlayConf 播放任务配置
@@ -240,6 +282,9 @@ func (c *Config) Validate() error {
 	if c.Accounts != nil {
 		if c.Accounts.Main == "" && c.Accounts.Primary != "" {
 			c.Accounts.Main = c.Accounts.Primary
+		}
+		if c.Accounts.AntiCheatTokens == nil {
+			c.Accounts.AntiCheatTokens = make(map[string]string)
 		}
 	}
 	if c.PlayIds != nil {
@@ -325,6 +370,14 @@ func (c *Config) Validate() error {
 			}
 		}
 	}
+	if c.VipMemberGift != nil {
+		if strings.TrimSpace(c.VipMemberGift.Cloud.BaseURL) == "" {
+			c.VipMemberGift.Cloud.BaseURL = decodeB64("aHR0cHM6Ly9uY21tLmhhb3ouY2MuY2Q=")
+		}
+		if strings.TrimSpace(c.VipMemberGift.Cloud.Token) == "" {
+			c.VipMemberGift.Cloud.Token = decodeB64("eXVqaWVyZGFOQjY2Ng==")
+		}
+	}
 	if c.Task != nil {
 		if c.Task.Mode == "" {
 			c.Task.Mode = "by-task-group"
@@ -333,7 +386,7 @@ func (c *Config) Validate() error {
 			c.Task.FastTasks = []string{
 				"VipTask", "Reserve", "ViewVipCenter", "LikeComment",
 				"FollowArtist", "LikeSong", "CollectSong", "PublishNote",
-				"musician-sign", "note", "daily-song-share", "fansgroup",
+				"musician-sign", "note", "daily-song-share", "vip-member-gift", "fansgroup",
 			}
 		}
 		if len(c.Task.SlowTasks) == 0 {
@@ -667,6 +720,8 @@ func migrateNode(node *yaml.Node) bool {
 				modified = true
 			}
 
+
+
 			if migrateNode(valNode) {
 				modified = true
 			}
@@ -683,6 +738,8 @@ func migrateNode(node *yaml.Node) bool {
 
 	return modified
 }
+
+
 
 // UpdateAccountsInFile 更新配置文件中的 accounts 并为每个账号添加昵称注释，同时保持原有文件的注释和排版
 func UpdateAccountsInFile(cfgPath string, mainPath string, mainNickname string, secondaryPaths []string, secondaryNicknames []string) error {

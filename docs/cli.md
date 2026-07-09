@@ -355,11 +355,11 @@ ncmm --home run task --daily-song-share
 ```
 
 ### 💡 运行流程与原理
-1. **前置校验**：每日推歌必须使用同一移动端会话抓到的移动端 Cookie、`network.user_agent.xeapi` 和 `dailySongShare.antiCheatToken`。`antiCheatToken` 或 `network.user_agent.xeapi` 为空时，命令会直接跳过，不会发起发布或抽奖请求。
-2. **账号选择**：命令行传入 `--cookie-file` 时只执行该账号；否则只在 `dailySongShare.enableMain: true` 时读取 `accounts.main`，每日推歌不再支持 `enableSecondaries`。
+1. **前置校验**：每日推歌必须使用同一移动端会话抓到的移动端 Cookie、匹配的移动端 UA 和 `accounts.antiCheatTokens` 中对应的 token。未配置 token 时，命令会直接跳过，不会发起发布或抽奖请求。
+2. **账号选择**：命令行传入 `--cookie-file` 时只执行该账号；否则将依次读取并执行 `accounts.main`（当 `dailySongShare.enableMain` 为 true 时）以及 `accounts.secondary`（当 `dailySongShare.enableSecondaries` 为 true 时）。
 3. **歌曲选择**：若配置了 `dailySongShare.songId`，则固定分享该歌曲；留空时读取 `dailySongShare.playlistId`，默认使用 `13848930701`，从歌单歌曲中随机选择一首。
 4. **图文素材**：标题和正文优先使用 `dailySongShare` 专属配置，缺省时继承 `note` 的本地/远程内容库；图片可使用歌曲封面、歌单封面或自定义图片池。
-5. **话题挂载**：正文不追加话题文本；有话题/活动 ID 时写入 `activityInfoList`，由发布接口挂载话题。默认话题使用抓包确认的 `13827903`（音乐合伙人的乐迷团）、`195425749`（申请音乐合伙人）和 `200773579`（音乐合伙人星探计划）。
+5. **话题挂载**：正文不追加话题文本；有话题/活动 ID 时写入 `activityInfoList`，由发布接口挂载话题。默认话题使用抓包确认 of `13827903`（音乐合伙人的乐迷团）、`195425749`（申请音乐合伙人）和 `200773579`（音乐合伙人星探计划）。
 6. **发布后抽奖**：开启 `dailySongShare.lottery.enabled` 后，会尝试报名/登记每日推歌活动、读取 guide 中的抽奖机会并调用抽奖接口；这些接口走移动端 `XEAPI/AEAPI` 请求形态。
 
 ---
@@ -383,3 +383,22 @@ ncmm note --cookie-file run/cookie.json
 # 3. 配合 --home 在指定的隔离工作目录下发布
 ncmm --home run note
 ```
+
+---
+
+## 8. 黑胶会员免费送/领 (`ncmm vip-member-gift`)
+
+该命令用于自动化处理黑胶会员“免费送”活动。支持：
+1. **生成并赠送 Token** (`enableGift`): 将多余的黑胶会员天数生成为赠送 Token 并上报发布到云端。
+2. **从云端自动领取** (`enableClaim`): 自动从云端获取其他用户上报的可用 Token 并尝试领取。
+
+```bash
+ncmm vip-member-gift [--cookie-file <cookie文件路径>]
+```
+
+### 💡 运行流程与原理
+1. **前置校验**：执行会员任务需要使用移动端 Cookie 和对应的移动端 UA（如果是 Android Cookie 则需要 `network.user_agent.xeapi`，如果是 iPhone/iPad Cookie 则需要 `network.user_agent.eapi`）。从云端自动领取时，还必须在 `accounts.antiCheatTokens` 中配置当前账号对应的 token。
+2. **账号选择**：命令行传入 `--cookie-file` 时只执行该账号；否则将依次读取并执行 `accounts.main`（当 `vipMemberGift.enableMain` 为 true 时）以及 `accounts.secondary`（当 `vipMemberGift.enableSecondaries` 为 true 时）。
+3. **云端中转**：默认使用内置的云端服务地址中转 Token。为保护隐私，获取 Token 时上报者的 `donor_uid` 将被自动脱敏，且上传时不会携带您的账号昵称等个人敏感信息。
+3. **自建/私有部署云服务**：如果你希望完全使用自己的专属中转服务器，可以查看项目中的 [vip_member_gift_cloud](../tools/vip_member_gift_cloud/README.md) 自部署文档。通过 Docker 或 Python 即可快速完成私有云端服务搭建。配置时将 `vipMemberGift.cloud.baseUrl` 指向你的私有服务地址，`vipMemberGift.cloud.token` 填入你的自定义服务密钥即可。
+

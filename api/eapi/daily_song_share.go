@@ -17,15 +17,26 @@ import (
 const dailySongShareMConfigInfo = `{"IuRPVVmc3WWul9fT":{"version":"115240960","appver":"9.5.37"},"tPJJnts2H31BZXmp":{"version":"5230592","appver":"4.74.0"},"c0Ve6C0uNl2Am0Rl":{"version":"276480","appver":"1.4.30"},"zr4bw6pKFDIZScpo":{"version":"3758080","appver":"2.40.0"}}`
 
 type DailySongShareBaseReq struct {
-	Header string `json:"header"`
-	ER     bool   `json:"e_r"`
+	Header     interface{}    `json:"header"`
+	ER         bool           `json:"e_r"`
+	DeviceID   string         `json:"deviceId,omitempty"`
+	OS         string         `json:"os,omitempty"`
+	VerifyID   int            `json:"verifyId,omitempty"`
+	CryptoMode api.CryptoMode `json:"-"`
 }
 
-func (r *DailySongShareBaseReq) fill() {
-	if r.Header == "" {
+func (r *DailySongShareBaseReq) fill(client *api.Client) api.CryptoMode {
+	mode := r.CryptoMode
+	if mode == "" {
+		mode = api.CryptoModeXEAPI
+	}
+	if mode == api.CryptoModeEAPI {
+		fillDailySongShareIOSBase(client, &r.Header, &r.DeviceID, &r.OS, &r.VerifyID)
+	} else if dailySongShareHeaderEmpty(r.Header) {
 		r.Header = "{}"
 	}
 	r.ER = true
+	return mode
 }
 
 type DailySongShareRegisterReq struct {
@@ -44,13 +55,48 @@ func (a *Api) DailySongShareRegister(ctx context.Context, req *DailySongShareReg
 	if req == nil {
 		req = &DailySongShareRegisterReq{}
 	}
-	req.fill()
+	mode := req.fill(a.client)
 	var (
-		url   = "https://interface3.music.163.com/xeapi/note/common/activity/in/registration"
+		url   = dailySongShareURL(mode, "note/common/activity/in/registration")
 		reply DailySongShareRegisterResp
 		opts  = api.NewOptions()
 	)
-	opts.CryptoMode = api.CryptoModeXEAPI
+	opts.CryptoMode = mode
+	a.applyDailySongShareHeaders(opts, mode)
+	resp, err := a.client.Request(ctx, url, req, &reply, opts)
+	if err != nil {
+		return nil, fmt.Errorf("Request: %w", err)
+	}
+	_ = resp
+	return &reply, nil
+}
+
+type DailySongShareAttendanceRegisterReq struct {
+	DailySongShareBaseReq
+	ActivityId      int64 `json:"activityId"`
+	ActivityCycleId int64 `json:"activityCycleId"`
+	AutoRegister    bool  `json:"autoRegister"`
+}
+
+type DailySongShareAttendanceRegisterResp struct {
+	Code    int                    `json:"code"`
+	Message string                 `json:"message"`
+	Data    map[string]interface{} `json:"data"`
+}
+
+func (a *Api) DailySongShareAttendanceRegister(ctx context.Context, req *DailySongShareAttendanceRegisterReq) (*DailySongShareAttendanceRegisterResp, error) {
+	if req == nil {
+		return nil, fmt.Errorf("daily song share attendance register request is nil")
+	}
+	req.AutoRegister = true
+	mode := req.fill(a.client)
+	var (
+		url   = dailySongShareURL(mode, "note/attendance/activity/register")
+		reply DailySongShareAttendanceRegisterResp
+		opts  = api.NewOptions()
+	)
+	opts.CryptoMode = mode
+	a.applyDailySongShareHeaders(opts, mode)
 	resp, err := a.client.Request(ctx, url, req, &reply, opts)
 	if err != nil {
 		return nil, fmt.Errorf("Request: %w", err)
@@ -90,13 +136,14 @@ func (a *Api) DailySongShareRegistrationGuide(ctx context.Context, req *DailySon
 	if req == nil {
 		req = &DailySongShareRegistrationGuideReq{}
 	}
-	req.fill()
+	mode := req.fill(a.client)
 	var (
-		url   = "https://interface3.music.163.com/xeapi/note/attendance/activity/registration/v2/guide"
+		url   = dailySongShareURL(mode, "note/attendance/activity/registration/v2/guide")
 		reply DailySongShareRegistrationGuideResp
 		opts  = api.NewOptions()
 	)
-	opts.CryptoMode = api.CryptoModeXEAPI
+	opts.CryptoMode = mode
+	a.applyDailySongShareHeaders(opts, mode)
 	resp, err := a.client.Request(ctx, url, req, &reply, opts)
 	if err != nil {
 		return nil, fmt.Errorf("Request: %w", err)
@@ -106,47 +153,59 @@ func (a *Api) DailySongShareRegistrationGuide(ctx context.Context, req *DailySon
 }
 
 type DailySongSharePublishReq struct {
-	OS                 string `json:"os"`
-	AddComment         bool   `json:"addComment"`
-	AutoSaveDraft      bool   `json:"autoSaveDraft"`
-	Id                 string `json:"id,omitempty"`
-	Msg                string `json:"msg"`
-	SessionId          string `json:"sessionId"`
-	TargetPublishTime  string `json:"targetPublishTime"`
-	ServerUuid         string `json:"serverUuid"`
-	UseNewUpload       bool   `json:"useNewUpload"`
-	FromRN             bool   `json:"fromRN"`
-	ActivityInfoList   string `json:"activityInfoList,omitempty"`
-	PubSource          string `json:"pubSource"`
-	PubTraceId         string `json:"pubTraceId"`
-	PublishTime        string `json:"publishTime"`
-	Title              string `json:"title,omitempty"`
-	SocialSpaceVisible int    `json:"socialSpaceVisible"`
-	PrivacySetting     string `json:"privacySetting"`
-	UID                string `json:"uid"`
-	ContainAiContent   bool   `json:"containAiContent"`
-	Uuid               string `json:"uuid"`
-	Type               string `json:"type"`
-	Pics               string `json:"pics,omitempty"`
-	NeedsGuardianToken bool   `json:"needsGuardianToken"`
-	CheckToken         string `json:"checkToken,omitempty"`
-	Header             string `json:"header"`
-	ER                 bool   `json:"e_r"`
+	OS                 string         `json:"os"`
+	AddComment         bool           `json:"addComment"`
+	AutoSaveDraft      bool           `json:"autoSaveDraft"`
+	Id                 string         `json:"id,omitempty"`
+	ThreadID           string         `json:"threadId,omitempty"`
+	ResourceID         string         `json:"resourceId,omitempty"`
+	Msg                string         `json:"msg"`
+	SessionId          string         `json:"sessionId"`
+	TargetPublishTime  interface{}    `json:"targetPublishTime"`
+	ServerUuid         string         `json:"serverUuid"`
+	UseNewUpload       bool           `json:"useNewUpload"`
+	FromRN             bool           `json:"fromRN"`
+	ActivityInfoList   string         `json:"activityInfoList,omitempty"`
+	PubSource          string         `json:"pubSource"`
+	PubTraceId         string         `json:"pubTraceId"`
+	PublishTime        interface{}    `json:"publishTime"`
+	Title              string         `json:"title,omitempty"`
+	SocialSpaceVisible int            `json:"socialSpaceVisible"`
+	PrivacySetting     string         `json:"privacySetting"`
+	UID                string         `json:"uid"`
+	ContainAiContent   bool           `json:"containAiContent"`
+	Uuid               string         `json:"uuid"`
+	Type               string         `json:"type"`
+	Pics               string         `json:"pics,omitempty"`
+	NeedsGuardianToken bool           `json:"needsGuardianToken"`
+	CheckToken         string         `json:"checkToken,omitempty"`
+	Header             interface{}    `json:"header"`
+	DeviceID           string         `json:"deviceId,omitempty"`
+	VerifyID           int            `json:"verifyId,omitempty"`
+	ContentDeclaration string         `json:"contentDeclaration,omitempty"`
+	ProduceInfo        string         `json:"produceInfo,omitempty"`
+	RepostSource       string         `json:"repostSource,omitempty"`
+	ER                 bool           `json:"e_r"`
+	CryptoMode         api.CryptoMode `json:"-"`
 }
 
 func (a *Api) DailySongSharePublish(ctx context.Context, req *DailySongSharePublishReq) (*EventPublishResp, error) {
-	if err := fillDailySongSharePublishDefaults(req); err != nil {
+	mode, err := fillDailySongSharePublishDefaults(a.client, req)
+	if err != nil {
 		return nil, err
 	}
 	var (
-		url   = "https://interface3.music.163.com/xeapi/note/share/friends/resource"
+		url   = dailySongShareURL(mode, "note/share/friends/resource")
 		reply EventPublishResp
 		opts  = api.NewOptions()
 	)
-	opts.CryptoMode = api.CryptoModeXEAPI
-	opts.SetHeader("cm_no_encrypt_native_tag_20220105", "false")
-	opts.SetHeader("CMPageId", "page_songlist")
-	opts.SetHeader("MConfig-Info", dailySongShareMConfigInfo)
+	opts.CryptoMode = mode
+	if mode == api.CryptoModeXEAPI {
+		opts.SetHeader("cm_no_encrypt_native_tag_20220105", "false")
+		opts.SetHeader("CMPageId", "page_songlist")
+		opts.SetHeader("MConfig-Info", dailySongShareMConfigInfo)
+	}
+	a.applyDailySongShareHeaders(opts, mode)
 	a.fillDailySongShareAntiCheatToken(req, opts)
 	resp, err := a.client.Request(ctx, url, req, &reply, opts)
 	if err != nil {
@@ -156,28 +215,41 @@ func (a *Api) DailySongSharePublish(ctx context.Context, req *DailySongSharePubl
 	return &reply, nil
 }
 
-func fillDailySongSharePublishDefaults(req *DailySongSharePublishReq) error {
+func fillDailySongSharePublishDefaults(client *api.Client, req *DailySongSharePublishReq) (api.CryptoMode, error) {
 	if req == nil {
-		return fmt.Errorf("daily song share publish request is nil")
+		return "", fmt.Errorf("daily song share publish request is nil")
 	}
+	mode := req.CryptoMode
+	if mode == "" {
+		mode = api.CryptoModeXEAPI
+	}
+	req.CryptoMode = mode
 	if req.OS == "" {
-		req.OS = "android"
+		if mode == api.CryptoModeEAPI {
+			req.OS = "iOS"
+		} else {
+			req.OS = "android"
+		}
 	}
 	req.AutoSaveDraft = true
 	if req.SessionId == "" {
 		sessionId, err := randomDailySongSessionID()
 		if err != nil {
-			return err
+			return "", err
 		}
 		req.SessionId = sessionId
 	}
-	if req.TargetPublishTime == "" {
-		req.TargetPublishTime = "-1"
+	if req.TargetPublishTime == nil {
+		if mode == api.CryptoModeEAPI {
+			req.TargetPublishTime = -1
+		} else {
+			req.TargetPublishTime = "-1"
+		}
 	}
 	if req.ServerUuid == "" {
 		serverUuid, err := randomDailySongHex(16, true)
 		if err != nil {
-			return err
+			return "", err
 		}
 		req.ServerUuid = serverUuid
 	}
@@ -186,12 +258,16 @@ func fillDailySongSharePublishDefaults(req *DailySongSharePublishReq) error {
 	if req.PubTraceId == "" {
 		pubTraceId, err := randomDailySongHex(16, true)
 		if err != nil {
-			return err
+			return "", err
 		}
 		req.PubTraceId = pubTraceId
 	}
-	if req.PublishTime == "" {
-		req.PublishTime = "0"
+	if req.PublishTime == nil {
+		if mode == api.CryptoModeEAPI {
+			req.PublishTime = 0
+		} else {
+			req.PublishTime = "0"
+		}
 	}
 	if req.PrivacySetting == "" {
 		req.PrivacySetting = "0"
@@ -202,19 +278,29 @@ func fillDailySongSharePublishDefaults(req *DailySongSharePublishReq) error {
 	if req.Uuid == "" {
 		uuid, err := randomDailySongHex(16, true)
 		if err != nil {
-			return err
+			return "", err
 		}
 		req.Uuid = uuid
 	}
 	if req.Type == "" {
 		req.Type = "noresource"
 	}
+	if req.Type == "song" && req.Id != "" {
+		if req.ThreadID == "" {
+			req.ThreadID = "R_SO_4_" + req.Id
+		}
+		if req.ResourceID == "" {
+			req.ResourceID = req.Id
+		}
+	}
 	req.NeedsGuardianToken = true
-	if req.Header == "" {
+	if mode == api.CryptoModeEAPI {
+		fillDailySongShareIOSBase(client, &req.Header, &req.DeviceID, &req.OS, &req.VerifyID)
+	} else if dailySongShareHeaderEmpty(req.Header) {
 		req.Header = "{}"
 	}
 	req.ER = true
-	return nil
+	return mode, nil
 }
 
 func (a *Api) fillDailySongShareAntiCheatToken(req *DailySongSharePublishReq, opts *api.Options) {
@@ -224,8 +310,12 @@ func (a *Api) fillDailySongShareAntiCheatToken(req *DailySongSharePublishReq, op
 	}
 	req.CheckToken = token
 	req.ER = true
-	if req.Header == "" {
-		req.Header = "{}"
+	if dailySongShareHeaderEmpty(req.Header) {
+		if req.CryptoMode == api.CryptoModeEAPI {
+			req.Header = map[string]interface{}{}
+		} else {
+			req.Header = "{}"
+		}
 	}
 	opts.SetHeader("X-antiCheatToken", token)
 	if musicU := a.client.MusicU(); musicU != "" {
@@ -263,10 +353,44 @@ func randomDailySongHex(size int, upper bool) (string, error) {
 	return value, nil
 }
 
+type DailySongShareTriggerReq struct {
+	DailySongShareBaseReq
+	SongID  string `json:"songId"`
+	Channel string `json:"channel"`
+}
+
+type DailySongShareTriggerResp struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+	Data    bool   `json:"data"`
+}
+
+func (a *Api) DailySongShareTrigger(ctx context.Context, req *DailySongShareTriggerReq) (*DailySongShareTriggerResp, error) {
+	if req == nil {
+		return nil, fmt.Errorf("daily song share trigger request is nil")
+	}
+	if strings.TrimSpace(req.Channel) == "" {
+		req.Channel = "cloudmusic"
+	}
+	mode := req.fill(a.client)
+	var (
+		url   = dailySongShareURL(mode, "music/song/share/trigger")
+		reply DailySongShareTriggerResp
+		opts  = api.NewOptions()
+	)
+	opts.CryptoMode = mode
+	a.applyDailySongShareHeaders(opts, mode)
+	resp, err := a.client.Request(ctx, url, req, &reply, opts)
+	if err != nil {
+		return nil, fmt.Errorf("Request: %w", err)
+	}
+	_ = resp
+	return &reply, nil
+}
+
 type DailySongShareLotteryReq struct {
+	DailySongShareBaseReq
 	ActivityId int64  `json:"activityId"`
-	Header     string `json:"header"`
-	ER         bool   `json:"e_r"`
 	CheckToken string `json:"checkToken,omitempty"`
 }
 
@@ -301,20 +425,18 @@ func (a *Api) DailySongShareLottery(ctx context.Context, req *DailySongShareLott
 	if req == nil {
 		req = &DailySongShareLotteryReq{}
 	}
-	if req.Header == "" {
-		req.Header = "{}"
-	}
-	req.ER = true
+	mode := req.fill(a.client)
 	var (
-		url   = "https://interface3.music.163.com/xeapi/middle/play/do/lottery"
+		url   = dailySongShareURL(mode, "middle/play/do/lottery")
 		reply DailySongShareLotteryResp
 		opts  = api.NewOptions()
 	)
-	opts.CryptoMode = api.CryptoModeXEAPI
+	opts.CryptoMode = mode
+	a.applyDailySongShareHeaders(opts, mode)
 	token := strings.TrimSpace(req.CheckToken)
 	if token != "" {
 		req.CheckToken = token
-		if req.Header == "" || req.Header == "{}" {
+		if mode == api.CryptoModeXEAPI && dailySongShareHeaderEmpty(req.Header) {
 			req.Header = dailySongShareAntiCheatHeader(token)
 		}
 		opts.SetHeader("X-antiCheatToken", token)
@@ -328,4 +450,75 @@ func (a *Api) DailySongShareLottery(ctx context.Context, req *DailySongShareLott
 	}
 	_ = resp
 	return &reply, nil
+}
+
+func dailySongShareURL(mode api.CryptoMode, path string) string {
+	prefix := "xeapi"
+	if mode == api.CryptoModeEAPI {
+		prefix = "eapi"
+	}
+	return "https://interface3.music.163.com/" + prefix + "/" + path
+}
+
+func (a *Api) applyDailySongShareHeaders(opts *api.Options, mode api.CryptoMode) {
+	if mode != api.CryptoModeEAPI {
+		return
+	}
+	setDefault := func(key, value string) {
+		if strings.TrimSpace(value) != "" && strings.TrimSpace(opts.Headers[key]) == "" {
+			opts.SetHeader(key, value)
+		}
+	}
+	os := vipMemberGiftCookieValue(a.client, "os")
+	if os == "" {
+		if strings.Contains(strings.ToLower(a.client.UserAgent(api.CryptoModeEAPI)), "ipad") {
+			os = "iPad"
+		} else {
+			os = "iPhone OS"
+		}
+	}
+	setDefault("x-os", os)
+	setDefault("x-osver", vipMemberGiftCookieValue(a.client, "osver"))
+	setDefault("x-appver", vipMemberGiftCookieValue(a.client, "appver"))
+	setDefault("x-buildver", vipMemberGiftCookieValue(a.client, "buildver"))
+	setDefault("x-deviceid", firstNonEmpty(
+		vipMemberGiftCookieValue(a.client, "deviceId"),
+		a.client.GetDeviceId(),
+	))
+	setDefault("x-sdeviceid", vipMemberGiftCookieValue(a.client, "sDeviceId", "sdeviceId"))
+	setDefault("x-music-u", a.client.MusicU())
+	setDefault("User-Agent", vipMemberGiftIOSUserAgent(a.client))
+}
+
+func fillDailySongShareIOSBase(client *api.Client, header *interface{}, deviceID, osName *string, verifyID *int) {
+	if dailySongShareHeaderEmpty(*header) {
+		*header = map[string]interface{}{}
+	}
+	if strings.TrimSpace(*deviceID) == "" {
+		*deviceID = firstNonEmpty(
+			vipMemberGiftCookieValue(client, "deviceId"),
+			vipMemberGiftCookieValue(client, "sDeviceId", "sdeviceId"),
+			client.GetDeviceId(),
+		)
+	}
+	if strings.TrimSpace(*osName) == "" {
+		*osName = "iOS"
+	}
+	if *verifyID == 0 {
+		*verifyID = 1
+	}
+}
+
+func dailySongShareHeaderEmpty(header interface{}) bool {
+	switch v := header.(type) {
+	case nil:
+		return true
+	case string:
+		value := strings.TrimSpace(v)
+		return value == "" || value == "{}"
+	case map[string]interface{}:
+		return len(v) == 0
+	default:
+		return false
+	}
 }

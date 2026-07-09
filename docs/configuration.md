@@ -14,6 +14,12 @@ accounts:
   secondary:
     - "${HOME}/.ncmm/fan1.json"
     - "${HOME}/.ncmm/fan2.json"
+  # 每个 Cookie 对应的移动端 X-antiCheatToken（从各自的移动端抓包获取，每个设备/账号唯一）
+  # 每日推歌(dailySongShare)与会员送/领(vipMemberGift)共用。
+  # 没有配置 token 的账号会自动跳过需要该 token 的任务。
+  antiCheatTokens:
+    "${HOME}/.ncmm/cookie.json": ""
+    # "${HOME}/.ncmm/fan1.json": ""
 
 # log 日志模块配置
 log:
@@ -168,10 +174,11 @@ note:
   autoDelete: true
 
 # 每日推歌发布配置
-# 重要：每日推歌需要使用同一移动端会话抓到的移动端 Cookie、network.user_agent.xeapi 和 antiCheatToken。
-# antiCheatToken 或 network.user_agent.xeapi 为空时，任务会直接跳过。
+# 重要：每日推歌需要使用同一移动端会话抓到的移动端 Cookie、匹配的移动端 UA 和 antiCheatTokens 中对应的 token。
+# 没有配置 token 的账号会自动跳过。
 dailySongShare:
   enableMain: true
+  enableSecondaries: false
   songId: ""                       # 指定歌曲 ID；留空时继续从 playlistId 随机选歌
   playlistId: "13848930701"       # 高分冷门|音乐合伙人私藏歌单
   imageMode: "songCover"          # 可选：songCover / playlistCover / custom；指定 songId 时 playlistCover 降级到歌曲封面
@@ -181,7 +188,6 @@ dailySongShare:
   titlesFile: []
   messages: []                    # 为空时继承 note.messages/messagesFile
   messagesFile: []
-  antiCheatToken: ""              # 从移动端发布请求 Header: X-antiCheatToken 获取，默认留空
   autoDelete: false               # 每日推歌默认保留
   topics:
     - name: "音乐合伙人的乐迷团"
@@ -200,6 +206,18 @@ dailySongShare:
     enabled: false                # 是否发布后进入每日推歌抽奖
     activityId: "11066304"        # guide 接口取不到活动 ID 时使用
     autoRegister: true            # 抽奖前自动调用报名/登记接口
+
+# 黑胶会员免费送任务配置
+# 领取需要配置 accounts.antiCheatTokens 中对应的 token，赠送不需要。
+vipMemberGift:
+  enableMain: false               # 主账号是否启用任务
+  enableSecondaries: false         # 辅助账号是否启用任务
+  enableGift: true                # 是否发布赠送会员 token 到云端
+  enableClaim: false              # 是否从云端领取会员
+  cloud:
+    baseUrl: ""                   # 云端服务地址。留空默认使用内置服务地址。
+    token: ""                     # 云端服务交互 token。留空使用默认内置密钥。
+
 
 # 音乐人任务配置
 musician:
