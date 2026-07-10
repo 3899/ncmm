@@ -1,6 +1,6 @@
 services:
   ncmm-vip-member-gift-cloud:
-    image: ncmm-vip-member-gift-cloud
+    image: ghcr.io/3899/ncmm-vip-member-gift-cloud:latest
     container_name: ncmm-vip-member-gift-cloud
     ports:
       - "3102:3102"

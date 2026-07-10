@@ -23,7 +23,7 @@
     </a>
     <a href="https://github.com/3899/ncmm/pkgs/container/ncmm">
       <img
-        src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fghcr-badge.elias.eu.org%2Fapi%2F3899%2Fncmm%2Fncmm&query=downloadCount&style=flat-square&logo=docker&label=Docker%20Pulls&color=2496ed"
+        src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fghcr-badge.elias.eu.org%2Fapi%2F3899%2Fncmm&query=downloadCount&style=flat-square&logo=docker&label=Docker%20Pulls&color=2496ed"
       />
     </a>
     <a href="https://github.com/3899/ncmm/pkgs/container/ncmm">

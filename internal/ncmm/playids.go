@@ -347,6 +347,36 @@ func (c *PlayIds) RunForCookie(ctx context.Context, cookieFile string) error {
 	return nil
 }
 
+// openPlayIdsDatabase 初始化播放任务的本地进度缓存
+// 参数：无
+// 返回：数据库实例、是否启用缓存、初始化异常
+func (c *PlayIds) openPlayIdsDatabase() (database.Database, bool, error) {
+	db, err := database.NewWithOptions(c.root.Cfg.Database, 1, 0, true)
+	if err == nil {
+		return db, true, nil
+	}
+
+	if isDatabaseLockError(err) {
+		c.log("⚠️ 本地数据库已被其他进程占用，已自动降级为无缓存模式直接执行")
+		return nil, false, nil
+	}
+
+	return nil, false, fmt.Errorf("本地数据库初始化失败: %w", err)
+}
+
+// isDatabaseLockError 判断数据库初始化失败是否由目录锁占用触发
+// 参数：err 表示数据库初始化返回的异常
+// 返回：true 表示当前异常可降级为无缓存模式
+func isDatabaseLockError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errMsg := strings.ToLower(err.Error())
+	return strings.Contains(errMsg, "lock") ||
+		strings.Contains(errMsg, "resource temporarily unavailable") ||
+		strings.Contains(errMsg, "process cannot access") ||
+		strings.Contains(errMsg, "temporarily unavailable")
+}
 
 func (c *PlayIds) executeForCookie(ctx context.Context, cookieFile string, uniqueIds []string) (int64, error) {
 	// 1. 网络客户端与登录校验
@@ -378,14 +408,16 @@ func (c *PlayIds) executeForCookie(ctx context.Context, cookieFile string, uniqu
 	var uid = fmt.Sprintf("%v", user.Account.Id)
 	c.log("当前账号：uid=%s 昵称=\"%s\"", uid, user.Profile.Nickname)
 
-	// 2. 初始化本地 Badger 数据库
-	db, err := database.New(c.root.Cfg.Database)
+	// 2. 初始化本地进度缓存。播放任务遇到 Badger 目录锁时只失去跨进程进度记忆，不能中断本次播放链路。
+	db, cacheEnabled, err := c.openPlayIdsDatabase()
 	if err != nil {
-		return 0, fmt.Errorf("本地数据库初始化失败: %w", err)
+		return 0, err
 	}
-	defer db.Close(ctx)
+	if db != nil {
+		_ = db.Close(ctx) // 探测完毕后立即关闭，释放锁
+	}
 
-	syncSessionConfig(ctx, cli, cookieFile, user.Account.Id, db, nil)
+	syncSessionConfig(ctx, cli, cookieFile, user.Account.Id, nil, c.root.Cfg.Database)
 
 	expire, err := utils.TimeUntilMidnight("Local")
 	if err != nil {
@@ -394,48 +426,66 @@ func (c *PlayIds) executeForCookie(ctx context.Context, cookieFile string, uniqu
 
 	// 3. 确定今日目标播放上限 (根据 daily_min 和 daily_max 生成)
 	var dailyTarget int64
-	targetRecord, err := db.Get(ctx, playIdsDailyTargetKey(uid))
-	if err != nil {
-		if strings.Contains(err.Error(), "Key not found") {
-			// 未设置，随机生成今日目标
-			dailyMin := c.opts.DailyMin
-			if dailyMin == 0 && c.root.Cfg.PlayIds != nil {
-				dailyMin = c.root.Cfg.PlayIds.DailyMin
+	if cacheEnabled {
+		tempDb, _, err := c.openPlayIdsDatabase()
+		if err == nil && tempDb != nil {
+			targetRecord, getErr := tempDb.Get(ctx, playIdsDailyTargetKey(uid))
+			if getErr == nil {
+				dailyTarget, _ = strconv.ParseInt(string(targetRecord), 10, 64)
+			} else if !strings.Contains(getErr.Error(), "Key not found") {
+				_ = tempDb.Close(ctx)
+				return 0, fmt.Errorf("读取今日播放目标失败: %w", getErr)
 			}
-			if dailyMin == 0 {
-				dailyMin = 50
-			}
-
-			dailyMax := c.opts.DailyMax
-			if dailyMax == 0 && c.root.Cfg.PlayIds != nil {
-				dailyMax = c.root.Cfg.PlayIds.DailyMax
-			}
-			if dailyMax == 0 {
-				dailyMax = 200
-			}
-
-			r := rand.New(rand.NewSource(time.Now().UnixNano()))
-			if dailyMax > dailyMin {
-				dailyTarget = dailyMin + r.Int63n(dailyMax-dailyMin+1)
-			} else {
-				dailyTarget = dailyMin
-			}
-			err = db.Set(ctx, playIdsDailyTargetKey(uid), strconv.FormatInt(dailyTarget, 10), expire)
-			if err != nil {
-				c.log("[WARN] 写入今日随机目标失败: %s", err)
-			}
-		} else {
-			return 0, fmt.Errorf("读取今日播放目标失败: %w", err)
+			_ = tempDb.Close(ctx)
 		}
-	} else {
-		dailyTarget, _ = strconv.ParseInt(string(targetRecord), 10, 64)
+	}
+	if dailyTarget == 0 {
+		// 本日第一次播放或无缓存执行时，按配置随机生成今日播放上限
+		dailyMin := c.opts.DailyMin
+		if dailyMin == 0 && c.root.Cfg.PlayIds != nil {
+			dailyMin = c.root.Cfg.PlayIds.DailyMin
+		}
+		if dailyMin == 0 {
+			dailyMin = 50
+		}
+
+		dailyMax := c.opts.DailyMax
+		if dailyMax == 0 && c.root.Cfg.PlayIds != nil {
+			dailyMax = c.root.Cfg.PlayIds.DailyMax
+		}
+		if dailyMax == 0 {
+			dailyMax = 200
+		}
+
+		r := rand.New(rand.NewSource(time.Now().UnixNano()))
+		if dailyMax > dailyMin {
+			dailyTarget = dailyMin + r.Int63n(dailyMax-dailyMin+1)
+		} else {
+			dailyTarget = dailyMin
+		}
+		if cacheEnabled {
+			tempDb, _, err := c.openPlayIdsDatabase()
+			if err == nil && tempDb != nil {
+				err = tempDb.Set(ctx, playIdsDailyTargetKey(uid), strconv.FormatInt(dailyTarget, 10), expire)
+				if err != nil {
+					c.log("[WARN] 写入今日随机目标失败: %s", err)
+				}
+				_ = tempDb.Close(ctx)
+			}
+		}
 	}
 
 	// 4. 读取今日已播数量
 	var dailyCompleted int64 = 0
-	completedRecord, err := db.Get(ctx, playIdsTodayNumKey(uid))
-	if err == nil {
-		dailyCompleted, _ = strconv.ParseInt(string(completedRecord), 10, 64)
+	if cacheEnabled {
+		tempDb, _, err := c.openPlayIdsDatabase()
+		if err == nil && tempDb != nil {
+			completedRecord, getErr := tempDb.Get(ctx, playIdsTodayNumKey(uid))
+			if getErr == nil {
+				dailyCompleted, _ = strconv.ParseInt(string(completedRecord), 10, 64)
+			}
+			_ = tempDb.Close(ctx)
+		}
 	}
 
 	c.log("今日风控目标: 已完成=%d首, 今日随机上限=%d首", dailyCompleted, dailyTarget)
@@ -670,11 +720,17 @@ func (c *PlayIds) executeForCookie(ctx context.Context, cookieFile string, uniqu
 		// C. 内层小循环：顺序播放当前轮次的每首歌曲
 		var isInterrupted = false
 		for roundIdx, songId := range validRoundList {
-			// 校验当前是否达到了今日最大上限
-			var currentCompleted int64 = 0
-			currentRecord, err := db.Get(ctx, playIdsTodayNumKey(uid))
-			if err == nil {
-				currentCompleted, _ = strconv.ParseInt(string(currentRecord), 10, 64)
+			// 校验当前是否达到了今日最大上限；无缓存模式只能使用本进程内已经完成的播放数
+			currentCompleted := dailyCompleted + totalPlayedCount
+			if cacheEnabled {
+				tempDb, _, err := c.openPlayIdsDatabase()
+				if err == nil && tempDb != nil {
+					currentRecord, getErr := tempDb.Get(ctx, playIdsTodayNumKey(uid))
+					if getErr == nil {
+						currentCompleted, _ = strconv.ParseInt(string(currentRecord), 10, 64)
+					}
+					_ = tempDb.Close(ctx)
+				}
 			}
 			if currentCompleted >= dailyTarget {
 				c.log("  [playids] ⚠️ 触发今日风控随机播放总上限 (%d首)，优雅退出当前运行", dailyTarget)
@@ -815,15 +871,25 @@ func (c *PlayIds) executeForCookie(ctx context.Context, cookieFile string, uniqu
 			}
 
 			// 记录数据库日志
-			if err := db.Set(ctx, playIdsRecordKey(uid, songId), fmt.Sprintf("%v", time.Now().UnixMilli())); err != nil {
-				c.log("[WARN] 保存歌曲播放记录 %s 至本地数据库失败: %s", songId, err)
+			if cacheEnabled {
+				tempDb, _, err := c.openPlayIdsDatabase()
+				if err == nil && tempDb != nil {
+					if err := tempDb.Set(ctx, playIdsRecordKey(uid, songId), fmt.Sprintf("%v", time.Now().UnixMilli())); err != nil {
+						c.log("[WARN] 保存歌曲播放记录 %s 至本地数据库失败: %s", songId, err)
+					}
+					_ = tempDb.Close(ctx)
+				}
 			}
 
 			// 只有计入目标的歌曲，才去自增今日已完成计数
-			if shouldCount {
-				_, err = db.Increment(ctx, playIdsTodayNumKey(uid), 1, expire)
-				if err != nil {
-					c.log("[WARN] 自增今日已完成次数失败: %s", err)
+			if cacheEnabled && shouldCount {
+				tempDb, _, err := c.openPlayIdsDatabase()
+				if err == nil && tempDb != nil {
+					_, err = tempDb.Increment(ctx, playIdsTodayNumKey(uid), 1, expire)
+					if err != nil {
+						c.log("[WARN] 自增今日已完成次数失败: %s", err)
+					}
+					_ = tempDb.Close(ctx)
 				}
 			}
 

@@ -86,11 +86,13 @@ func (c *Root) CheckForUpdatesPreRun() {
 	}
 
 	if !checkEnabled {
+		log.Info("[updater] 版本自动检测与升级功能已关闭 (updater.check=false)")
 		return
 	}
 
 	// 支持环境变量临时关闭
 	if os.Getenv("NCMM_NO_UPDATE_CHECK") == "1" || os.Getenv("NO_UPDATE_CHECK") == "1" {
+		log.Info("[updater] 检测到环境变量 NCMM_NO_UPDATE_CHECK/NO_UPDATE_CHECK，已跳过检测")
 		return
 	}
 
@@ -112,6 +114,7 @@ func (c *Root) CheckForUpdatesPreRun() {
 
 	// 缓存命中提醒：如果缓存的最新版本大于当前版本，立刻标记为需要提醒
 	if cache.LatestVersion != "" && CompareVersions(currentVer, cache.LatestVersion) < 0 {
+		log.Info("[updater] 命中本地缓存: 发现可用新版本 %s (当前运行版本: %s)", cache.LatestVersion, currentVer)
 		updaterMu.Lock()
 		hasUpdate = true
 		latestVersionStr = cache.LatestVersion
@@ -120,40 +123,84 @@ func (c *Root) CheckForUpdatesPreRun() {
 
 	// 检测频率控制：如果距离上一次检测不足 24 小时，不再请求网络
 	if time.Since(cache.LastCheckTime) < 24*time.Hour {
+		log.Info("[updater] 距离上次网络检测不足 24 小时 (上次检测时间: %s，最新版本: %s)，跳过本次网络请求", cache.LastCheckTime.Format("2006-01-02 15:04:05"), cache.LatestVersion)
 		return
 	}
 
+	log.Info("[updater] 正在启动异步协程检测新版本...")
 	// 异步发起 GitHub API 检测并处理自动更新
 	go c.checkNewVersionAsync(cachePath, currentVer, autoUpdateEnabled)
 }
 
 func (c *Root) checkNewVersionAsync(cachePath string, currentVer string, autoUpdateEnabled bool) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.github.com/repos/3899/ncmm/releases/latest", nil)
-	if err != nil {
-		return
+	// 获取配置中自定义的代理镜像列表，若无则使用内置默认列表
+	proxyMirrors := []string{"https://gh-proxy.com/", "https://ghproxy.net/", "https://githubproxy.cc/"}
+	if c.Cfg != nil && c.Cfg.Updater != nil && len(c.Cfg.Updater.ProxyMirrors) > 0 {
+		proxyMirrors = c.Cfg.Updater.ProxyMirrors
 	}
-	req.Header.Set("User-Agent", "ncmm-updater/"+currentVer)
 
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
+	apiURL := "https://api.github.com/repos/3899/ncmm/releases/latest"
+
+	// 组合尝试的 URL 列表：第一个是直连 URL，后续是加上代理前缀的 URL
+	urlsToTry := []string{apiURL}
+	for _, proxy := range proxyMirrors {
+		if proxy != "" {
+			urlsToTry = append(urlsToTry, proxy+apiURL)
+		}
+	}
+
+	var resp *http.Response
+	var lastErr error
+	var succeeded bool
+	var finalURL string
+
+	for _, targetURL := range urlsToTry {
+		log.Info("[updater] 正在尝试获取最新版本信息: %s", targetURL)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
+		if err != nil {
+			cancel()
+			lastErr = err
+			log.Warn("[updater] 创建版本检测请求失败 (%s): %v", targetURL, err)
+			continue
+		}
+		req.Header.Set("User-Agent", "ncmm-updater/"+currentVer)
+
+		resp, lastErr = http.DefaultClient.Do(req)
+		if lastErr == nil {
+			if resp.StatusCode == http.StatusOK {
+				cancel()
+				succeeded = true
+				finalURL = targetURL
+				break
+			}
+			lastErr = fmt.Errorf("HTTP status error: %d", resp.StatusCode)
+		}
+		cancel()
+		if resp != nil {
+			resp.Body.Close()
+		}
+		log.Warn("[updater] 获取版本信息失败 (%s)，准备尝试下一个方式。错误: %v", targetURL, lastErr)
+	}
+
+	if !succeeded {
+		log.Error("[updater] 获取最新版本信息失败，已尝试所有检测方式均不成功。最后一次错误: %v", lastErr)
 		return
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return
-	}
+	log.Info("[updater] 成功从 %s 获取最新版本信息", finalURL)
 
 	var rel githubRelease
 	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
+		log.Error("[updater] 解析版本信息失败: %v", err)
 		return
 	}
 
 	tag := strings.TrimSpace(rel.TagName)
 	if tag == "" {
+		log.Error("[updater] 从返回的版本信息中未提取到有效的标签 (TagName 空)")
 		return
 	}
 
@@ -164,13 +211,22 @@ func (c *Root) checkNewVersionAsync(cachePath string, currentVer string, autoUpd
 	}
 	if data, err := json.MarshalIndent(cache, "", "  "); err == nil {
 		_ = os.MkdirAll(filepath.Dir(cachePath), 0755)
-		_ = os.WriteFile(cachePath, data, 0644)
+		if err := os.WriteFile(cachePath, data, 0644); err != nil {
+			log.Warn("[updater] 写入更新缓存文件失败: %v", err)
+		} else {
+			log.Info("[updater] 更新缓存文件已保存: %s", cachePath)
+		}
+	} else {
+		log.Warn("[updater] 序列化更新缓存数据失败: %v", err)
 	}
 
 	// 比对新版本
 	if CompareVersions(currentVer, tag) >= 0 {
-		return // 已经是最新版，无需更新
+		log.Info("[updater] 当前运行版本 %s 已是最新版本，无需更新。最新版本为: %s", currentVer, tag)
+		return
 	}
+
+	log.Info("[updater] 检测到可用新版本: %s (当前版本: %s)", tag, currentVer)
 
 	updaterMu.Lock()
 	hasUpdate = true
@@ -179,8 +235,17 @@ func (c *Root) checkNewVersionAsync(cachePath string, currentVer string, autoUpd
 
 	// 自动更新逻辑（触发条件：开启 auto_update & 非官方容器环境）
 	isDockerOfficial := os.Getenv("NCMM_DOCKER_OFFICIAL") == "1"
+	if isDockerOfficial {
+		log.Info("[updater] 检测到在官方 Docker 容器内运行，跳过二进制自动替换。")
+	}
+
+	if !autoUpdateEnabled {
+		log.Info("[updater] 未启用自动热更新 (auto_update=false)，已跳过自动更新。")
+	}
+
 	if autoUpdateEnabled && !isDockerOfficial {
 		autoUpdateStatus = "updating"
+		log.Info("[updater] 正在启动后台自动热替换，目标版本为: %s...", tag)
 		if err := c.performSelfUpdate(tag, rel.Assets); err != nil {
 			autoUpdateStatus = "failed"
 			autoUpdateError = err.Error()
@@ -210,28 +275,60 @@ func (c *Root) performSelfUpdate(tag string, assets []githubAsset) error {
 		downloadURL = fmt.Sprintf("https://github.com/3899/ncmm/releases/download/%s/%s", tag, targetName)
 	}
 
-	// 代理处理
-	downloadURL = proxyURL(downloadURL)
+	// 获取配置中自定义的代理镜像列表，若无则使用内置默认列表
+	proxyMirrors := []string{"https://gh-proxy.com/", "https://ghproxy.net/", "https://githubproxy.cc/"}
+	if c.Cfg != nil && c.Cfg.Updater != nil && len(c.Cfg.Updater.ProxyMirrors) > 0 {
+		proxyMirrors = c.Cfg.Updater.ProxyMirrors
+	}
+
+	// 组合下载尝试的 URL 列表：第一个是直连 URL，后续是加上代理前缀的 URL
+	urlsToTry := []string{downloadURL}
+	for _, proxy := range proxyMirrors {
+		if proxy != "" {
+			urlsToTry = append(urlsToTry, proxy+downloadURL)
+		}
+	}
 
 	// 下载升级包
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
+	var resp *http.Response
+	var lastErr error
+	var succeeded bool
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
-	if err != nil {
-		return err
+	for _, targetURL := range urlsToTry {
+		log.Info("[updater] 正在尝试下载更新包: %s", targetURL)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
+		if err != nil {
+			cancel()
+			lastErr = err
+			log.Warn("[updater] 创建下载请求失败 (%s): %v", targetURL, err)
+			continue
+		}
+		req.Header.Set("User-Agent", "ncmm-updater")
+
+		resp, lastErr = http.DefaultClient.Do(req)
+		if lastErr == nil {
+			if resp.StatusCode == http.StatusOK {
+				cancel()
+				succeeded = true
+				break
+			}
+			lastErr = fmt.Errorf("HTTP status error: %d", resp.StatusCode)
+		}
+		cancel()
+		if resp != nil {
+			resp.Body.Close()
+		}
+		log.Warn("[updater] 下载更新包失败 (%s)，准备尝试下一个方式。错误: %v", targetURL, lastErr)
 	}
-	req.Header.Set("User-Agent", "ncmm-updater")
 
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
+	if !succeeded {
+		return fmt.Errorf("下载更新包失败，已尝试所有下载方式。最后一次错误: %w", lastErr)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("HTTP status error: %d", resp.StatusCode)
-	}
+	log.Info("[updater] 更新包下载成功")
 
 	archiveBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
