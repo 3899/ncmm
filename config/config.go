@@ -58,10 +58,10 @@ func decodeB64(s string) string {
 }
 
 type AccountsConf struct {
-	Main             string            `json:"main" yaml:"main"`
-	Primary          string            `json:"primary" yaml:"primary"` // 兼容旧版
-	Secondary        []string          `json:"secondary" yaml:"secondary"`
-	AntiCheatTokens  map[string]string `json:"antiCheatTokens" yaml:"antiCheatTokens"`
+	Main            string            `json:"main" yaml:"main"`
+	Primary         string            `json:"primary" yaml:"primary"` // 兼容旧版
+	Secondary       []string          `json:"secondary" yaml:"secondary"`
+	AntiCheatTokens map[string]string `json:"antiCheatTokens" yaml:"antiCheatTokens"`
 }
 
 // AntiCheatTokenFor returns the antiCheatToken for the given cookie file path.
@@ -70,13 +70,31 @@ func (a *AccountsConf) AntiCheatTokenFor(cookiePath string) string {
 	if a == nil || a.AntiCheatTokens == nil {
 		return ""
 	}
-	if v, ok := a.AntiCheatTokens[cookiePath]; ok && strings.TrimSpace(v) != "" {
+	candidates := []string{cookiePath}
+	if abs, err := filepath.Abs(cookiePath); err == nil && abs != cookiePath {
+		candidates = append(candidates, abs)
+	}
+
+	for _, candidate := range candidates {
+		if v := lookupAntiCheatToken(a.AntiCheatTokens, candidate); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func lookupAntiCheatToken(tokens map[string]string, cookiePath string) string {
+	if v, ok := tokens[cookiePath]; ok && strings.TrimSpace(v) != "" {
 		return strings.TrimSpace(v)
 	}
-	abs, err := filepath.Abs(cookiePath)
-	if err == nil && abs != cookiePath {
-		if v, ok := a.AntiCheatTokens[abs]; ok && strings.TrimSpace(v) != "" {
-			return strings.TrimSpace(v)
+	cleanPath := filepath.Clean(cookiePath)
+	for key, value := range tokens {
+		token := strings.TrimSpace(value)
+		if token == "" {
+			continue
+		}
+		if strings.EqualFold(key, cookiePath) || strings.EqualFold(filepath.Clean(key), cleanPath) {
+			return token
 		}
 	}
 	return ""
@@ -164,9 +182,8 @@ type PlayIdsConfig struct {
 }
 
 type UpdaterConf struct {
-	Check        *bool    `json:"check" yaml:"check"`
-	AutoUpdate   *bool    `json:"auto_update" yaml:"auto_update"`
-	ProxyMirrors []string `json:"proxy_mirrors" yaml:"proxy_mirrors"`
+	Check      *bool `json:"check" yaml:"check"`
+	AutoUpdate *bool `json:"auto_update" yaml:"auto_update"`
 }
 
 type Config struct {
@@ -256,6 +273,7 @@ type VipMemberGiftCloudConf struct {
 	BaseURL string `json:"baseUrl" yaml:"baseUrl"`
 	Token   string `json:"token" yaml:"token"`
 }
+
 // MusicianPlayConf 播放任务配置
 type MusicianPlayConf struct {
 	IDs     string        `json:"ids" yaml:"ids"`
@@ -277,13 +295,6 @@ func (c *Config) Validate() error {
 	if c.Updater.AutoUpdate == nil {
 		auto := false
 		c.Updater.AutoUpdate = &auto
-	}
-	if len(c.Updater.ProxyMirrors) == 0 {
-		c.Updater.ProxyMirrors = []string{
-			"https://gh-proxy.com/",
-			"https://ghproxy.net/",
-			"https://githubproxy.cc/",
-		}
 	}
 
 	if c.Accounts != nil {
@@ -446,7 +457,7 @@ func New(cfgPath ...string) (*Config, error) {
 		_cfgPath = cfgPath[0]
 	}
 
-	v := viper.New()
+	v := viper.NewWithOptions(viper.KeyDelimiter("::"))
 	v.SetTypeByDefaultValue(true)
 	v.SetEnvPrefix("ncmm")
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
@@ -727,8 +738,6 @@ func migrateNode(node *yaml.Node) bool {
 				modified = true
 			}
 
-
-
 			if migrateNode(valNode) {
 				modified = true
 			}
@@ -745,8 +754,6 @@ func migrateNode(node *yaml.Node) bool {
 
 	return modified
 }
-
-
 
 // UpdateAccountsInFile 更新配置文件中的 accounts 并为每个账号添加昵称注释，同时保持原有文件的注释和排版
 func UpdateAccountsInFile(cfgPath string, mainPath string, mainNickname string, secondaryPaths []string, secondaryNicknames []string) error {
