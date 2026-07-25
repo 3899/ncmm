@@ -164,7 +164,7 @@ func (c *SignIn) RunSignForCookie(ctx context.Context, cookieFile string, isPrim
 		allowedTasks = map[string]bool{
 			"VipTask": true, "Reserve": true, "ViewVipCenter": true, "LikeComment": true,
 			"FollowArtist": true, "LikeSong": true, "CollectSong": true, "PublishNote": true,
-			"ListenIndie": true, "PlayDailyRecommend": true,
+			"ListenIndie": true, "PlayDailyRecommend": true, "ShareSong": true,
 		}
 	}
 

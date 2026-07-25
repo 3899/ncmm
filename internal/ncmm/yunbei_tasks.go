@@ -45,6 +45,8 @@ func (c *SignIn) isYunbeiTaskEnabled(taskName string, allowedTasks map[string]bo
 		return allowedTasks["LikeSong"] && cfg.EnableLikeSong
 	case "发布动态", "分享动态", "发布图文", "发布图文动态", "发布笔记", "分享图文", "发布图文笔记":
 		return allowedTasks["PublishNote"] && cfg.EnablePublishNote
+	case "分享歌曲", "分享单曲", "分享歌单":
+		return allowedTasks["ShareSong"] && cfg.EnableShareSong
 	case "听歌30分钟", "听歌", "每日推荐", "听推荐歌曲", "听推荐歌单中的歌", "听音乐30分钟":
 		return allowedTasks["PlayDailyRecommend"] && cfg.EnablePlayDailyRecommend
 	}
@@ -74,6 +76,9 @@ func (c *SignIn) executeSingleYunbeiTask(ctx context.Context, eapiRequest *eapi.
 	case "发布动态", "分享动态", "发布图文", "发布图文动态", "发布笔记", "分享图文", "发布图文笔记":
 		c.cmd.Printf("  👉 开始执行 [%s] 任务 (使用 [发布动态] 开关控制)...\n", v.TaskName)
 		c.doPublishNote(ctx, cookieFile)
+	case "分享歌曲", "分享单曲", "分享歌单":
+		c.cmd.Printf("  👉 开始执行 [%s] 任务 (使用 [分享歌曲] 开关控制)...\n", v.TaskName)
+		c.doShareSong(ctx, eapiRequest, request, userId)
 	}
 }
 
@@ -712,3 +717,142 @@ func (c *SignIn) doPlayDailyRecommend(ctx context.Context, cookieFile string, ta
 		c.cmd.Printf("  ✅ [日推播放] (%s) 成功播放日推歌曲完成\n", cookieFile)
 	}
 }
+
+// doShareSong 执行分享歌曲/单曲任务（优先从【最近播放】列表中随机选择一首歌曲进行分享打卡，无记录时回退至【红心歌曲】列表）
+func (c *SignIn) doShareSong(ctx context.Context, eapiRequest *eapi.Api, request *weapi.Api, userId int64) {
+	var trackIdStr string
+	var songName string
+	var sourceDesc string
+
+	// 1. 优先尝试从【最近播放】列表拉取并随机抽选一首
+	var recordReply struct {
+		Code     int `json:"code"`
+		WeekData []struct {
+			Song struct {
+				Id   int64  `json:"id"`
+				Name string `json:"name"`
+			} `json:"song"`
+		} `json:"weekData"`
+		AllData []struct {
+			Song struct {
+				Id   int64  `json:"id"`
+				Name string `json:"name"`
+			} `json:"song"`
+		} `json:"allData"`
+	}
+
+	opts := api.NewOptions()
+	opts.CryptoMode = api.CryptoModeWEAPI
+
+	// 先尝试拉取最近周播放记录 (type=1)
+	reqData := map[string]interface{}{
+		"uid":  fmt.Sprintf("%d", userId),
+		"type": "1",
+	}
+	_, err := request.Client().Request(ctx, "https://music.163.com/weapi/v1/play/record", reqData, &recordReply, opts)
+	if err == nil && recordReply.Code == 200 && len(recordReply.WeekData) > 0 {
+		idx := rand.Intn(len(recordReply.WeekData))
+		s := recordReply.WeekData[idx].Song
+		trackIdStr = fmt.Sprintf("%d", s.Id)
+		songName = s.Name
+		sourceDesc = fmt.Sprintf("最近播放(周榜) [第 %d/%d 首]", idx+1, len(recordReply.WeekData))
+	} else {
+		// 若最近周记录为空，拉取历史播放记录 (type=0)
+		reqData["type"] = "0"
+		_, err0 := request.Client().Request(ctx, "https://music.163.com/weapi/v1/play/record", reqData, &recordReply, opts)
+		if err0 == nil && recordReply.Code == 200 && len(recordReply.AllData) > 0 {
+			idx := rand.Intn(len(recordReply.AllData))
+			s := recordReply.AllData[idx].Song
+			trackIdStr = fmt.Sprintf("%d", s.Id)
+			songName = s.Name
+			sourceDesc = fmt.Sprintf("最近播放(历史) [第 %d/%d 首]", idx+1, len(recordReply.AllData))
+		}
+	}
+
+	// 2. 如果【最近播放】无数据，尝试从【红心歌曲】(我喜欢的音乐) 中随机抽选
+	if trackIdStr == "" && request != nil {
+		playlists, plErr := request.Playlist(ctx, &weapi.PlaylistReq{
+			Uid:    fmt.Sprintf("%d", userId),
+			Limit:  "10",
+			Offset: "0",
+		})
+		if plErr == nil && playlists.Code == 200 && len(playlists.Playlist) > 0 {
+			favId := playlists.Playlist[0].Id
+			detail, dtErr := request.PlaylistDetail(ctx, &weapi.PlaylistDetailReq{
+				Id: fmt.Sprintf("%d", favId),
+			})
+			if dtErr == nil && detail.Code == 200 && len(detail.Playlist.Tracks) > 0 {
+				tracks := detail.Playlist.Tracks
+				idx := rand.Intn(len(tracks))
+				s := tracks[idx]
+				trackIdStr = fmt.Sprintf("%d", s.Id)
+				songName = s.Name
+				sourceDesc = fmt.Sprintf("红心歌曲列表 [第 %d/%d 首]", idx+1, len(tracks))
+			}
+		}
+	}
+
+	// 3. 兜底方案：若【最近播放】与【红心歌曲】均无数据，从【每日推荐】列表中随机抽选
+	if trackIdStr == "" {
+		songs, rErr := eapiRequest.DiscoveryRecommendSongs(ctx, &eapi.DiscoveryRecommendSongsReq{})
+		if rErr == nil && songs.Code == 200 && len(songs.Data.DailySongs) > 0 {
+			idx := rand.Intn(len(songs.Data.DailySongs))
+			s := songs.Data.DailySongs[idx]
+			trackIdStr = fmt.Sprintf("%d", s.Id)
+			songName = s.Name
+			sourceDesc = fmt.Sprintf("每日推荐(兜底) [第 %d/%d 首]", idx+1, len(songs.Data.DailySongs))
+		} else {
+			// 若每日推荐为空，拉取小众推荐列表
+			recommend, recErr := eapiRequest.YunbeiDistributionRecommendSong(ctx, &eapi.YunbeiDistributionRecommendSongReq{
+				Offset: 0,
+				Limit:  10,
+			})
+			if recErr == nil && recommend.Code == 200 && len(recommend.Data) > 0 {
+				idx := rand.Intn(len(recommend.Data))
+				s := recommend.Data[idx]
+				trackIdStr = fmt.Sprintf("%d", s.SongId)
+				songName = fmt.Sprintf("ID:%d", s.SongId)
+				sourceDesc = fmt.Sprintf("小众推荐(兜底) [第 %d/%d 首]", idx+1, len(recommend.Data))
+			}
+		}
+	}
+
+	c.cmd.Printf("  👉 从【%s】中随机选择歌曲: ID=%s, 歌名《%s》\n", sourceDesc, trackIdStr, songName)
+
+	// 4. 调用核心接口 A: 微信会话分享触发 (DailySongShareTrigger)
+	triggerReq := &eapi.DailySongShareTriggerReq{
+		SongID:  trackIdStr,
+		Channel: "wxsession",
+	}
+	triggerReq.CryptoMode = api.CryptoModeEAPI
+
+	triggerResp, triggerErr := eapiRequest.DailySongShareTrigger(ctx, triggerReq)
+	if triggerErr != nil {
+		c.cmd.Printf("  ⚠️ 歌曲《%s》(ID: %s) 微信分享触发请求异常: %v\n", songName, trackIdStr, triggerErr)
+	} else if triggerResp.Code == 200 {
+		c.cmd.Printf("  🎉 成功触发歌曲《%s》(ID: %s) 微信分享接口\n", songName, trackIdStr)
+	} else {
+		c.cmd.Printf("  ⚠️ 歌曲《%s》(ID: %s) 微信分享触发接口返回 code=%d, msg=%s\n", songName, trackIdStr, triggerResp.Code, triggerResp.Message)
+	}
+
+	// 5. 模拟前台点击与跳转微信延迟 1~3 秒
+	sleepSec := 1 + rand.Intn(3)
+	time.Sleep(time.Duration(sleepSec) * time.Second)
+
+	// 6. 调用核心接口 B: 粉丝团/资源分享进度上报 (FansGroupMissionForwardProgress)
+	progressResp, progressErr := eapiRequest.FansGroupMissionForwardProgress(ctx, &eapi.FansGroupMissionForwardProgressReq{
+		Action:       "share",
+		ResourceId:   trackIdStr,
+		ResourceType: "4",
+	})
+	if progressErr != nil {
+		c.cmd.Printf("  ⚠️ 歌曲《%s》(ID: %s) 分享进度上报异常: %v\n", songName, trackIdStr, progressErr)
+	} else if progressResp.Code == 200 {
+		c.cmd.Printf("  ✅ 成功上报歌曲《%s》(ID: %s) 分享进度\n", songName, trackIdStr)
+	} else {
+		c.cmd.Printf("  ⚠️ 歌曲《%s》(ID: %s) 分享进度上报返回 code=%d, msg=%s\n", songName, trackIdStr, progressResp.Code, progressResp.Message)
+	}
+
+	c.cmd.Printf("  ✅ 分享歌曲《%s》操作完成\n", songName)
+}
+

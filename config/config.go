@@ -109,6 +109,7 @@ type YunbeiTaskConf struct {
 	EnableLikeSong           bool `json:"enableLikeSong" yaml:"enableLikeSong"`
 	EnableCollectSong        bool `json:"enableCollectSong" yaml:"enableCollectSong"`
 	EnablePublishNote        bool `json:"enablePublishNote" yaml:"enablePublishNote"`
+	EnableShareSong          bool `json:"enableShareSong" yaml:"enableShareSong"`
 	EnablePlayDailyRecommend bool `json:"enablePlayDailyRecommend" yaml:"enablePlayDailyRecommend"`
 }
 
@@ -357,6 +358,7 @@ func (c *Config) Validate() error {
 				EnableLikeSong:           true,
 				EnableCollectSong:        true,
 				EnablePublishNote:        true,
+				EnableShareSong:          true,
 				EnablePlayDailyRecommend: false,
 			}
 		}

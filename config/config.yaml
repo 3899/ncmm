@@ -1,5 +1,5 @@
 # 配置文件版本
-version: 1.1.11
+version: 1.1.12
 
 # 顶级多账号管理
 accounts:
@@ -142,6 +142,8 @@ sign:
     enableCollectSong: true
     # 发布图文动态任务开关
     enablePublishNote: true
+    # 分享歌曲任务开关
+    enableShareSong: true
     # 是否启用云贝签到中的日推歌曲播放任务（31~45随机分钟）开关
     enablePlayDailyRecommend: false
 
