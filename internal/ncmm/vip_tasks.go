@@ -679,20 +679,32 @@ func (c *SignIn) doVipSongShare(ctx context.Context, request *weapi.Api, eapiReq
 
 	c.cmd.Printf("  👉 随机选择 VIP 歌曲 ID %d 进行站外分享...\n", songId)
 
-	// 调用 DailySongShareTrigger 进行分享 (channel="copylink", CryptoMode=api.CryptoModeEAPI)
+	// 调用 DailySongShareTrigger 进行分享（优先 wxsession 微信会话，失败时尝试 copylink 复制链接兜底）
 	reqObj := &eapi.DailySongShareTriggerReq{
 		SongID:  songIdStr,
-		Channel: "copylink",
+		Channel: "wxsession",
 	}
 	reqObj.CryptoMode = api.CryptoModeEAPI
 	resp, shareErr := eapiRequest.DailySongShareTrigger(ctx, reqObj)
 
-	if shareErr != nil {
-		c.cmd.Printf("  ❌ 站外分享单曲上报失败: %v\n", shareErr)
-	} else if resp.Code != 200 || !resp.Data {
-		c.cmd.Printf("  ⚠️ 站外分享单曲上报异常: code=%d msg=%s data=%v\n", resp.Code, resp.Message, resp.Data)
+	if shareErr != nil || resp.Code != 200 || !resp.Data {
+		if shareErr != nil {
+			c.cmd.Printf("  ⚠️ 微信分享(wxsession)上报失败: %v，尝试复制链接(copylink)兜底...\n", shareErr)
+		} else {
+			c.cmd.Printf("  ⚠️ 微信分享(wxsession)上报异常: code=%d msg=%s data=%v，尝试复制链接(copylink)兜底...\n", resp.Code, resp.Message, resp.Data)
+		}
+		// 复制链接 (copylink) 兜底
+		reqObj.Channel = "copylink"
+		resp, shareErr = eapiRequest.DailySongShareTrigger(ctx, reqObj)
+		if shareErr != nil {
+			c.cmd.Printf("  ❌ 复制链接(copylink)分享上报失败: %v\n", shareErr)
+		} else if resp.Code != 200 || !resp.Data {
+			c.cmd.Printf("  ⚠️ 复制链接(copylink)分享上报异常: code=%d msg=%s data=%v\n", resp.Code, resp.Message, resp.Data)
+		} else {
+			c.cmd.Printf("  ✅ 复制链接(copylink)分享单曲上报成功 (SongID: %s)\n", songIdStr)
+		}
 	} else {
-		c.cmd.Printf("  ✅ 站外分享单曲上报成功 (SongID: %s)\n", songIdStr)
+		c.cmd.Printf("  ✅ 微信(wxsession)分享单曲上报成功 (SongID: %s)\n", songIdStr)
 	}
 }
 
