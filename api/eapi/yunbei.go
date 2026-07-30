@@ -228,6 +228,7 @@ type YunBeiTaskTodoRespData struct {
 	ExpireTime  int64  `json:"expireTime"`
 	Link        string `json:"link"`
 	Period      int64  `json:"period"`
+	TaskId      int64  `json:"taskId"`
 	TaskName    string `json:"taskName"`
 	TaskPoint   int64  `json:"taskPoint"`
 	UserTaskId  int64  `json:"userTaskId"`

@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sync"
 
 	"github.com/3899/ncmm/api"
 	"github.com/3899/ncmm/api/types"
@@ -191,8 +192,34 @@ type GetUserInfoRespProfile struct {
 	Anchor              bool        `json:"anchor"`
 }
 
+var (
+	userInfoCache   = make(map[string]*GetUserInfoResp)
+	userInfoCacheMu sync.RWMutex
+)
+
+// ClearUserInfoCache 清除全量或特定 token 的用户信息缓存
+func ClearUserInfoCache(token ...string) {
+	userInfoCacheMu.Lock()
+	defer userInfoCacheMu.Unlock()
+	if len(token) > 0 && token[0] != "" {
+		delete(userInfoCache, token[0])
+	} else {
+		userInfoCache = make(map[string]*GetUserInfoResp)
+	}
+}
+
 // GetUserInfo 获取用户信息.
 func (a *Api) GetUserInfo(ctx context.Context, req *GetUserInfoReq) (*GetUserInfoResp, error) {
+	cacheKey := a.client.MusicU()
+	if cacheKey != "" {
+		userInfoCacheMu.RLock()
+		if cached, ok := userInfoCache[cacheKey]; ok && cached != nil && cached.Code == 200 && cached.Account != nil && cached.Profile != nil {
+			userInfoCacheMu.RUnlock()
+			return cached, nil
+		}
+		userInfoCacheMu.RUnlock()
+	}
+
 	var (
 		url   = "https://music.163.com/weapi/w/nuser/account/get"
 		reply GetUserInfoResp
@@ -204,6 +231,13 @@ func (a *Api) GetUserInfo(ctx context.Context, req *GetUserInfoReq) (*GetUserInf
 		return nil, fmt.Errorf("Request: %w", err)
 	}
 	_ = resp
+
+	if reply.Code == 200 && reply.Account != nil && reply.Profile != nil && cacheKey != "" {
+		userInfoCacheMu.Lock()
+		userInfoCache[cacheKey] = &reply
+		userInfoCacheMu.Unlock()
+	}
+
 	return &reply, nil
 }
 

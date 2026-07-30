@@ -78,7 +78,7 @@ func (c *SignIn) executeSingleYunbeiTask(ctx context.Context, eapiRequest *eapi.
 		c.doPublishNote(ctx, cookieFile)
 	case "分享歌曲", "分享单曲", "分享歌单":
 		c.cmd.Printf("  👉 开始执行 [%s] 任务 (使用 [分享歌曲] 开关控制)...\n", v.TaskName)
-		c.doShareSong(ctx, eapiRequest, request, userId)
+		c.doShareSong(ctx, eapiRequest, request, userId, v.TaskId, v.UserTaskId)
 	}
 }
 
@@ -719,12 +719,25 @@ func (c *SignIn) doPlayDailyRecommend(ctx context.Context, cookieFile string, ta
 }
 
 // doShareSong 执行分享歌曲/单曲任务（优先从【最近播放】列表中随机选择一首歌曲进行分享打卡，无记录时回退至【红心歌曲】列表）
-func (c *SignIn) doShareSong(ctx context.Context, eapiRequest *eapi.Api, request *weapi.Api, userId int64) {
+func (c *SignIn) doShareSong(ctx context.Context, eapiRequest *eapi.Api, request *weapi.Api, userId int64, taskId int64, userTaskId int64) {
+	// 1. 模拟任务点击上报与 H5 页面浏览停留
+	tId := taskId
+	if tId <= 0 {
+		tId = 10795676 // 兜底缺省 ID
+	}
+	_, _ = eapiRequest.YunbeiClickTask(ctx, &eapi.YunbeiClickTaskReq{
+		TaskId: tId,
+	})
+
+	browseDelaySec := 2 + rand.Intn(3) // 2 ~ 4 秒
+	c.cmd.Printf("  ⏳ 模拟打开云贝分享 H5 页面并停留 %d 秒...\n", browseDelaySec)
+	time.Sleep(time.Duration(browseDelaySec) * time.Second)
+
 	var trackIdStr string
 	var songName string
 	var sourceDesc string
 
-	// 1. 优先尝试从【最近播放】列表拉取并随机抽选一首
+	// 2. 优先尝试从【最近播放】列表拉取并随机抽选一首
 	var recordReply struct {
 		Code     int `json:"code"`
 		WeekData []struct {
@@ -769,7 +782,7 @@ func (c *SignIn) doShareSong(ctx context.Context, eapiRequest *eapi.Api, request
 		}
 	}
 
-	// 2. 如果【最近播放】无数据，尝试从【红心歌曲】(我喜欢的音乐) 中随机抽选
+	// 3. 如果【最近播放】无数据，尝试从【红心歌曲】(我喜欢的音乐) 中随机抽选
 	if trackIdStr == "" && request != nil {
 		playlists, plErr := request.Playlist(ctx, &weapi.PlaylistReq{
 			Uid:    fmt.Sprintf("%d", userId),
@@ -792,7 +805,7 @@ func (c *SignIn) doShareSong(ctx context.Context, eapiRequest *eapi.Api, request
 		}
 	}
 
-	// 3. 兜底方案：若【最近播放】与【红心歌曲】均无数据，从【每日推荐】列表中随机抽选
+	// 4. 兜底方案：若【最近播放】与【红心歌曲】均无数据，从【每日推荐】列表中随机抽选
 	if trackIdStr == "" {
 		songs, rErr := eapiRequest.DiscoveryRecommendSongs(ctx, &eapi.DiscoveryRecommendSongsReq{})
 		if rErr == nil && songs.Code == 200 && len(songs.Data.DailySongs) > 0 {
@@ -819,7 +832,7 @@ func (c *SignIn) doShareSong(ctx context.Context, eapiRequest *eapi.Api, request
 
 	c.cmd.Printf("  👉 从【%s】中随机选择歌曲: ID=%s, 歌名《%s》\n", sourceDesc, trackIdStr, songName)
 
-	// 4. 调用核心接口 A: 微信会话分享触发 (DailySongShareTrigger)
+	// 5. 调用核心接口 A: 分享触发 (DailySongShareTrigger，优先 wxsession，失败时尝试 copylink 兜底)
 	triggerReq := &eapi.DailySongShareTriggerReq{
 		SongID:  trackIdStr,
 		Channel: "wxsession",
@@ -827,19 +840,32 @@ func (c *SignIn) doShareSong(ctx context.Context, eapiRequest *eapi.Api, request
 	triggerReq.CryptoMode = api.CryptoModeEAPI
 
 	triggerResp, triggerErr := eapiRequest.DailySongShareTrigger(ctx, triggerReq)
-	if triggerErr != nil {
-		c.cmd.Printf("  ⚠️ 歌曲《%s》(ID: %s) 微信分享触发请求异常: %v\n", songName, trackIdStr, triggerErr)
-	} else if triggerResp.Code == 200 {
-		c.cmd.Printf("  🎉 成功触发歌曲《%s》(ID: %s) 微信分享接口\n", songName, trackIdStr)
+	if triggerErr != nil || triggerResp.Code != 200 || !triggerResp.Data {
+		if triggerErr != nil {
+			c.cmd.Printf("  ⚠️ 歌曲《%s》(ID: %s) 微信分享(wxsession)请求异常: %v，尝试复制链接(copylink)兜底...\n", songName, trackIdStr, triggerErr)
+		} else {
+			c.cmd.Printf("  ⚠️ 歌曲《%s》(ID: %s) 微信分享(wxsession)返回 code=%d, msg=%s，尝试复制链接(copylink)兜底...\n", songName, trackIdStr, triggerResp.Code, triggerResp.Message)
+		}
+		// 复制链接 (copylink) 兜底
+		triggerReq.Channel = "copylink"
+		triggerResp, triggerErr = eapiRequest.DailySongShareTrigger(ctx, triggerReq)
+		if triggerErr != nil {
+			c.cmd.Printf("  ⚠️ 歌曲《%s》(ID: %s) 复制链接(copylink)分享请求异常: %v\n", songName, trackIdStr, triggerErr)
+		} else if triggerResp.Code == 200 {
+			c.cmd.Printf("  🎉 成功触发歌曲《%s》(ID: %s) 复制链接(copylink)分享接口\n", songName, trackIdStr)
+		} else {
+			c.cmd.Printf("  ⚠️ 歌曲《%s》(ID: %s) 复制链接(copylink)分享接口返回 code=%d, msg=%s\n", songName, trackIdStr, triggerResp.Code, triggerResp.Message)
+		}
 	} else {
-		c.cmd.Printf("  ⚠️ 歌曲《%s》(ID: %s) 微信分享触发接口返回 code=%d, msg=%s\n", songName, trackIdStr, triggerResp.Code, triggerResp.Message)
+		c.cmd.Printf("  🎉 成功触发歌曲《%s》(ID: %s) 微信(wxsession)分享接口\n", songName, trackIdStr)
 	}
 
-	// 5. 模拟前台点击与跳转微信延迟 1~3 秒
-	sleepSec := 1 + rand.Intn(3)
-	time.Sleep(time.Duration(sleepSec) * time.Second)
+	// 6. 模拟前台点击分享、跳转第三方应用及返回网易云 APP 停留 2~3 秒
+	shareDelaySec := 2 + rand.Intn(2) // 2 ~ 3 秒
+	c.cmd.Printf("  ⏳ 模拟分享跳转并返回应用，停留 %d 秒...\n", shareDelaySec)
+	time.Sleep(time.Duration(shareDelaySec) * time.Second)
 
-	// 6. 调用核心接口 B: 粉丝团/资源分享进度上报 (FansGroupMissionForwardProgress)
+	// 7. 调用核心接口 B: 粉丝团/资源分享进度上报 (FansGroupMissionForwardProgress)
 	progressResp, progressErr := eapiRequest.FansGroupMissionForwardProgress(ctx, &eapi.FansGroupMissionForwardProgressReq{
 		Action:       "share",
 		ResourceId:   trackIdStr,

@@ -191,10 +191,22 @@ func (c *SignIn) RunSignForCookie(ctx context.Context, cookieFile string, isPrim
 
 	// 尝试读取个人信息友好提示
 	var userId int64
+	var nickname string
+	if userInfo, uErr := request.GetUserInfo(ctx, &weapi.GetUserInfoReq{}); uErr == nil && userInfo.Code == 200 && userInfo.Profile != nil {
+		userId = userInfo.Account.Id
+		nickname = userInfo.Profile.Nickname
+	}
+
 	vipPoint, err := request.VipGrowPoint(ctx, &weapi.VipGrowPointReq{})
 	if err == nil && vipPoint.Code == 200 {
-		userId = vipPoint.Data.UserLevel.UserId
-		c.cmd.Printf("  [当前账号信息] Uid: %d | 等级: %s (Lv.%d)\n", userId, vipPoint.Data.UserLevel.LevelName, vipPoint.Data.UserLevel.Level)
+		if userId == 0 {
+			userId = vipPoint.Data.UserLevel.UserId
+		}
+		if nickname != "" {
+			c.cmd.Printf("  [当前账号信息] Uid: %d | 昵称: %s | 等级: %s (Lv.%d)\n", userId, nickname, vipPoint.Data.UserLevel.LevelName, vipPoint.Data.UserLevel.Level)
+		} else {
+			c.cmd.Printf("  [当前账号信息] Uid: %d | 等级: %s (Lv.%d)\n", userId, vipPoint.Data.UserLevel.LevelName, vipPoint.Data.UserLevel.Level)
+		}
 	}
 
 	// 1. 执行云贝签到
