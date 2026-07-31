@@ -4,7 +4,7 @@
 
 ```yaml
 # 配置文件版本
-version: 1.1.12
+version: 1.1.13
 
 # 顶级多账号管理
 accounts:

@@ -100,9 +100,9 @@ func (c *SignIn) handleYunbeiTasks(ctx context.Context, cli *api.Client, request
 		c.handleReserveYunbei(ctx, eapiRequest)
 	}
 
-	// 2. 双轮循环执行任务并领奖
-	for round := 1; round <= 2; round++ {
-		c.cmd.Printf("  👉 [云贝任务第 %d/2 轮] 获取待做任务列表...\n", round)
+	// 2. 多轮循环执行任务并领奖 (最多3轮)
+	for round := 1; round <= 3; round++ {
+		c.cmd.Printf("  👉 [云贝任务第 %d/3 轮] 获取待做任务列表...\n", round)
 		task, err := eapiRequest.YunBeiTaskTodo(ctx, &eapi.YunBeiTaskTodoReq{})
 		if err != nil || task.Code != 200 {
 			c.cmd.Printf("  ❌ 获取云贝任务列表失败: %v\n", err)
@@ -128,11 +128,11 @@ func (c *SignIn) handleYunbeiTasks(ctx context.Context, cli *api.Client, request
 
 		// 若本轮没有需要做的任务，提前终止循环
 		if len(todoTasks) == 0 && playDailyRecommendTaskName == "" {
-			c.cmd.Printf("  ℹ️ [云贝任务第 %d/2 轮] 无待执行的未完成任务，退出循环\n", round)
+			c.cmd.Printf("  ℹ️ [云贝任务第 %d/3 轮] 无待执行的未完成任务，退出循环\n", round)
 			break
 		}
 
-		c.cmd.Printf("  👉 [云贝任务第 %d/2 轮] 成功拉取到待完成任务:\n", round)
+		c.cmd.Printf("  👉 [云贝任务第 %d/3 轮] 成功拉取到待完成任务:\n", round)
 		for _, v := range todoTasks {
 			c.cmd.Printf("    - 任务: %-15s | 奖励: %d 云贝\n", v.TaskName, v.TaskPoint)
 		}
@@ -182,18 +182,33 @@ func (c *SignIn) handleYunbeiTasks(ctx context.Context, cli *api.Client, request
 	}
 
 	// 最终状态展示
-	finalTask, err := eapiRequest.YunBeiTaskTodo(ctx, &eapi.YunBeiTaskTodoReq{})
-	if err == nil && finalTask.Code == 200 {
-		c.cmd.Println("  👉 最终的云贝任务列表状态:")
+	c.cmd.Println("  👉 最终的云贝任务列表状态:")
+	if taskList, err := request.YunBeiTaskList(ctx, &weapi.YunBeiTaskListReq{}); err == nil && taskList.Code == 200 && len(taskList.Data) > 0 {
+		for _, v := range taskList.Data {
+			statusStr := "未完成"
+			if v.Completed {
+				statusStr = "已完成"
+			}
+			c.cmd.Printf("    - 任务: %-15s | 状态: %-6s | 奖励: %d 云贝\n", v.TaskName, statusStr, v.TaskPoint)
+		}
+	} else if v3List, errV3 := request.YunBeiTaskListV3(ctx, &weapi.YunBeiTaskListV3Req{}); errV3 == nil && v3List.Code == 200 && len(v3List.Data.Normal.List) > 0 {
+		for _, v := range v3List.Data.Normal.List {
+			statusStr := "未完成"
+			if v.Completed {
+				statusStr = "已完成"
+			}
+			c.cmd.Printf("    - 任务: %-15s | 状态: %-6s | 奖励: %d 云贝\n", v.TaskName, statusStr, v.TaskPoint)
+		}
+	} else if finalTask, errTodo := eapiRequest.YunBeiTaskTodo(ctx, &eapi.YunBeiTaskTodoReq{}); errTodo == nil && finalTask.Code == 200 {
 		for _, v := range finalTask.Data {
-			statusStr := "已完成"
-			if !v.Completed {
-				statusStr = "未完成"
+			statusStr := "未完成"
+			if v.Completed {
+				statusStr = "已完成"
 			}
 			c.cmd.Printf("    - 任务: %-15s | 状态: %-6s | 奖励: %d 云贝\n", v.TaskName, statusStr, v.TaskPoint)
 		}
 	} else {
-		c.cmd.Printf("  ❌ 获取最终任务状态列表失败: %v\n", err)
+		c.cmd.Println("  ❌ 获取最终任务状态列表失败")
 	}
 }
 

@@ -312,8 +312,8 @@ func (c *SignIn) handleVipTasks(ctx context.Context, cli *api.Client, request *w
 		c.cmd.Printf("  ⚠️ 获取黑胶成长值现状失败: %v\n", err)
 	}
 
-	for round := 1; round <= 2; round++ {
-		c.cmd.Printf("  👉 [黑胶任务第 %d/2 轮] 获取黑胶 VIP 任务列表...\n", round)
+	for round := 1; round <= 3; round++ {
+		c.cmd.Printf("  👉 [黑胶任务第 %d/3 轮] 获取黑胶 VIP 任务列表...\n", round)
 		taskList, err := eapiRequest.VipTaskList(ctx, newVipTaskListReq(deviceId))
 		if err != nil || taskList.Code != 200 {
 			c.cmd.Printf("  ❌ 获取黑胶 VIP 任务列表失败: %v\n", err)
@@ -371,11 +371,11 @@ func (c *SignIn) handleVipTasks(ctx context.Context, cli *api.Client, request *w
 
 		// 若无待做任务且已经签到（或者压根没有签到任务），提前终止循环
 		if len(todoTasks) == 0 && (signedToday || !hasVipSignTask) {
-			c.cmd.Printf("  ℹ️ [黑胶任务第 %d/2 轮] 无待执行的未完成任务，退出循环\n", round)
+			c.cmd.Printf("  ℹ️ [黑胶任务第 %d/3 轮] 无待执行的未完成任务，退出循环\n", round)
 			break
 		}
 
-		c.cmd.Printf("  👉 [黑胶任务第 %d/2 轮] 待完成任务列表:\n", round)
+		c.cmd.Printf("  👉 [黑胶任务第 %d/3 轮] 待完成任务列表:\n", round)
 		for _, v := range todoTasks {
 			worth := v.Worth
 			if worth == 0 && isVipSignTask(v) {
