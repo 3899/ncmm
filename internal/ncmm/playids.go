@@ -44,6 +44,7 @@ type PlayIds struct {
 	opts PlayIdsOpts
 	l    *log.Logger
 	rng  *rand.Rand
+	sharedDB database.Database
 }
 
 func NewPlayIds(root *Root, l *log.Logger) *PlayIds {
@@ -355,6 +356,10 @@ func (c *PlayIds) RunForCookie(ctx context.Context, cookieFile string) error {
 // 参数：无
 // 返回：数据库实例、是否启用缓存、初始化异常
 func (c *PlayIds) openPlayIdsDatabase() (database.Database, bool, error) {
+	if c.sharedDB != nil {
+		return c.sharedDB, true, nil
+	}
+
 	db, err := database.NewWithOptions(c.root.Cfg.Database, 1, 0, true)
 	if err == nil {
 		return db, true, nil
@@ -366,6 +371,13 @@ func (c *PlayIds) openPlayIdsDatabase() (database.Database, bool, error) {
 	}
 
 	return nil, false, fmt.Errorf("本地数据库初始化失败: %w", err)
+}
+
+func (c *PlayIds) closePlayIdsDatabase(ctx context.Context, db database.Database) {
+	if db == nil || db == c.sharedDB {
+		return
+	}
+	_ = db.Close(ctx)
 }
 
 // isDatabaseLockError 判断数据库初始化失败是否由目录锁占用触发
@@ -417,11 +429,9 @@ func (c *PlayIds) executeForCookie(ctx context.Context, cookieFile string, uniqu
 	if err != nil {
 		return 0, err
 	}
-	if db != nil {
-		_ = db.Close(ctx) // 探测完毕后立即关闭，释放锁
-	}
+	c.closePlayIdsDatabase(ctx, db)
 
-	syncSessionConfig(ctx, cli, cookieFile, user.Account.Id, nil, c.root.Cfg.Database)
+	syncSessionConfig(ctx, cli, cookieFile, user.Account.Id, c.sharedDB, c.root.Cfg.Database)
 
 	expire, err := utils.TimeUntilMidnight("Local")
 	if err != nil {
@@ -437,10 +447,10 @@ func (c *PlayIds) executeForCookie(ctx context.Context, cookieFile string, uniqu
 			if getErr == nil {
 				dailyTarget, _ = strconv.ParseInt(string(targetRecord), 10, 64)
 			} else if !strings.Contains(getErr.Error(), "Key not found") {
-				_ = tempDb.Close(ctx)
+				c.closePlayIdsDatabase(ctx, tempDb)
 				return 0, fmt.Errorf("读取今日播放目标失败: %w", getErr)
 			}
-			_ = tempDb.Close(ctx)
+			c.closePlayIdsDatabase(ctx, tempDb)
 		}
 	}
 	if dailyTarget == 0 {
@@ -474,7 +484,7 @@ func (c *PlayIds) executeForCookie(ctx context.Context, cookieFile string, uniqu
 				if err != nil {
 					c.log("[WARN] 写入今日随机目标失败: %s", err)
 				}
-				_ = tempDb.Close(ctx)
+				c.closePlayIdsDatabase(ctx, tempDb)
 			}
 		}
 	}
@@ -488,7 +498,7 @@ func (c *PlayIds) executeForCookie(ctx context.Context, cookieFile string, uniqu
 			if getErr == nil {
 				dailyCompleted, _ = strconv.ParseInt(string(completedRecord), 10, 64)
 			}
-			_ = tempDb.Close(ctx)
+			c.closePlayIdsDatabase(ctx, tempDb)
 		}
 	}
 
@@ -733,7 +743,7 @@ func (c *PlayIds) executeForCookie(ctx context.Context, cookieFile string, uniqu
 					if getErr == nil {
 						currentCompleted, _ = strconv.ParseInt(string(currentRecord), 10, 64)
 					}
-					_ = tempDb.Close(ctx)
+					c.closePlayIdsDatabase(ctx, tempDb)
 				}
 			}
 			if currentCompleted >= dailyTarget {
@@ -881,7 +891,7 @@ func (c *PlayIds) executeForCookie(ctx context.Context, cookieFile string, uniqu
 					if err := tempDb.Set(ctx, playIdsRecordKey(uid, songId), fmt.Sprintf("%v", time.Now().UnixMilli())); err != nil {
 						c.log("[WARN] 保存歌曲播放记录 %s 至本地数据库失败: %s", songId, err)
 					}
-					_ = tempDb.Close(ctx)
+					c.closePlayIdsDatabase(ctx, tempDb)
 				}
 			}
 
@@ -893,7 +903,7 @@ func (c *PlayIds) executeForCookie(ctx context.Context, cookieFile string, uniqu
 					if err != nil {
 						c.log("[WARN] 自增今日已完成次数失败: %s", err)
 					}
-					_ = tempDb.Close(ctx)
+					c.closePlayIdsDatabase(ctx, tempDb)
 				}
 			}
 

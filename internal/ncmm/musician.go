@@ -762,7 +762,7 @@ func (c *Musician) doVipPhase(ctx context.Context, mctx *musicianContext, cookie
 		case "mission_code_recently_play_count":
 			if c.root.Cfg.Musician.EnableVipPlay != nil && !*c.root.Cfg.Musician.EnableVipPlay {
 				c.cmd.Println("    ℹ️ 播放任务已在配置中关闭 (enableVipPlay = false)，跳过")
-			} else if err := c.handlePlayTask(ctx, mctx.cli, sub, mctx.resp.Data.RecentPlayCount30); err != nil {
+			} else if err := c.handlePlayTask(ctx, mctx.db, sub, mctx.resp.Data.RecentPlayCount30); err != nil {
 				log.Error("    ❌ 播放任务执行失败: %s", err)
 				c.cmd.Printf("    ❌ 播放任务失败: %s\n", err)
 			}
@@ -774,7 +774,7 @@ func (c *Musician) doVipPhase(ctx context.Context, mctx *musicianContext, cookie
 }
 
 // handlePlayTask 处理播放任务
-func (c *Musician) handlePlayTask(ctx context.Context, cli *api.Client, sub eapi.MusicianVipSubTask, recentPlayCount30 int) error {
+func (c *Musician) handlePlayTask(ctx context.Context, db database.Database, sub eapi.MusicianVipSubTask, recentPlayCount30 int) error {
 	c.cmd.Println("    👉 处理播放任务...")
 
 	cfg := c.root.Cfg.Musician.Play
@@ -876,8 +876,9 @@ func (c *Musician) handlePlayTask(ctx context.Context, cli *api.Client, sub eapi
 
 		c.cmd.Printf("    ⏳ 分摊任务开始: 选用账号 (%s), 本次需刷总数(含日推): %d 首, 尚缺主歌有效数: %d 首\n", currentAccount, runTarget, neededEffective)
 
-		// 实例化 PlayIds 服务并传入特定分摊参数
+		// 实例化 PlayIds 服务并传入特定分摊参数；复用音乐人已打开的 DB，避免 Badger 目录锁冲突
 		p := NewPlayIds(c.root, c.l)
+		p.sharedDB = db
 		p.opts = PlayIdsOpts{
 			Ids:        cfg.IDs,
 			IdsFile:    "",
