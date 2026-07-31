@@ -431,3 +431,32 @@ func (a *Api) TrialsongListen(ctx context.Context, req *TrialsongListenReq) (*Tr
 	_ = resp
 	return &reply, nil
 }
+
+type VipActivityRefillCardListenInfoReq struct {
+	types.EApiReqCommon
+	BizExtend  string `json:"bizExtend"`
+	ResourceId string `json:"resourceId"`
+	IncrAmount int    `json:"incrAmount"`
+}
+
+type VipActivityRefillCardListenInfoResp struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+	Data    bool   `json:"data"`
+}
+
+// VipActivityRefillCardListenInfo 上报 VIP 会员听歌时长与活动打卡
+func (a *Api) VipActivityRefillCardListenInfo(ctx context.Context, req *VipActivityRefillCardListenInfoReq) (*VipActivityRefillCardListenInfoResp, error) {
+	var (
+		url   = "https://interface3.music.163.com/eapi/vipactivity/app/refill/card/listen/info"
+		reply VipActivityRefillCardListenInfoResp
+		opts  = api.NewOptions()
+	)
+	opts.CryptoMode = api.CryptoModeEAPI
+	resp, err := a.client.Request(ctx, url, req, &reply, opts)
+	if err != nil {
+		return nil, fmt.Errorf("Request: %w", err)
+	}
+	_ = resp
+	return &reply, nil
+}

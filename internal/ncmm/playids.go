@@ -92,57 +92,7 @@ func formatDurationMs(d time.Duration) string {
 }
 
 func (c *PlayIds) sleepWithProgress(ctx context.Context, label string, duration time.Duration) {
-	totalSeconds := int64(duration.Seconds())
-	if totalSeconds <= 0 {
-		return
-	}
-
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
-
-	start := time.Now()
-	// 首次打印
-	fmt.Printf("[%s] [playids] %s: 0s/%s (0%%) [%s]",
-		time.Now().Format("2006-01-02 15:04:05"),
-		label,
-		formatDuration(totalSeconds),
-		strings.Repeat(" ", 20),
-	)
-
-	for {
-		select {
-		case <-ctx.Done():
-			fmt.Println()
-			return
-		case <-ticker.C:
-			elapsed := int64(time.Since(start).Seconds())
-			if elapsed >= totalSeconds {
-				elapsed = totalSeconds
-			}
-			pct := float64(elapsed) / float64(totalSeconds) * 100
-
-			barLength := 20
-			filledLength := int(float64(barLength) * (float64(elapsed) / float64(totalSeconds)))
-			if filledLength > barLength {
-				filledLength = barLength
-			}
-			bar := strings.Repeat("=", filledLength) + strings.Repeat(" ", barLength-filledLength)
-
-			fmt.Printf("\r[%s] [playids] %s: %s/%s (%.0f%%) [%s]",
-				time.Now().Format("2006-01-02 15:04:05"),
-				label,
-				formatDuration(elapsed),
-				formatDuration(totalSeconds),
-				pct,
-				bar,
-			)
-
-			if elapsed >= totalSeconds {
-				fmt.Println()
-				return
-			}
-		}
-	}
+	sleepWithProgress(ctx, c.cmd, "[playids] ", label, duration)
 }
 
 func (c *PlayIds) validate() error {

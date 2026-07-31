@@ -16,6 +16,7 @@ import (
 
 	"github.com/3899/ncmm/api"
 	"github.com/3899/ncmm/api/eapi"
+	"github.com/3899/ncmm/api/types"
 	"github.com/3899/ncmm/api/weapi"
 )
 
@@ -230,7 +231,7 @@ func (c *SignIn) executeSingleVipTask(ctx context.Context, cli *api.Client, requ
 
 	if v.MissionCode == "MRGSSVIPGQ" || strings.Contains(v.MainTitle, "听3首VIP") || strings.Contains(v.MainTitle, "听3首会员") {
 		c.cmd.Println("  👉 开始执行 [每日听3首VIP歌曲]...")
-		c.doVipSongListen(ctx, request, eapiRequest, deviceId)
+		c.doVipSongListen(ctx, cli, request, eapiRequest, deviceId)
 	}
 
 	if strings.Contains(v.MainTitle, "调音") {
@@ -584,7 +585,7 @@ func (c *SignIn) doVipSongLike(ctx context.Context, request *weapi.Api, eapiRequ
 }
 
 // doVipSongListen 听VIP歌曲任务打卡
-func (c *SignIn) doVipSongListen(ctx context.Context, request *weapi.Api, eapiRequest *eapi.Api, deviceId string) {
+func (c *SignIn) doVipSongListen(ctx context.Context, cli *api.Client, request *weapi.Api, eapiRequest *eapi.Api, deviceId string) {
 	// 获取热门 VIP 歌曲歌单 8402996200
 	detail, err := request.PlaylistDetail(ctx, &weapi.PlaylistDetailReq{
 		Id: "8402996200",
@@ -597,8 +598,6 @@ func (c *SignIn) doVipSongListen(ctx context.Context, request *weapi.Api, eapiRe
 	}
 
 	trackIds := detail.Playlist.TrackIds
-	c.cmd.Printf("  👉 成功获取热门 VIP 歌单，包含 %d 首歌曲，准备随机挑选 3 首进行听歌打卡...\n", len(trackIds))
-
 	n := len(trackIds)
 	count := 3
 	if n < 3 {
@@ -607,46 +606,105 @@ func (c *SignIn) doVipSongListen(ctx context.Context, request *weapi.Api, eapiRe
 
 	// 随机打乱选择 3 首歌
 	indices := rand.Perm(n)
+	selectedSongIds := make([]string, count)
+	for i := 0; i < count; i++ {
+		selectedSongIds[i] = fmt.Sprintf("%d", trackIds[indices[i]].Id)
+	}
+
+	// 批量查询歌曲详情以获得正确的 AlbumId、歌名和歌曲时长 (dt)
+	reqList := make([]weapi.SongDetailReqList, len(selectedSongIds))
+	for i, id := range selectedSongIds {
+		reqList[i] = weapi.SongDetailReqList{Id: id, V: 0}
+	}
+	albumMap := make(map[int64]int64)
+	nameMap := make(map[int64]string)
+	durationMap := make(map[int64]int64)
+
+	details, detailErr := request.SongDetail(ctx, &weapi.SongDetailReq{C: reqList})
+	if detailErr == nil && details != nil {
+		for _, s := range details.Songs {
+			albumMap[s.Id] = s.Al.Id
+			nameMap[s.Id] = s.Name
+			durationMap[s.Id] = s.Dt
+		}
+	}
+
+	c.cmd.Printf("  👉 成功获取热门 VIP 歌单，包含 %d 首歌曲，准备随机挑选 %d 首进行听歌打卡...\n", n, count)
+
 	successCount := 0
 	for i := 0; i < count; i++ {
-		idx := indices[i]
-		songId := trackIds[idx].Id
+		songId := trackIds[indices[i]].Id
 		songIdStr := fmt.Sprintf("%d", songId)
 
-		// 1. 模拟播放器停留 1~5 秒
-		sleepSec := 1 + rand.Intn(5) // 1 ~ 5 秒
-		c.cmd.Printf("    ⏳ [%d/3] 正在模拟播放歌曲 ID %d，停留 %d 秒...\n", i+1, songId, sleepSec)
+		albumId := albumMap[songId]
+		albumIdStr := fmt.Sprintf("%d", albumId)
 
-		select {
-		case <-ctx.Done():
-			c.cmd.Println("    ❌ 任务被取消")
-			return
-		case <-time.After(time.Duration(sleepSec) * time.Second):
+		dt := durationMap[songId]
+		durationSec := int(dt / 1000)
+		if durationSec <= 0 {
+			durationSec = 180 // 兜底默认 3 分钟
 		}
 
-		// 2. 上报听歌打卡 (TrialsongListen)
-		// 第一阶段仅传递 SongId、AlbumId、Scene，其余通用字段以注释形式保留并不赋值
+		// 1. 模拟播放器拉流 (SongPlayerV1 / trialMode 31) 并发起真实音频流 CDN 请求
+		startTimeSec := time.Now().Unix()
+		playerResp, playerErr := request.SongPlayerV1(ctx, &weapi.SongPlayerV1Req{
+			Ids:        types.IntsString{songId},
+			Level:      types.LevelStandard,
+			EncodeType: "aac",
+			TrialMode:  "31",
+		})
+		if playerErr == nil && playerResp != nil && playerResp.Code == 200 && len(playerResp.Data) > 0 {
+			if songUrl := playerResp.Data[0].Url; songUrl != "" {
+				_ = downloadAudioToBuffer(ctx, cli, songUrl)
+			}
+		}
+
+		// 2. 按歌曲完整时长模拟播放停留与动态进度条
+		songName := nameMap[songId]
+		if songName == "" {
+			songName = trackIds[indices[i]].Name
+		}
+		var label string
+		if songName != "" {
+			label = fmt.Sprintf("[%d/%d] 正在听 VIP 歌曲《%s》(ID: %d)", i+1, count, songName, songId)
+		} else {
+			label = fmt.Sprintf("[%d/%d] 正在听 VIP 歌曲 (ID: %d)", i+1, count, songId)
+		}
+		c.sleepWithProgress(ctx, label, time.Duration(durationSec)*time.Second)
+
+		// 3. 上报 VIP 听歌时长与活动充值卡记录 (VipActivityRefillCardListenInfo)
+		refillReq := &eapi.VipActivityRefillCardListenInfoReq{
+			BizExtend:  fmt.Sprintf("{\"songId\":\"%s\"}", songIdStr),
+			ResourceId: fmt.Sprintf("%s_%d", songIdStr, startTimeSec),
+			IncrAmount: durationSec,
+		}
+		_, _ = eapiRequest.VipActivityRefillCardListenInfo(ctx, refillReq)
+
+		// 4. 上报听歌打卡 (TrialsongListen, Scene: 31, 真实 AlbumId)
 		listenReq := &eapi.TrialsongListenReq{
 			SongId:  songIdStr,
-			AlbumId: "0",
-			Scene:   1,
-			// EApiReqCommon: types.EApiReqCommon{
-			// 	DeviceId: deviceId,
-			// 	OS:       "iOS",
-			// 	VerifyId: 1,
-			// 	Header:   struct{}{},
-			// 	ER:       true,
-			// },
+			AlbumId: albumIdStr,
+			Scene:   31,
 		}
 
 		resp, listenErr := eapiRequest.TrialsongListen(ctx, listenReq)
 		if listenErr != nil {
-			c.cmd.Printf("    ❌ [%d/3] 听歌上报 ID %d 失败: %v\n", i+1, songId, listenErr)
+			c.cmd.Printf("    ❌ [%d/%d] 听歌上报 ID %d 失败: %v\n", i+1, count, songId, listenErr)
 		} else if resp.Code != 200 {
-			c.cmd.Printf("    ⚠️ [%d/3] 听歌上报 ID %d 提示异常: code=%d msg=%s\n", i+1, songId, resp.Code, resp.Message)
+			c.cmd.Printf("    ⚠️ [%d/%d] 听歌上报 ID %d 提示异常: code=%d msg=%s\n", i+1, count, songId, resp.Code, resp.Message)
 		} else {
-			c.cmd.Printf("    ✅ [%d/3] 听歌上报 ID %d 成功\n", i+1, songId)
+			c.cmd.Printf("    ✅ [%d/%d] 听歌上报 ID %d 成功\n", i+1, count, songId)
 			successCount++
+		}
+
+		// 4. 切歌过渡等待 2~5 秒
+		if i < count-1 {
+			transitionSleep := 2 + rand.Intn(4)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(time.Duration(transitionSleep) * time.Second):
+			}
 		}
 	}
 	c.cmd.Printf("  ✅ 听 3 首 VIP 歌曲操作完毕，成功: %d/%d\n", successCount, count)

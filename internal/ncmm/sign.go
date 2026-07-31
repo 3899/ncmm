@@ -7,7 +7,9 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/3899/ncmm/api"
@@ -79,6 +81,175 @@ func (c *SignIn) sleepBetweenAccounts(ctx context.Context, currentAccount string
 	select {
 	case <-ctx.Done():
 	case <-time.After(time.Duration(sleepSec) * time.Second):
+	}
+}
+
+func isStdoutTerminal() bool {
+	fi, err := os.Stdout.Stat()
+	if err != nil {
+		return false
+	}
+	return (fi.Mode() & os.ModeCharDevice) != 0
+}
+
+func (c *SignIn) sleepWithProgress(ctx context.Context, label string, duration time.Duration) {
+	sleepWithProgress(ctx, c.cmd, "", label, duration)
+}
+
+func sleepWithProgress(ctx context.Context, cmd *cobra.Command, prefix string, label string, duration time.Duration) {
+	totalSeconds := int64(duration.Seconds())
+	if totalSeconds <= 0 {
+		return
+	}
+
+	isTTY := isStdoutTerminal()
+
+	// 非 TTY 交互终端（如输出重定向到日志文件、后台任务、容器环境等）：
+	// 避免每秒 \r 输出刷爆日志文件，按每 25% 里程碑 (0%, 25%, 50%, 75%, 100%) 独立输出单行日志
+	if !isTTY {
+		ticker := time.NewTicker(1 * time.Second)
+		defer ticker.Stop()
+
+		start := time.Now()
+		printedMilestones := make(map[int]bool)
+
+		printNonTTYLine := func(elapsed int64, pct int) {
+			nowStr := time.Now().Format("2006-01-02 15:04:05")
+			if prefix != "" {
+				msg := fmt.Sprintf("[%s] %s%s - 进度: %s/%s (%d%%)",
+					nowStr,
+					prefix,
+					label,
+					formatDuration(elapsed),
+					formatDuration(totalSeconds),
+					pct,
+				)
+				if cmd != nil {
+					cmd.Println(msg)
+				} else {
+					fmt.Println(msg)
+				}
+			} else {
+				msg := fmt.Sprintf("    ⏳ %s - 进度: %s/%s (%d%%)",
+					label,
+					formatDuration(elapsed),
+					formatDuration(totalSeconds),
+					pct,
+				)
+				if cmd != nil {
+					cmd.Println(msg)
+				} else {
+					fmt.Println(msg)
+				}
+			}
+		}
+
+		// 0% 初始里程碑
+		printNonTTYLine(0, 0)
+		printedMilestones[0] = true
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				elapsed := int64(time.Since(start).Seconds())
+				if elapsed >= totalSeconds {
+					elapsed = totalSeconds
+				}
+				pct := int(float64(elapsed) / float64(totalSeconds) * 100)
+
+				// 触发 25%, 50%, 75%, 100% 里程碑日志
+				for _, ms := range []int{25, 50, 75, 100} {
+					if pct >= ms && !printedMilestones[ms] {
+						printedMilestones[ms] = true
+						printNonTTYLine(elapsed, ms)
+					}
+				}
+
+				if elapsed >= totalSeconds {
+					return
+				}
+			}
+		}
+	}
+
+	// 交互式 TTY 终端：使用 \r 覆盖刷新进度条，并使用 \033[K 清除行尾残余字符
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	start := time.Now()
+
+	printLine := func(elapsed int64) {
+		if elapsed > totalSeconds {
+			elapsed = totalSeconds
+		}
+		pct := float64(elapsed) / float64(totalSeconds) * 100
+
+		barLength := 20
+		filledLength := int(float64(barLength) * (float64(elapsed) / float64(totalSeconds)))
+		if filledLength > barLength {
+			filledLength = barLength
+		}
+		bar := strings.Repeat("=", filledLength) + strings.Repeat(" ", barLength-filledLength)
+
+		if prefix != "" {
+			nowStr := time.Now().Format("2006-01-02 15:04:05")
+			line := fmt.Sprintf("\r[%s] %s%s: %s/%s (%.0f%%) [%s]\033[K",
+				nowStr,
+				prefix,
+				label,
+				formatDuration(elapsed),
+				formatDuration(totalSeconds),
+				pct,
+				bar,
+			)
+			if cmd != nil {
+				cmd.Print(line)
+			} else {
+				fmt.Print(line)
+			}
+		} else {
+			line := fmt.Sprintf("\r    ⏳ %s: %s/%s (%.0f%%) [%s]\033[K",
+				label,
+				formatDuration(elapsed),
+				formatDuration(totalSeconds),
+				pct,
+				bar,
+			)
+			if cmd != nil {
+				cmd.Print(line)
+			} else {
+				fmt.Print(line)
+			}
+		}
+	}
+
+	// 首次打印
+	printLine(0)
+
+	for {
+		select {
+		case <-ctx.Done():
+			if cmd != nil {
+				cmd.Println()
+			} else {
+				fmt.Println()
+			}
+			return
+		case <-ticker.C:
+			elapsed := int64(time.Since(start).Seconds())
+			printLine(elapsed)
+
+			if elapsed >= totalSeconds {
+				if cmd != nil {
+					cmd.Println()
+				} else {
+					fmt.Println()
+				}
+				return
+			}
+		}
 	}
 }
 
