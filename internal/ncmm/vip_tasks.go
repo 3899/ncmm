@@ -661,9 +661,6 @@ func (c *SignIn) doVipSongListen(ctx context.Context, cli *api.Client, request *
 
 		// 2. 按歌曲完整时长模拟播放停留与动态进度条
 		songName := nameMap[songId]
-		if songName == "" {
-			songName = trackIds[indices[i]].Name
-		}
 		var label string
 		if songName != "" {
 			label = fmt.Sprintf("[%d/%d] 正在听 VIP 歌曲《%s》(ID: %d)", i+1, count, songName, songId)

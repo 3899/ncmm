@@ -300,8 +300,8 @@ updater:
 # 运行失败通知（策略在此；通道凭证见独立文件 notify.yaml）
 # 仅在有失败或（on_skip=true 时的）跳过时，于进程结束汇总推送一条消息；成功不推送。
 notify:
-  # 总开关，默认关闭
-  enabled: false
+  # 总开关，默认打开，另外需要配置notify.yaml的推送通道才会正确推送
+  enabled: true
   # 任务被跳过（如缺 antiCheatToken）时是否纳入汇总推送，默认关闭
   on_skip: false
   # 推送标题前缀，便于多机区分
