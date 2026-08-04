@@ -295,12 +295,14 @@ type VipMemberGiftCloudConf struct {
 }
 // MusicianPlayConf 播放任务配置
 type MusicianPlayConf struct {
-	IDs     string        `json:"ids" yaml:"ids"`
-	IDsFile StringOrSlice `json:"idsFile" yaml:"idsFile"`
-	RunMin  int64         `json:"run_min" yaml:"run_min"`
-	RunMax  int64         `json:"run_max" yaml:"run_max"`
-	GapMin  int64         `json:"gap_min" yaml:"gap_min"`
-	GapMax  int64         `json:"gap_max" yaml:"gap_max"`
+	IDs      string        `json:"ids" yaml:"ids"`
+	IDsFile  StringOrSlice `json:"idsFile" yaml:"idsFile"`
+	DailyMin int64         `json:"daily_min" yaml:"daily_min"`
+	DailyMax int64         `json:"daily_max" yaml:"daily_max"`
+	RunMin   int64         `json:"run_min" yaml:"run_min"`
+	RunMax   int64         `json:"run_max" yaml:"run_max"`
+	GapMin   int64         `json:"gap_min" yaml:"gap_min"`
+	GapMax   int64         `json:"gap_max" yaml:"gap_max"`
 }
 
 func (c *Config) Validate() error {

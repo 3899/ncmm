@@ -796,7 +796,17 @@ func (c *Musician) handlePlayTask(ctx context.Context, db database.Database, sub
 		return fmt.Errorf("没有配置任何刷歌歌曲ID，请在 config.yaml 的 musician.play 或 playids 中配置 ids / idsFile")
 	}
 
-	// 2. 确定播放时间间隔参数
+	// 2. 确定播放时间间隔与每日目标上限参数
+	dailyMin := cfg.DailyMin
+	if dailyMin <= 0 && rootPlayCfg != nil {
+		dailyMin = rootPlayCfg.DailyMin
+	}
+
+	dailyMax := cfg.DailyMax
+	if dailyMax <= 0 && rootPlayCfg != nil {
+		dailyMax = rootPlayCfg.DailyMax
+	}
+
 	gapMin := cfg.GapMin
 	if gapMin <= 0 && rootPlayCfg != nil {
 		gapMin = rootPlayCfg.GapMin
@@ -882,6 +892,8 @@ func (c *Musician) handlePlayTask(ctx context.Context, db database.Database, sub
 		p.opts = PlayIdsOpts{
 			Ids:        cfg.IDs,
 			IdsFile:    "",
+			DailyMin:   dailyMin,
+			DailyMax:   dailyMax,
 			RunMin:     runTarget,
 			RunMax:     runTarget,
 			GapMin:     gapMin,

@@ -267,6 +267,10 @@ musician:
     ids: ""
     # 进阶任务专属覆盖的歌曲 ID 文件路径（留空继承 playids.idsFile，支持并集去重合并。支持单个字符串或数组列表形式的多源配置）
     idsFile: ""
+    # 进阶任务单日播放歌曲随机目标下限 (为 0 则继承 playids.daily_min)
+    daily_min: 0
+    # 进阶任务单日播放歌曲随机目标上限 (为 0 则继承 playids.daily_max)
+    daily_max: 0
     # 进阶任务单次运行的播放歌曲随机目标下限 (为 0 则继承 playids.run_min)
     run_min: 0
     # 进阶任务单次运行的播放歌曲随机目标上限 (为 0 则继承 playids.run_max)
