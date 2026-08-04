@@ -307,6 +307,7 @@ func (c *VipMemberGift) runGift(ctx context.Context, eapiCli *eapi.Api, weapiCli
 	var availableDays int64
 	var tokenExpireTime int64
 	vipLevel := int64(0)
+	canSendVip := -1
 
 	if page, err := eapiCli.VipMemberGiftPageInfo(ctx, &eapi.VipMemberGiftPageInfoReq{VipMemberGiftBaseReq: vipMemberGiftBaseReq(protocol)}); err != nil {
 		c.cmd.Printf("[vip-member-gift] page/info failed, will use detail fallback: %v\n", err)
@@ -314,10 +315,37 @@ func (c *VipMemberGift) runGift(ctx context.Context, eapiCli *eapi.Api, weapiCli
 		vipLevel = int64(page.Data.VipLevel)
 		totalDays = int64(page.Data.SendVipDayTotal)
 		availableDays = int64(page.Data.SendVipDayLeft)
-		if page.Data.CanSendVip == 0 && availableDays <= 0 {
-			c.cmd.Printf("[vip-member-gift] 跳过赠送：没有剩余可用赠送天数 (%s)\n", page.Data.Desc)
+		canSendVip = page.Data.CanSendVip
+	}
+
+	// 1. 校验 PageInfo 返回的 CanSendVip 资格
+	if canSendVip == 0 {
+		c.cmd.Printf("[vip-member-gift] 跳过赠送：当前账号无赠送资格 (canSendVip=0)\n")
+		return false, nil
+	}
+
+	// 2. 查询 VIP 成长值和黑胶 VIP 状态
+	grow, growErr := weapiCli.VipGrowPoint(ctx, &weapi.VipGrowPointReq{})
+	if growErr == nil && grow != nil && grow.Code == 200 {
+		if vipLevel <= 0 {
+			if grow.Data.LevelCard.Level > 0 {
+				vipLevel = grow.Data.LevelCard.Level
+			} else if grow.Data.UserLevel.Level > 0 {
+				vipLevel = grow.Data.UserLevel.Level
+			}
+		}
+		// 校验账号当前黑胶 VIP 是否已到期/未开通
+		nowMs := time.Now().UnixMilli()
+		if grow.Data.UserLevel.VipType <= 0 || (grow.Data.UserLevel.ExpireTime > 0 && grow.Data.UserLevel.ExpireTime <= nowMs) {
+			c.cmd.Printf("[vip-member-gift] 跳过赠送：当前账号黑胶 VIP 已过期或未开通\n")
 			return false, nil
 		}
+	}
+
+	// 3. 校验 VIP 等级必须 >= 2 才有赠送资格
+	if vipLevel < 2 {
+		c.cmd.Printf("[vip-member-gift] 跳过赠送：会员等级为 V%d，须达到 V2 或以上才具备赠送资格\n", vipLevel)
+		return false, nil
 	}
 
 	resp, err := eapiCli.VipMemberGiftTokenCreate(ctx, &eapi.VipMemberGiftTokenCreateReq{VipMemberGiftBaseReq: vipMemberGiftBaseReq(protocol)})
@@ -345,15 +373,7 @@ func (c *VipMemberGift) runGift(ctx context.Context, eapiCli *eapi.Api, weapiCli
 	}
 
 	if totalDays <= 0 {
-		if grow, err := weapiCli.VipGrowPoint(ctx, &weapi.VipGrowPointReq{}); err == nil && grow.Code == 200 {
-			if vipLevel <= 0 {
-				vipLevel = grow.Data.LevelCard.Level
-			}
-			if vipLevel == 0 {
-				vipLevel = grow.Data.UserLevel.Level
-			}
-			totalDays = vipMemberGiftDaysFromLevel(vipLevel)
-		}
+		totalDays = vipMemberGiftDaysFromLevel(vipLevel)
 	}
 	if totalDays <= 0 {
 		return false, fmt.Errorf("could not determine gift available days; skip publishing token")
@@ -387,95 +407,114 @@ func (c *VipMemberGift) runClaim(ctx context.Context, eapiCli *eapi.Api, cloud *
 	month := currentVipMemberGiftMonth()
 	receiverUID := strconv.FormatInt(uid, 10)
 
-	available, err := cloud.AvailableToken(ctx, month, receiverUID, receiverUID)
-	if err != nil {
-		return false, fmt.Errorf("cloud available token: %w", err)
-	}
-	if available.Claimed {
-		c.cmd.Printf("[vip-member-gift] 跳过领取：%s已领过。\n", month)
-		return true, nil
-	}
-	if available.Token == nil || strings.TrimSpace(available.Token.Token) == "" {
-		c.cmd.Println("[vip-member-gift] 没有可领取的云端VIP。")
-		return false, nil
-	}
-	token := strings.TrimSpace(available.Token.Token)
-	//c.cmd.Printf("[vip-member-gift] selected cloud token: hash=%s availableDays=%d\n", shortHash(available.Token.TokenHash), available.Token.AvailableDays)
+	maxRetries := 5
+	var lastErr error
 
-	detail, err := eapiCli.VipMemberGiftDetail(ctx, &eapi.VipMemberGiftDetailReq{
-		VipMemberGiftBaseReq: vipMemberGiftBaseReq(protocol),
-		Token:                token,
-	})
-	if err != nil {
-		_ = cloud.TokenFail(ctx, month, receiverUID, available.Token.TokenHash, "failed", err.Error(), 0)
-		return false, fmt.Errorf("detail/info/get: %w", err)
-	}
-	if detail.Code != 200 {
-		_ = cloud.TokenFail(ctx, month, receiverUID, available.Token.TokenHash, "failed", detail.Message, 0)
-		return false, fmt.Errorf("detail/info/get failed: code=%d msg=%s", detail.Code, detail.Message)
-	}
-	if detail.Data.TokenExpireTime > 0 && detail.Data.TokenExpireTime <= time.Now().UnixMilli() {
-		_ = cloud.TokenFail(ctx, month, receiverUID, available.Token.TokenHash, "expired", "token expired", 0)
-		c.cmd.Println("[vip-member-gift] 领取失败：云端VIP已过期")
-		return false, nil
-	}
-	if detail.Data.CurrentUserRecordID != nil && *detail.Data.CurrentUserRecordID > 0 {
-		duration := detail.Data.Duration
-		if duration <= 0 {
-			duration = 1
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		available, err := cloud.AvailableToken(ctx, month, receiverUID, receiverUID)
+		if err != nil {
+			return false, fmt.Errorf("cloud available token: %w", err)
 		}
-		_, err := cloud.ClaimSuccess(ctx, map[string]interface{}{
+		if available.Claimed {
+			c.cmd.Printf("[vip-member-gift] 跳过领取：%s已领过。\n", month)
+			return true, nil
+		}
+		if available.Token == nil || strings.TrimSpace(available.Token.Token) == "" {
+			if attempt == 0 {
+				c.cmd.Println("[vip-member-gift] 没有可领取的云端VIP。")
+			} else {
+				c.cmd.Println("[vip-member-gift] 没有更多可领取的有效云端VIP。")
+			}
+			return false, lastErr
+		}
+		token := strings.TrimSpace(available.Token.Token)
+
+		detail, err := eapiCli.VipMemberGiftDetail(ctx, &eapi.VipMemberGiftDetailReq{
+			VipMemberGiftBaseReq: vipMemberGiftBaseReq(protocol),
+			Token:                token,
+		})
+		if err != nil {
+			_ = cloud.TokenFail(ctx, month, receiverUID, available.Token.TokenHash, "failed", err.Error(), 0)
+			lastErr = fmt.Errorf("detail/info/get: %w", err)
+			continue
+		}
+		if detail.Code != 200 {
+			_ = cloud.TokenFail(ctx, month, receiverUID, available.Token.TokenHash, "failed", detail.Message, 0)
+			lastErr = fmt.Errorf("detail/info/get failed: code=%d msg=%s", detail.Code, detail.Message)
+			continue
+		}
+		if detail.Data.TokenExpireTime > 0 && detail.Data.TokenExpireTime <= time.Now().UnixMilli() {
+			_ = cloud.TokenFail(ctx, month, receiverUID, available.Token.TokenHash, "expired", "token expired", 0)
+			c.cmd.Println("[vip-member-gift] 所选云端VIP已过期，尝试匹配下一个...")
+			lastErr = fmt.Errorf("token expired")
+			continue
+		}
+		if detail.Data.CurrentUserRecordID != nil && *detail.Data.CurrentUserRecordID > 0 {
+			duration := detail.Data.Duration
+			if duration <= 0 {
+				duration = 1
+			}
+			_, err := cloud.ClaimSuccess(ctx, map[string]interface{}{
+				"month":       month,
+				"receiverUid": receiverUID,
+				"tokenHash":   available.Token.TokenHash,
+				"recordId":    strconv.FormatInt(*detail.Data.CurrentUserRecordID, 10),
+				"duration":    duration,
+				"rewardName":  detail.Data.RewardName,
+				"acceptedAt":  detail.Data.AcceptTime,
+			})
+			if err != nil {
+				return false, fmt.Errorf("cloud claim success for existing record: %w", err)
+			}
+			c.cmd.Printf("[vip-member-gift] 跳过领取：%s已领过。\n", month)
+			return true, nil
+		}
+
+		accept, err := eapiCli.VipMemberGiftAccept(ctx, &eapi.VipMemberGiftAcceptReq{
+			VipMemberGiftBaseReq: vipMemberGiftBaseReq(protocol),
+			Token:                token,
+			Refer:                strings.TrimSpace(cfg.Refer),
+			CheckToken:           antiCheatToken,
+		})
+		if err != nil {
+			_ = cloud.TokenFail(ctx, month, receiverUID, available.Token.TokenHash, "failed", err.Error(), 0)
+			lastErr = fmt.Errorf("accept: %w", err)
+			c.cmd.Printf("[vip-member-gift] 领取请求异常 (%v)，尝试匹配下一个云端VIP...\n", err)
+			continue
+		}
+		if accept.Code != 200 {
+			reason := "failed"
+			if strings.Contains(accept.Message, "过期") {
+				reason = "expired"
+			} else if strings.Contains(accept.Message, "不是会员") || accept.Code == 12206 {
+				reason = "invalid"
+			}
+			_ = cloud.TokenFail(ctx, month, receiverUID, available.Token.TokenHash, reason, accept.Message, 0)
+			lastErr = fmt.Errorf("accept failed: code=%d msg=%s", accept.Code, accept.Message)
+			c.cmd.Printf("[vip-member-gift] 领取失败 (code=%d msg=%s)，尝试匹配下一个云端VIP...\n", accept.Code, accept.Message)
+			continue
+		}
+		if accept.Data.Duration <= 0 {
+			lastErr = fmt.Errorf("accept succeeded but duration is empty")
+			continue
+		}
+
+		claim, err := cloud.ClaimSuccess(ctx, map[string]interface{}{
 			"month":       month,
 			"receiverUid": receiverUID,
 			"tokenHash":   available.Token.TokenHash,
-			"recordId":    strconv.FormatInt(*detail.Data.CurrentUserRecordID, 10),
-			"duration":    duration,
-			"rewardName":  detail.Data.RewardName,
-			"acceptedAt":  detail.Data.AcceptTime,
+			"recordId":    strconv.FormatInt(accept.Data.RecordID, 10),
+			"duration":    accept.Data.Duration,
+			"rewardName":  accept.Data.RewardName,
+			"acceptedAt":  time.Now().UnixMilli(),
 		})
 		if err != nil {
-			return false, fmt.Errorf("cloud claim success for existing record: %w", err)
+			return false, fmt.Errorf("cloud claim success: %w", err)
 		}
-		c.cmd.Printf("[vip-member-gift] 跳过领取：%s已领过。\n", month)
+		c.printClaimResult(claim)
 		return true, nil
 	}
-
-	accept, err := eapiCli.VipMemberGiftAccept(ctx, &eapi.VipMemberGiftAcceptReq{
-		VipMemberGiftBaseReq: vipMemberGiftBaseReq(protocol),
-		Token:                token,
-		Refer:                strings.TrimSpace(cfg.Refer),
-		CheckToken:           antiCheatToken,
-	})
-	if err != nil {
-		_ = cloud.TokenFail(ctx, month, receiverUID, available.Token.TokenHash, "failed", err.Error(), 0)
-		return false, fmt.Errorf("accept: %w", err)
-	}
-	if accept.Code != 200 {
-		reason := "failed"
-		if strings.Contains(accept.Message, "过期") {
-			reason = "expired"
-		}
-		_ = cloud.TokenFail(ctx, month, receiverUID, available.Token.TokenHash, reason, accept.Message, 0)
-		return false, fmt.Errorf("accept failed: code=%d msg=%s", accept.Code, accept.Message)
-	}
-	if accept.Data.Duration <= 0 {
-		return false, fmt.Errorf("accept succeeded but duration is empty")
-	}
-
-	claim, err := cloud.ClaimSuccess(ctx, map[string]interface{}{
-		"month":       month,
-		"receiverUid": receiverUID,
-		"tokenHash":   available.Token.TokenHash,
-		"recordId":    strconv.FormatInt(accept.Data.RecordID, 10),
-		"duration":    accept.Data.Duration,
-		"rewardName":  accept.Data.RewardName,
-		"acceptedAt":  time.Now().UnixMilli(),
-	})
-	if err != nil {
-		return false, fmt.Errorf("cloud claim success: %w", err)
-	}
-	c.printClaimResult(claim)
-	return true, nil
+	return false, lastErr
 }
 
 func (c *VipMemberGift) printClaimResult(data *vipMemberGiftCloudClaimSuccessData) {

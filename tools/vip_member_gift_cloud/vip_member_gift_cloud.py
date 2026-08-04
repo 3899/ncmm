@@ -657,6 +657,8 @@ class VipGiftStore:
 
         reason = as_text(body.get("reason") or body.get("status") or "failed").lower()
         message = as_text(body.get("message"))
+        if "不是会员" in message or "12206" in message:
+            reason = "invalid"
         available_days = body.get("availableDays") or body.get("available_days")
         ts = now_ms()
 
