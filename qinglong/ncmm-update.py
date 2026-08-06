@@ -121,36 +121,64 @@ def stop_running_ncmm(binary_name):
             print(f"[WARNING] 尝试终止 Windows 进程时发生异常: {e}")
     else:
         print(f"[LOG] 正在检查并终止 Linux/Unix 平台上的 {binary_name} 进程...")
-        killed = False
-        # 优先使用 pkill
-        for cmd in [["pkill", "-x", binary_name], ["killall", binary_name]]:
-            try:
-                subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                killed = True
-                break
-            except FileNotFoundError:
-                continue
-            except Exception as e:
-                print(f"[WARNING] 尝试终止 Unix 进程时发生异常 ({cmd[0]}): {e}")
-                break
-        if not killed:
-            # 最后兜底：遍历 /proc 手动查杀
-            try:
-                for pid_dir in os.listdir('/proc'):
-                    if not pid_dir.isdigit():
-                        continue
-                    try:
-                        cmdline_path = os.path.join('/proc', pid_dir, 'cmdline')
-                        with open(cmdline_path, 'r') as f:
-                            cmdline = f.read()
-                        if binary_name in cmdline:
-                            os.kill(int(pid_dir), 9)
-                            print(f"[LOG] 已通过 /proc 手动终止进程 PID={pid_dir}")
-                    except (PermissionError, FileNotFoundError, ProcessLookupError):
-                        pass
-            except Exception as e:
-                print(f"[WARNING] /proc 遍历查杀失败: {e}")
+        pkill_used = False
+        try:
+            res = subprocess.run(["pkill", "-x", binary_name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if res.returncode == 0:
+                pkill_used = True
+        except Exception:
+            pkill_used = False
+
+        if not pkill_used:
+            # 纯 Python 扫描 /proc 目录（支持无 ps/pkill/lsof 的极简面板环境，如呆呆面板）
+            current_pid = os.getpid()
+            parent_pid = os.getppid() if hasattr(os, 'getppid') else -1
             
+            try:
+                for entry in os.listdir('/proc'):
+                    if not entry.isdigit():
+                        continue
+                    pid = int(entry)
+                    
+                    # 1. 排除当前 Python 脚本进程及父进程（防止自杀）
+                    if pid in (current_pid, parent_pid):
+                        continue
+                    
+                    # 2. 读取该 PID 对应的可执行二进制文件软链接
+                    exe_link = f"/proc/{entry}/exe"
+                    is_target = False
+                    
+                    if os.path.exists(exe_link):
+                        try:
+                            real_exe = os.readlink(exe_link)
+                            if os.path.basename(real_exe) == binary_name:
+                                is_target = True
+                        except Exception:
+                            pass
+                    
+                    # 3. 兜底检查命令行：排除带 .py 的脚本进程
+                    if not is_target:
+                        try:
+                            with open(f"/proc/{entry}/cmdline", "rb") as f:
+                                cmd_bytes = f.read()
+                            cmd_str = cmd_bytes.decode("utf-8", errors="ignore").replace("\0", " ")
+                            if ".py" not in cmd_str:
+                                parts = cmd_str.split()
+                                if parts and os.path.basename(parts[0]) == binary_name:
+                                    is_target = True
+                        except Exception:
+                            pass
+
+                    # 4. 发送 SIGKILL 终止目标进程
+                    if is_target:
+                        try:
+                            os.kill(pid, 9)
+                            print(f"[LOG] 已通过 /proc 扫描成功终止进程 PID={pid}")
+                        except Exception as ke:
+                            print(f"[WARNING] 终止进程 PID={pid} 失败: {ke}")
+            except Exception as e:
+                print(f"[WARNING] /proc 扫描终止进程发生异常: {e}")
+
     # 等待 1.5 秒，确保操作系统完全释放文件锁定
     time.sleep(1.5)
 
@@ -175,6 +203,12 @@ def parse_yaml(content):
             line_type = 'comment'
         elif stripped.startswith('-'):
             line_type = 'list_item'
+            # 处理 - key: val 形式
+            after_dash = stripped[1:].strip()
+            if ':' in after_dash:
+                parts = after_dash.split(':', 1)
+                key = parts[0].strip()
+                val = parts[1].strip()
         elif ':' in stripped:
             parts = stripped.split(':', 1)
             key = parts[0].strip()
@@ -205,6 +239,36 @@ def parse_yaml(content):
             line['key_path'] = tuple([s[1] for s in stack])
 
     return parsed_lines
+
+def get_block_by_key_name(parsed_lines, target_key):
+    """根据键名获取完整块（适用于 antiCheatTokens, topics 等特异性动态 Block 键）。"""
+    key_idx = -1
+    for i, line in enumerate(parsed_lines):
+        if line['type'] == 'key' and line['key'] == target_key:
+            key_idx = i
+            break
+    if key_idx == -1:
+        return None, -1
+
+    key_line = parsed_lines[key_idx]
+    d = key_line['indent']
+    block_lines = [key_line['raw']]
+    for j in range(key_idx + 1, len(parsed_lines)):
+        line = parsed_lines[j]
+        if line['type'] in ('empty', 'comment'):
+            has_child = False
+            for k in range(j + 1, len(parsed_lines)):
+                fut = parsed_lines[k]
+                if fut['type'] not in ('empty', 'comment'):
+                    has_child = fut['indent'] > d
+                    break
+            if has_child:
+                block_lines.append(line['raw'])
+            continue
+        if line['indent'] <= d:
+            break
+        block_lines.append(line['raw'])
+    return block_lines, d
 
 def get_data_paths(parsed_lines):
     """获取所有叶子键路径（即有值的键，不包含纯容器键）。"""
@@ -239,7 +303,6 @@ def get_block_for_path(parsed_lines, path):
     block_lines = [key_line['raw']]
     for j in range(key_idx + 1, len(parsed_lines)):
         line = parsed_lines[j]
-        # 空行和注释行：仅在后续仍有属于此块的子内容时才纳入
         if line['type'] in ('empty', 'comment'):
             has_child_after = False
             for k in range(j + 1, len(parsed_lines)):
@@ -249,9 +312,7 @@ def get_block_for_path(parsed_lines, path):
                     break
             if has_child_after:
                 block_lines.append(line['raw'])
-            # 否则不纳入（属于下一个同级键的间隔行）
             continue
-        # 非空非注释行：缩进必须大于键行才属于此块
         if line['indent'] <= d:
             break
         block_lines.append(line['raw'])
@@ -275,8 +336,35 @@ def adjust_block_indent(block_lines, target_indent, source_indent):
 
 def merge_yaml(default_content, user_content):
     """将用户配置值合并到默认配置结构中，保持默认配置的缩进风格。"""
+    # 方案 1：若环境安装了 PyYAML，优先使用安全的 AST 级深层字典合并
+    try:
+        import yaml
+        def deep_merge(def_dict, user_dict):
+            merged = dict(def_dict)
+            for k, u_val in user_dict.items():
+                if k in merged:
+                    if isinstance(merged[k], dict) and isinstance(u_val, dict):
+                        merged[k] = deep_merge(merged[k], u_val)
+                    else:
+                        merged[k] = u_val
+                else:
+                    merged[k] = u_val
+            return merged
+
+        def_obj = yaml.safe_load(default_content)
+        user_obj = yaml.safe_load(user_content)
+        if isinstance(def_obj, dict) and isinstance(user_obj, dict):
+            merged_obj = deep_merge(def_obj, user_obj)
+            return yaml.dump(merged_obj, allow_unicode=True, sort_keys=False, indent=2)
+    except Exception:
+        pass
+
+    # 方案 2：纯 Python 文本级解析与原子 Block 保护合并
     default_lines = parse_yaml(default_content)
     user_lines = parse_yaml(user_content)
+
+    # 必须作为整体原子 Block 替换的键（包含自定义字典 Key 或复杂列表结构）
+    ATOMIC_BLOCK_KEYS = {'antiCheatTokens', 'topics', 'fast_tasks', 'slow_tasks', 'proxy_mirrors', 'idsFile', 'titlesFile', 'messagesFile', 'imageUrls'}
 
     user_data_paths = get_data_paths(user_lines)
     default_data_paths = get_data_paths(default_lines)
@@ -285,13 +373,11 @@ def merge_yaml(default_content, user_content):
     skip_depth = -1  # 当前正在跳过的键的缩进层级
 
     for line in default_lines:
-        # 跳过机制：跳过所有比 skip_depth 更深的行（已由插入的块覆盖）
         if skip_depth != -1:
             if line['type'] in ('empty', 'comment'):
                 continue
             if line['indent'] > skip_depth:
                 continue
-            # 到达同级或更浅的行，停止跳过
             skip_depth = -1
 
         if line['type'] in ('comment', 'empty'):
@@ -299,11 +385,26 @@ def merge_yaml(default_content, user_content):
             continue
 
         if line['type'] == 'list_item':
-            # 属于上级容器键的列表项，应由块提取机制统一处理
             continue
 
         if line['type'] == 'key':
+            key_name = line['key']
             path = line['key_path']
+
+            # 处理原子 Block 键 (如 antiCheatTokens, topics)
+            if key_name in ATOMIC_BLOCK_KEYS:
+                user_blk, user_d = get_block_by_key_name(user_lines, key_name)
+                if user_blk:
+                    adjusted = adjust_block_indent(user_blk, line['indent'], user_d)
+                    output.extend(adjusted)
+                else:
+                    def_blk, def_d = get_block_by_key_name(default_lines, key_name)
+                    if def_blk:
+                        output.extend(def_blk)
+                    else:
+                        output.append(line['raw'])
+                skip_depth = line['indent']
+                continue
 
             # 容器键（非叶子）：直接输出默认模板的行
             if path not in default_data_paths:
@@ -314,7 +415,6 @@ def merge_yaml(default_content, user_content):
             if path in user_data_paths:
                 user_block = get_block_for_path(user_lines, path)
                 if user_block:
-                    # 将用户块的缩进调整为默认配置中该路径的缩进
                     user_key_indent = len(user_block[0]) - len(user_block[0].lstrip(' '))
                     adjusted = adjust_block_indent(user_block, line['indent'], user_key_indent)
                     output.extend(adjusted)
@@ -327,7 +427,6 @@ def merge_yaml(default_content, user_content):
                 else:
                     output.append(line['raw'])
 
-            # 跳过默认模板中该键的后续子内容（已由插入的块覆盖）
             skip_depth = line['indent']
 
     return '\n'.join(output) + '\n'
