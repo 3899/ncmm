@@ -25,19 +25,43 @@ ql repo https://github.com/3899/ncmm.git "ncmm-" "" "" "" "py"
 
 ---
 
-### Step 2. 准备 Cookie 文本文件
-1. 登录服务器/青龙面板，进入脚本所在的对应目录（通常为 `/ql/data/scripts/3899_ncmm_qinglong/` 或 `/ql/scripts/ncmm/`）。
-2. 在该目录下新建 **`cookie.txt`** 文件。
-3. 将抓包获取到的网易云账号 Cookie 字符串复制并粘贴保存至 `cookie.txt` 中。
-> 💡 **小提示**：默认 Cookie 文件名为 `cookie.txt`。如需使用其他文件名（例如 `fan1.txt`），请参考 Step 3 修改 `ncmm-login.py`。
+### Step 2. 配置账号登录方式（推荐青龙环境变量）
+
+`ncmm-login.py` 智能支持以下三种登录配置方式（按优先级自动检测导入）：
+
+#### 方式 1：CookieCloud 自动同步（最方便）
+若使用 CookieCloud 服务，在青龙面板 **环境变量** 页面添加：
+
+| 变量名 | 说明 | 示例 |
+| :--- | :--- | :--- |
+| **`NCMM_COOKIECLOUD_UUID`** | CookieCloud 用户 UUID | `a1b2c3d4-xxxx-xxxx` |
+| **`NCMM_COOKIECLOUD_PASSWORD`** | CookieCloud 解密密码 | `mysecretpass` |
+| **`NCMM_COOKIECLOUD_SERVER`** | CookieCloud 服务端地址（可选） | `http://127.0.0.1:8088`（默认） |
+
+#### 方式 2：青龙环境变量（推荐，零文件依赖，支持主/辅账号分离）
+在青龙面板 **环境变量** 页面添加：
+
+| 变量名 | 说明 | 示例 |
+| :--- | :--- | :--- |
+| **`NCMM_MAIN_COOKIE`** | **主账号** Cookie 或 `MUSIC_U` Token | `MUSIC_U=xxx` |
+| **`NCMM_SECONDARY_COOKIE`** | **辅助账号** (`secondary`) Cookie 或 Token<br>(多个账号可用 `&`、`@` 或换行分隔) | `MUSIC_U=yyy&MUSIC_U=zzz` |
+| **`NCMM_COOKIE`** | **通用 Cookie 变量**（若未显式分主辅，首个自动为主账号，后续为辅助账号） | `MUSIC_U=xxx&MUSIC_U=yyy` |
+
+#### 方式 3：本地文件显式导入（与方式 2 具有完全相同的逻辑结构）
+按需配置指定的本地 Cookie 文件路径：
+
+| 变量名 | 说明 | 默认/示例 |
+| :--- | :--- | :--- |
+| **`NCMM_MAIN_COOKIE_FILE`** | **主账号** Cookie 文件路径 | `main_cookie.txt` |
+| **`NCMM_SECONDARY_COOKIE_FILE`** | **辅助账号** Cookie 文件路径（多个文件可用逗号 `,`、分号 `;` 或 `&` 分隔） | `fan1.txt,fan2.txt` |
+| **`NCMM_COOKIE_FILE`** | **通用 Cookie 文件变量**（首个文件为主账号，后续为辅助账号） | 默认使用同级 `cookie.txt` |
 
 ---
 
 ### Step 3. 导入账号生成 Cookie 配置文件
-1. 若需使用自定义的 Cookie 文件名（例如 `fan1.txt`），请先编辑 `ncmm-login.py` 脚本顶部的 `COOKIE_TXT_FILE` 变量值（如 `COOKIE_TXT_FILE = "fan1.txt"`）。
-2. 在青龙面板中手动运行 **`NCMM 账号登录导入`** (`ncmm-login.py`) 脚本。
-3. 脚本会自动读取同目录下的 Cookie 文件，解析校验后自动在同级生成对应的 **`cookie.json`**（或与自定义文件名相对应的 `.json`）账号配置文件。
-4. 如果需要自定义 `config.yaml` 配置文件，请在此步完成后根据需求修改同目录下的 `config.yaml`（例如调整任务开关、推歌/打卡参数等）。
+1. 在青龙面板中手动运行 **`NCMM 账号登录`** (`ncmm-login.py`) 脚本。
+2. 脚本会自动按优先级检测 **CookieCloud -> 环境变量 -> 本地文件**，校验通过后自动生成/更新 **`cookie.json`** 及配置文件。
+3. 如果需要自定义 `config.yaml` 配置文件，请在此步完成后根据需求修改同目录下的 `config.yaml`（例如调整任务开关、推歌/打卡参数等）。
 
 ---
 
@@ -59,5 +83,5 @@ ql repo https://github.com/3899/ncmm.git "ncmm-" "" "" "" "py"
 | 脚本文件名 | 青龙任务名称 | 推荐 Cron | 说明 |
 | :--- | :--- | :--- | :--- |
 | **`ncmm-update.py`** | `NCMM 安装、更新` | `0 0 1 1 *` | 首次部署或手动更新程序时运行（运行后可禁用） |
-| **`ncmm-login.py`** | `NCMM 账号登录导入` | `0 0 1 1 *` | 将 `cookie.txt` 转换导出为 `cookie.json`（运行后可禁用） |
+| **`ncmm-login.py`** | `NCMM 账号登录` | `0 0 1 1 *` | 自动解析环境变量/CookieCloud/本地文件导入账号（运行后可禁用） |
 | **`ncmm-run.py`** | `NCMM 任务执行` | `9 0,13 * * *` | 每日0点9分, 13点9分: 自动跑脚本（执行 `./ncmm task`） |

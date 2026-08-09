@@ -80,32 +80,43 @@ def get_latest_release():
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
     }
     
-    # 主方案：GitHub API
-    api_url = "https://api.github.com/repos/3899/ncmm/releases/latest"
-    req = urllib.request.Request(api_url, headers=headers)
-    try:
-        print("[LOG] 正在请求 GitHub API 获取最新版本...")
-        with urllib.request.urlopen(req, timeout=10) as response:
-            data = json.loads(response.read().decode('utf-8'))
-            tag_name = data.get('tag_name')
-            assets = data.get('assets', [])
-            return tag_name, assets
-    except Exception as e:
-        print(f"[WARNING] GitHub API 请求失败: {e}，尝试备用重定向方案...")
-        
-    # 备用方案：重定向解析
-    redirect_url = "https://github.com/3899/ncmm/releases/latest"
-    req = urllib.request.Request(redirect_url, headers=headers)
-    try:
-        print("[LOG] 正在通过网页重定向获取最新版本...")
-        with urllib.request.urlopen(req, timeout=10) as response:
-            final_url = response.geturl()
-            match = re.search(r'/releases/tag/([^/]+)', final_url)
-            if match:
-                tag_name = match.group(1)
-                return tag_name, None
-    except Exception as e:
-        print(f"[ERROR] 备用重定向方案也失败: {e}")
+    # 1. 尝试 GitHub API
+    api_urls = [
+        "https://api.github.com/repos/3899/ncmm/releases/latest",
+        "https://gh-proxy.com/https://api.github.com/repos/3899/ncmm/releases/latest"
+    ]
+    for url in api_urls:
+        try:
+            print(f"[LOG] 正在请求 GitHub API 获取最新版本 ({url})...")
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=10) as response:
+                data = json.loads(response.read().decode('utf-8'))
+                tag_name = data.get('tag_name')
+                assets = data.get('assets', [])
+                if tag_name:
+                    return tag_name, assets
+        except Exception as e:
+            print(f"[WARNING] 请求 GitHub API 失败 ({url}): {e}")
+            
+    # 2. 备用方案：重定向解析 (依次尝试加速镜像与 GitHub 原地址兜底)
+    redirect_urls = [
+        "https://gh-proxy.com/https://github.com/3899/ncmm/releases/latest",
+        "https://ghproxy.net/https://github.com/3899/ncmm/releases/latest",
+        "https://githubproxy.cc/https://github.com/3899/ncmm/releases/latest",
+        "https://github.com/3899/ncmm/releases/latest"
+    ]
+    for url in redirect_urls:
+        try:
+            print(f"[LOG] 正在通过网页重定向获取最新版本 ({url})...")
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=10) as response:
+                final_url = response.geturl()
+                match = re.search(r'/releases/tag/([^/]+)', final_url)
+                if match:
+                    tag_name = match.group(1)
+                    return tag_name, None
+        except Exception as e:
+            print(f"[WARNING] 重定向方案获取失败 ({url}): {e}")
         
     return None, None
 
@@ -431,13 +442,56 @@ def merge_yaml(default_content, user_content):
 
     return '\n'.join(output) + '\n'
 
-# 7. 主更新控制流
-def proxy_url(url):
-    if not url:
-        return url
-    if url.startswith("https://github.com/") or url.startswith("https://raw.githubusercontent.com/"):
-        return f"https://gh-proxy.com/{url}"
-    return url
+# 7. 带有多镜像重试与原地址兜底的下载模块
+PROXIES = [
+    "https://gh-proxy.com/",
+    "https://ghproxy.net/",
+    "https://githubproxy.cc/",
+    ""  # 原地址直连兜底
+]
+
+def download_file_with_fallback(src_url, dst_path, headers=None, timeout=45):
+    """
+    依次尝试加速镜像与 GitHub 原始地址兜底下载文件
+    """
+    if not headers:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
+        }
+
+    clean_url = src_url
+    for p in PROXIES:
+        if p and clean_url.startswith(p):
+            clean_url = clean_url[len(p):]
+            break
+
+    candidate_urls = []
+    is_github = any(clean_url.startswith(prefix) for prefix in [
+        "https://github.com/",
+        "https://raw.githubusercontent.com/",
+        "https://objects.githubusercontent.com/"
+    ])
+
+    if is_github:
+        for prefix in PROXIES:
+            candidate_urls.append(f"{prefix}{clean_url}")
+    else:
+        candidate_urls.append(clean_url)
+
+    for idx, url in enumerate(candidate_urls, start=1):
+        is_direct = url == clean_url
+        desc = "GitHub 原地址直连" if is_direct else "加速镜像"
+        print(f"[LOG] 下载尝试 [{idx}/{len(candidate_urls)}] ({desc}): {url}")
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=timeout) as response, open(dst_path, 'wb') as out_file:
+                shutil.copyfileobj(response, out_file)
+            print(f"[LOG] 成功下载文件: {url}")
+            return True
+        except Exception as e:
+            print(f"[WARNING] 从 {url} 下载失败: {e}，尝试下一个备用源...")
+
+    return False
 
 def main():
     is_windows = 'windows' in platform.system().lower()
@@ -495,9 +549,6 @@ def main():
         print("[WARNING] GitHub API 资源匹配失败，尝试手动拼接下载链接...")
         download_url = f"https://github.com/3899/ncmm/releases/download/{remote_tag}/{asset_filename}"
         
-    download_url = proxy_url(download_url)
-    print(f"[LOG] 下载目标 URL: {download_url}")
-    
     # 强制终止有可能占用的进程
     stop_running_ncmm(binary_name)
     
@@ -523,11 +574,10 @@ def main():
     try:
         # 下载压缩包
         print(f"[LOG] 正在下载升级包到 {archive_tmp_path} ...")
-        req = urllib.request.Request(download_url, headers=headers)
-        with urllib.request.urlopen(req, timeout=45) as response, open(archive_tmp_path, 'wb') as out_file:
-            shutil.copyfileobj(response, out_file)
-        print("[LOG] 下载包成功")
-        
+        if not download_file_with_fallback(download_url, archive_tmp_path, headers=headers, timeout=45):
+            print("[ERROR] 尝试所有镜像源与原地址均无法成功下载升级包，更新中止。")
+            sys.exit(1)
+            
         # 解压缩
         extract_dir = os.path.join(temp_dir, "extracted")
         os.makedirs(extract_dir, exist_ok=True)
@@ -567,16 +617,10 @@ def main():
         # 兼容处理：如果解包产物中无 config.yaml，从 GitHub 仓库直接下载最新默认配置
         if not os.path.exists(default_config_path):
             raw_config_url = f"https://raw.githubusercontent.com/3899/ncmm/{remote_tag}/config/config.yaml"
-            raw_config_url = proxy_url(raw_config_url)
-            print(f"[LOG] 解压缩产物中缺少 config.yaml，正在从 GitHub 下载默认配置文件备用: {raw_config_url}")
-            try:
-                default_config_path = os.path.join(temp_dir, "config.yaml")
-                req_raw = urllib.request.Request(raw_config_url, headers=headers)
-                with urllib.request.urlopen(req_raw, timeout=15) as response, open(default_config_path, 'wb') as f:
-                    shutil.copyfileobj(response, f)
-                print("[LOG] 成功下载备用默认 config.yaml")
-            except Exception as e:
-                print(f"[ERROR] 无法从 GitHub 获取默认配置文件: {e}，更新中止。")
+            print(f"[LOG] 解压缩产物中缺少 config.yaml，正在从 GitHub 下载默认配置文件备用...")
+            default_config_path = os.path.join(temp_dir, "config.yaml")
+            if not download_file_with_fallback(raw_config_url, default_config_path, headers=headers, timeout=15):
+                print("[ERROR] 无法从 GitHub 获取默认配置文件，更新中止。")
                 sys.exit(1)
                 
         # 处理配置文件合并逻辑
