@@ -56,6 +56,14 @@ ql repo https://github.com/3899/ncmm.git "ncmm-" "" "" "" "py"
 | **`NCMM_SECONDARY_COOKIE_FILE`** | **辅助账号** Cookie 文件路径（多个文件可用逗号 `,`、分号 `;` 或 `&` 分隔） | `fan1.txt,fan2.txt` |
 | **`NCMM_COOKIE_FILE`** | **通用 Cookie 文件变量**（首个文件为主账号，后续为辅助账号） | 默认使用同级 `cookie.txt` |
 
+#### 方式 4：自动更新与版本检测控制（可选）
+通过环境变量灵活控制主程序的更新检测与热替换行为：
+
+| 变量名 | 说明 | 默认/示例 |
+| :--- | :--- | :--- |
+| **`NCMM_UPDATER_CHECK`** | 是否开启版本检测（填 `false` 或 `0` 禁用） | `true` |
+| **`NCMM_UPDATER_AUTO_UPDATE`** | 是否开启二进制自动热更新（填 `false` 或 `0` 禁用） | `true` |
+
 ---
 
 ### Step 3. 导入账号生成 Cookie 配置文件
