@@ -12,6 +12,32 @@
 - `--home` (String)：指定数据存储的家目录。默认值为当前用户的系统家目录（`${HOME}`）。该家目录将用于存放运行日志（`log/`）、Cookie 状态文件（`cookie.json`）以及本地 Badger 数据库（`database/`）。通过配合不同 `--home` 路径，可以极简、安全地实现多账号数据物理隔离。
 - `--debug` (Boolean)：开启命令行调试模式。开启后，日志会强制输出到标准输出（Stdout），日志级别临时设为 `debug`，并输出底层的网络请求调试信息。
 
+### WebUI (`ncmm web`)
+
+WebUI 默认不随本地单文件命令启动，需要显式运行：
+
+```bash
+ncmm web
+ncmm web --scheduler
+ncmm web --listen 0.0.0.0:3899 --scheduler
+```
+
+- `--listen`：监听地址，默认 `127.0.0.1:3899`。
+- `--scheduler`：启用内置定时任务调度器。
+- `--token`：指定管理令牌，也可使用 `NCMM_WEB_TOKEN` 环境变量。
+- `--web-config`：指定 WebUI 设置文件，默认位于 `--home` 下的 `webui.yaml`。
+
+WebUI 的“系统”页可以修改管理令牌。新令牌会立即生效并写入 `--home/webui.secret`；如果启动时使用了 `--token` 或 `NCMM_WEB_TOKEN`，重启后仍以外部令牌为准。
+
+同一页可手动检查和安装更新。也可通过命令行执行：
+
+```bash
+ncmm update
+ncmm update --apply
+```
+
+单文件安装更新后需重启 `ncmm`。官方 Docker 镜像仅允许检查版本，应通过宿主机拉取新镜像。
+
 ---
 
 ## 1. 账号登录 (`ncmm login`)

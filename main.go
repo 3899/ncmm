@@ -20,7 +20,9 @@ var (
 )
 
 func init() {
-	Version = strings.TrimSpace(versionStr)
+	if strings.TrimSpace(Version) == "" {
+		Version = strings.TrimSpace(versionStr)
+	}
 }
 
 func main() {

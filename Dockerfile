@@ -8,9 +8,10 @@ COPY go.mod go.sum ./
 RUN GOPROXY=https://goproxy.cn,direct go mod download
 
 COPY . .
-ARG VERSION=docker
-RUN CGO_ENABLED=0 go build \
-    -ldflags="-s -w -X main.Version=${VERSION} -X main.Commit=$(git rev-parse --short HEAD 2>/dev/null || echo none) -X main.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+ARG VERSION
+RUN BUILD_VERSION="${VERSION:-$(cat VERSION)}" && \
+    CGO_ENABLED=0 go build \
+    -ldflags="-s -w -X main.Version=${BUILD_VERSION} -X main.Commit=$(git rev-parse --short HEAD 2>/dev/null || echo none) -X main.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     -o /ncmm main.go
 
 
@@ -18,7 +19,8 @@ RUN CGO_ENABLED=0 go build \
 FROM alpine:3.20
 
 RUN apk add --no-cache ca-certificates tzdata
-ENV NCMM_DOCKER_OFFICIAL=1
+ENV NCMM_DOCKER_OFFICIAL=1 \
+    NCMM_UPDATER_AUTO_UPDATE=false
 
 COPY --from=builder /ncmm /usr/local/bin/ncmm
 
@@ -28,10 +30,12 @@ COPY config/notify.yaml /etc/ncmm/notify.yaml
 
 # 复制并配置入口脚本
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
 
 # 设置工作目录
 WORKDIR /data
 
+EXPOSE 3899
+
 ENTRYPOINT ["/entrypoint.sh"]
-CMD ["--help"]
+CMD ["web", "--scheduler", "--listen", "0.0.0.0:3899"]

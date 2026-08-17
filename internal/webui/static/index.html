@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>NCMM Control</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <svg class="icon-sprite" aria-hidden="true">
+    <symbol id="i-dashboard" viewBox="0 0 24 24"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><path d="M12.2 2h-.4a2 2 0 0 0-2 2v.2a2 2 0 0 1-1 1.7l-.4.2a2 2 0 0 1-2 0l-.2-.1a2 2 0 0 0-2.7.7l-.2.4a2 2 0 0 0 .7 2.7l.2.1a2 2 0 0 1 1 1.7v.5a2 2 0 0 1-1 1.7l-.2.1a2 2 0 0 0-.7 2.7l.2.4a2 2 0 0 0 2.7.7l.2-.1a2 2 0 0 1 2 0l.4.2a2 2 0 0 1 1 1.7v.2a2 2 0 0 0 2 2h.4a2 2 0 0 0 2-2v-.2a2 2 0 0 1 1-1.7l.4-.2a2 2 0 0 1 2 0l.2.1a2 2 0 0 0 2.7-.7l.2-.4a2 2 0 0 0-.7-2.7l-.2-.1a2 2 0 0 1-1-1.7v-.5a2 2 0 0 1 1-1.7l.2-.1a2 2 0 0 0 .7-2.7l-.2-.4a2 2 0 0 0-2.7-.7l-.2.1a2 2 0 0 1-2 0l-.4-.2a2 2 0 0 1-1-1.7V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 0 0-16 0"/></symbol>
+    <symbol id="i-calendar" viewBox="0 0 24 24"><path d="M8 2v4m8-4v4M3 10h18"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="m9 16 2 2 4-4"/></symbol>
+    <symbol id="i-log" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8m-8 4h8"/></symbol>
+    <symbol id="i-save" viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="m6 3 14 9-14 9z"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24"><rect width="14" height="14" x="5" y="5" rx="1"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2m2 0-1 15H7L6 6m4 5v6m4-6v6"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 6v6h-6M4 18v-6h6"/><path d="M18.5 9a7 7 0 0 0-12-2.5L4 9m16 6-2.5 2.5A7 7 0 0 1 5.5 15"/></symbol>
+    <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/></symbol>
+    <symbol id="i-exit" viewBox="0 0 24 24"><path d="M10 17l5-5-5-5m5 5H3m12-9h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4z"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-github" viewBox="0 0 24 24"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3.5 0 7-1.7 7-7.5a5.8 5.8 0 0 0-1.5-4A5.4 5.4 0 0 0 19.4 1S18.2.6 15 2.7a13.4 13.4 0 0 0-6 0C5.8.6 4.6 1 4.6 1a5.4 5.4 0 0 0-.1 2A5.8 5.8 0 0 0 3 7c0 5.8 3.5 7.5 7 7.5a4.8 4.8 0 0 0-1 3.5v4"/><path d="M9 18c-3.5 1.6-4-1.5-5.5-2M21 16c-1.5.5-2 3.6-5.5 2"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-8 9-4.5-1.5-8-4-8-9V5l8-3 8 3z"/><path d="m9 12 2 2 4-4"/></symbol>
+    <symbol id="i-key" viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6M15 6l3 3M18 3l3 3"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M5 21h14"/></symbol>
+  </svg>
+
+  <section id="login-view" class="login-view">
+    <div class="login-panel">
+      <div class="brand-mark">N</div>
+      <p class="eyebrow">NCMM CONTROL</p>
+      <h1>管理控制台</h1>
+      <form id="login-form">
+        <label for="token-input">管理令牌</label>
+        <div class="password-field">
+          <input id="token-input" type="password" autocomplete="off" required autofocus>
+          <button id="token-toggle" type="button" class="icon-button" title="显示或隐藏令牌"><svg><use href="#i-eye"/></svg></button>
+        </div>
+        <button class="button primary full" type="submit">连接</button>
+        <p id="login-error" class="form-error" role="alert"></p>
+      </form>
+    </div>
+  </section>
+
+  <div id="app-shell" class="app-shell hidden">
+    <aside id="sidebar" class="sidebar">
+      <div class="sidebar-brand"><span class="brand-mark small">N</span><span>NCMM</span></div>
+      <nav aria-label="主导航">
+        <button class="nav-item active" data-page="dashboard"><svg><use href="#i-dashboard"/></svg><span>概览</span></button>
+        <button class="nav-item" data-page="config"><svg><use href="#i-settings"/></svg><span>配置</span></button>
+        <button class="nav-item" data-page="accounts"><svg><use href="#i-user"/></svg><span>账号</span></button>
+        <button class="nav-item" data-page="schedules"><svg><use href="#i-calendar"/></svg><span>定时任务</span></button>
+        <button class="nav-item" data-page="runs"><svg><use href="#i-log"/></svg><span>运行记录</span></button>
+        <button class="nav-item" data-page="system"><svg><use href="#i-shield"/></svg><span>系统</span></button>
+      </nav>
+      <div class="sidebar-foot">
+        <a class="repo-link" href="https://github.com/3899/ncmm" target="_blank" rel="noreferrer" title="打开 GitHub 仓库"><svg><use href="#i-github"/></svg><span>3899/ncmm</span></a>
+        <span id="version-label">NCMM</span>
+      </div>
+    </aside>
+
+    <div class="workspace">
+      <header class="topbar">
+        <button id="menu-button" class="icon-button mobile-only" title="打开导航"><svg><use href="#i-menu"/></svg></button>
+        <div><p class="eyebrow">NCMM WEBUI</p><h2 id="page-title">概览</h2></div>
+        <div class="topbar-actions">
+          <span id="service-status" class="service-status"><i></i>在线</span>
+          <button id="theme-button" class="icon-button" title="切换主题"><svg><use href="#i-moon"/></svg></button>
+          <button id="logout-button" class="icon-button" title="退出"><svg><use href="#i-exit"/></svg></button>
+        </div>
+      </header>
+
+      <main>
+        <section id="page-dashboard" class="page active">
+          <div class="stat-grid">
+            <article class="stat-card"><span>调度状态</span><strong id="stat-scheduler">--</strong><small id="stat-timezone">--</small></article>
+            <article class="stat-card"><span>定时任务</span><strong id="stat-schedules">--</strong><small>已载入规则</small></article>
+            <article class="stat-card"><span>正在运行</span><strong id="stat-running">--</strong><small>活动进程</small></article>
+            <article class="stat-card"><span>日志占用</span><strong id="stat-storage">--</strong><small id="stat-files">--</small></article>
+          </div>
+          <section class="content-section">
+            <div class="section-head"><div><p class="eyebrow">UPCOMING</p><h3>近期执行</h3></div><button class="button subtle" data-go="schedules">查看全部</button></div>
+            <div id="upcoming-list" class="compact-list empty-state">暂无定时任务</div>
+          </section>
+          <section class="content-section">
+            <div class="section-head"><div><p class="eyebrow">RECENT</p><h3>最近运行</h3></div><button class="button subtle" data-go="runs">查看全部</button></div>
+            <div id="recent-runs" class="compact-list empty-state">暂无运行记录</div>
+          </section>
+        </section>
+
+        <section id="page-config" class="page">
+          <div class="page-toolbar">
+            <div class="config-toolbar-groups">
+              <div class="segmented" id="config-target"><button class="active" data-target="config">ncmm config</button><button data-target="notify">notify.yaml</button></div>
+              <div class="segmented" id="config-mode"><button class="active" data-mode="visual">可视化</button><button data-mode="yaml">YAML</button></div>
+            </div>
+            <div class="toolbar-actions">
+              <span id="config-dirty" class="dirty-indicator hidden">有未保存修改</span>
+              <button id="config-reload" class="icon-button" title="重新加载"><svg><use href="#i-refresh"/></svg></button>
+              <button id="config-save" class="button primary"><svg><use href="#i-save"/></svg>保存配置</button>
+            </div>
+          </div>
+          <div id="config-visual" class="config-layout">
+            <nav id="config-sections" class="section-tabs" aria-label="配置分组"></nav>
+            <div id="config-form" class="config-form"></div>
+          </div>
+          <div id="config-yaml" class="yaml-wrap hidden"><textarea id="yaml-editor" spellcheck="false" aria-label="YAML 配置源码"></textarea></div>
+        </section>
+
+        <section id="page-accounts" class="page">
+          <div class="section-head"><div><p class="eyebrow">COOKIE LOGIN</p><h3>导入账号</h3></div></div>
+          <form id="cookie-form" class="form-surface">
+            <div class="form-grid two">
+              <label>账号类型<div class="segmented account-type"><button type="button" class="active" data-main="true">主账号</button><button type="button" data-main="false">辅助账号</button></div></label>
+              <label>Cookie 格式<select id="cookie-format"><option value="auto">自动识别</option><option value="header">Header</option><option value="json">JSON</option><option value="netscape">Netscape</option></select></label>
+            </div>
+            <label>输出文件名<input id="cookie-filename" type="text" value="cookie.json" maxlength="128" autocomplete="off" required></label>
+            <label>Cookie 内容<textarea id="cookie-content" class="cookie-input" autocomplete="off" spellcheck="false" required></textarea></label>
+            <div class="form-actions"><button id="cookie-submit" class="button primary" type="submit"><svg><use href="#i-user"/></svg>验证并导入</button></div>
+          </form>
+          <div id="cookie-result" class="result-panel hidden" role="status"></div>
+        </section>
+
+        <section id="page-schedules" class="page">
+          <div id="scheduler-banner" class="notice warning hidden">调度器未启用。规则可以编辑，但不会自动执行。</div>
+          <div class="section-head"><div><p class="eyebrow">SCHEDULER</p><h3>定时任务</h3></div><button id="schedule-add" class="button primary"><svg><use href="#i-plus"/></svg>新建任务</button></div>
+          <div class="table-wrap"><table><thead><tr><th>任务</th><th>Cron</th><th>命令</th><th>下次运行</th><th>状态</th><th class="actions-col">操作</th></tr></thead><tbody id="schedule-table"></tbody></table></div>
+        </section>
+
+        <section id="page-runs" class="page">
+          <section class="settings-band">
+            <div><p class="eyebrow">LOG RETENTION</p><h3>日志保留</h3></div>
+            <label>保留天数<input id="retention-days" type="number" min="1" max="365"></label>
+            <label>最大占用（MB）<input id="max-log-size" type="number" min="16" max="10240"></label>
+            <label>时区<input id="timezone-input" type="text"></label>
+            <button id="settings-save" class="button primary"><svg><use href="#i-save"/></svg>保存</button>
+            <button id="logs-cleanup" class="button subtle"><svg><use href="#i-trash"/></svg>立即清理</button>
+          </section>
+          <div class="section-head"><div><p class="eyebrow">RUN HISTORY</p><h3>运行记录</h3></div><span id="logs-summary" class="muted"></span></div>
+          <div class="table-wrap"><table><thead><tr><th>任务</th><th>命令</th><th>开始时间</th><th>耗时</th><th>结果</th><th class="actions-col">操作</th></tr></thead><tbody id="runs-table"></tbody></table></div>
+        </section>
+
+        <section id="page-system" class="page">
+          <section class="system-section">
+            <div class="section-head"><div><p class="eyebrow">SECURITY</p><h3>管理令牌</h3></div><span id="token-source" class="badge disabled">--</span></div>
+            <form id="token-form" class="system-form">
+              <label>新令牌<input id="new-token" type="password" minlength="8" maxlength="256" autocomplete="new-password" required></label>
+              <label>确认令牌<input id="confirm-token" type="password" minlength="8" maxlength="256" autocomplete="new-password" required></label>
+              <button id="token-save" class="button primary" type="submit"><svg><use href="#i-key"/></svg>修改令牌</button>
+            </form>
+            <p id="token-note" class="field-note"></p>
+          </section>
+
+          <section class="system-section">
+            <div class="section-head"><div><p class="eyebrow">UPDATE</p><h3>版本更新</h3></div><span id="update-badge" class="badge disabled">未检查</span></div>
+            <div class="update-summary">
+              <div><span>当前版本</span><strong id="update-current">--</strong></div>
+              <div><span>最新版本</span><strong id="update-latest">--</strong></div>
+              <div><span>上次检查</span><strong id="update-checked">--</strong></div>
+              <div><span>运行环境</span><strong id="update-platform">--</strong></div>
+            </div>
+            <div class="system-actions">
+              <button id="update-check" class="button subtle"><svg><use href="#i-refresh"/></svg>检查更新</button>
+              <button id="update-apply" class="button primary" disabled><svg><use href="#i-download"/></svg>立即更新</button>
+            </div>
+            <p id="update-message" class="field-note"></p>
+            <pre id="release-notes" class="release-notes hidden"></pre>
+          </section>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <dialog id="schedule-dialog" class="dialog">
+    <form id="schedule-form" method="dialog">
+      <div class="dialog-head"><div><p class="eyebrow">SCHEDULE</p><h3 id="schedule-dialog-title">新建任务</h3></div><button type="button" class="icon-button dialog-close" title="关闭">×</button></div>
+      <input id="schedule-id" type="hidden">
+      <div class="form-grid two">
+        <label>任务名称<input id="schedule-name" required maxlength="80"></label>
+        <label class="toggle-label">启用任务<input id="schedule-enabled" type="checkbox" checked><span class="toggle"></span></label>
+      </div>
+      <label>执行时间<select id="cron-preset"><option value="30 8 * * *">每天 08:30</option><option value="0 9 * * *">每天 09:00</option><option value="0 9 * * 1-5">工作日 09:00</option><option value="0 9 * * 1">每周一 09:00</option><option value="custom">自定义 Cron</option></select></label>
+      <label>Cron 表达式<input id="schedule-cron" value="30 8 * * *" required></label>
+      <p id="cron-next" class="field-note"></p>
+      <div class="form-grid two">
+        <label>命令<select id="schedule-command"><option value="task">task</option><option value="sign">sign</option><option value="playids">playids</option><option value="musician">musician</option><option value="musician-sign">musician-sign</option><option value="musician-vip">musician-vip</option><option value="note">note</option><option value="daily-song-share">daily-song-share</option><option value="vip-member-gift">vip-member-gift</option><option value="fansgroup">fansgroup</option></select></label>
+        <label>重叠策略<select id="schedule-overlap"><option value="skip">跳过重复运行</option><option value="allow">允许并行</option></select></label>
+      </div>
+      <label>命令参数<input id="schedule-args" placeholder="--only-fast"></label>
+      <div class="dialog-actions"><button type="button" class="button subtle dialog-close">取消</button><button id="schedule-submit" type="submit" class="button primary"><svg><use href="#i-save"/></svg>保存任务</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="log-dialog" class="dialog log-dialog">
+    <div class="dialog-head"><div><p class="eyebrow">RUN LOG</p><h3 id="log-title">运行日志</h3></div><button type="button" class="icon-button log-close" title="关闭">×</button></div>
+    <pre id="log-content"></pre>
+    <div class="dialog-actions"><button type="button" class="button subtle log-close">关闭</button></div>
+  </dialog>
+
+  <div id="toast-region" class="toast-region" aria-live="polite"></div>
+  <script src="/app.js" defer></script>
+</body>
+</html>
