@@ -6,6 +6,7 @@ package main
 import (
 	_ "embed"
 	"strings"
+	_ "time/tzdata"
 
 	"github.com/3899/ncmm/internal/ncmm"
 )
