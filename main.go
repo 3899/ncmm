@@ -6,6 +6,7 @@ package main
 import (
 	_ "embed"
 	"strings"
+	_ "time/tzdata"
 
 	"github.com/3899/ncmm/internal/ncmm"
 )
@@ -20,7 +21,9 @@ var (
 )
 
 func init() {
-	Version = strings.TrimSpace(versionStr)
+	if strings.TrimSpace(Version) == "" {
+		Version = strings.TrimSpace(versionStr)
+	}
 }
 
 func main() {

@@ -70,7 +70,13 @@ func (c *Login) saveLoginResult(ctx context.Context, nickname string, uid int64,
 
 	var finalPath string
 	if c.isMain {
-		if c.root.Cfg.Accounts != nil && c.root.Cfg.Accounts.Main != "" {
+		if customOutput != "" {
+			if filepath.IsAbs(customOutput) {
+				finalPath = customOutput
+			} else {
+				finalPath = filepath.Join(targetDir, customOutput)
+			}
+		} else if c.root.Cfg.Accounts != nil && c.root.Cfg.Accounts.Main != "" {
 			finalPath = c.root.Cfg.Accounts.Main
 		} else {
 			finalPath = filepath.Join(targetDir, "cookie.json")

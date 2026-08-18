@@ -12,6 +12,34 @@
 - `--home` (String)：指定数据存储的家目录。默认值为当前用户的系统家目录（`${HOME}`）。该家目录将用于存放运行日志（`log/`）、Cookie 状态文件（`cookie.json`）以及本地 Badger 数据库（`database/`）。通过配合不同 `--home` 路径，可以极简、安全地实现多账号数据物理隔离。
 - `--debug` (Boolean)：开启命令行调试模式。开启后，日志会强制输出到标准输出（Stdout），日志级别临时设为 `debug`，并输出底层的网络请求调试信息。
 
+### WebUI (`ncmm web`)
+
+WebUI 默认不随本地单文件命令启动，需要显式运行：
+
+```bash
+ncmm web
+ncmm web --scheduler
+ncmm web --listen 0.0.0.0:3899 --scheduler
+```
+
+- `--listen`：监听地址，默认 `127.0.0.1:3899`。
+- `--scheduler`：启用内置定时任务调度器。
+- `--token`：指定管理令牌，也可使用 `NCMM_WEB_TOKEN` 环境变量。
+- `--web-config`：指定 WebUI 设置文件，默认位于 `--home` 下的 `webui.yaml`。
+
+首次启动且未提供 `--token` / `NCMM_WEB_TOKEN`、`--home` 下也没有 `webui.secret` 时，WebUI 会显示首次设置页面，由用户设置并确认至少 8 位的管理令牌。设置完成后令牌写入 `--home/webui.secret`，后续启动进入正常登录页面。
+
+WebUI 的“系统”页可以修改管理令牌。新令牌会立即生效并写入 `--home/webui.secret`；如果启动时使用了 `--token` 或 `NCMM_WEB_TOKEN`，重启后仍以外部令牌为准。
+
+同一页可手动检查和安装更新。也可通过命令行执行：
+
+```bash
+ncmm update
+ncmm update --apply
+```
+
+单文件安装更新后需重启 `ncmm`。官方 Docker 镜像仅允许检查版本，应通过宿主机拉取新镜像。
+
 ---
 
 ## 1. 账号登录 (`ncmm login`)
@@ -37,16 +65,20 @@
 
 ### 二维码扫码登录 (`qrcode`)
 ```bash
-ncmm login qrcode [-m] [-t 超时时间] [-d 图片输出目录] [-l 二维码纠错等级]
+ncmm login qrcode [-m] [-t 超时时间] [-d 图片输出目录] [-l 二维码纠错等级] [-o Cookie输出文件]
 
 # 示例 1：作为辅助账号登录（默认），二维码图片保存在当前目录
 ncmm login qrcode
 
 # 示例 2：作为主账号登录（显式传入 -m）
 ncmm login qrcode -m
+
+# 示例 3：作为辅助账号登录并指定 Cookie 输出文件名
+ncmm login qrcode -o fan1.json
 ```
 - `-t` / `--timeout` (Duration): 扫码等待和状态轮询的超时时长，默认 `5m` (5分钟)，可填 `10m`、`30s` 等。
 - `-d` / `--dir` (String): 保存临时二维码图片 `qrcode.png` 的目录路径，默认当前工作目录。登录成功或超时后该文件会自动清理。
+- `-o` / `--output` (String): 自定义登录成功后的 Cookie 输出文件。未指定时保持自动命名：主账号优先使用 `accounts.main`，未配置时使用 `cookie.json`；辅助账号使用 `fan_<UID>.json`。
 - `-l` / `--level` (Int): 二维码纠错等级（`0` -> 7%, `1` -> 15% 默认, `2` -> 25%, `3` -> 30%）。
 
 ### 手机号登录 (`phone`) (⚠️ 存在高风控拦截风险，不推荐)

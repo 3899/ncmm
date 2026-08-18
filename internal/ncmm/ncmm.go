@@ -110,7 +110,9 @@ func New() *Root {
 			c.Report.SetCommand(strings.TrimSpace(cmd.CommandPath()))
 		}
 
-		c.CheckForUpdatesPreRun()
+		if cmd.Name() != "update" {
+			c.CheckForUpdatesPreRun()
+		}
 		return nil
 	}
 	c.cmd.PersistentPostRunE = func(cmd *cobra.Command, args []string) error {
@@ -140,6 +142,8 @@ func New() *Root {
 	c.Add(NewVipMemberGift(c, c.l).Command())
 	c.Add(NewFansGroup(c, c.l).Command())
 	c.Add(NewTask(c, c.l).Command())
+	c.Add(newWebCommand(c))
+	c.Add(newUpdateCommand(c))
 	return c
 }
 
