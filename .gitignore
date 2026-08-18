@@ -12,3 +12,4 @@
 /pkg/log/log/
 /pkg/ncm/testdata/*-id3v2
 /tools/vip_member_gift_cloud/__pycache__
+/.tmp-webui-smoke

@@ -91,9 +91,9 @@ Automatically attempt json, header, and netscape.
 `
 
 type loginCookieCmd struct {
-	root   *Login
-	cmd    *cobra.Command
-	l      *log.Logger
+	root *Login
+	cmd  *cobra.Command
+	l    *log.Logger
 
 	File   string
 	format string
@@ -135,6 +135,7 @@ func (c *loginCookieCmd) execute(ctx context.Context, args []string) error {
 	if c.format != "" &&
 		c.format != "json" &&
 		c.format != "netscape" &&
+		c.format != "netscaple" &&
 		c.format != "header" {
 		return fmt.Errorf("format is not support: %v", c.format)
 	}
@@ -161,16 +162,20 @@ func (c *loginCookieCmd) execute(ctx context.Context, args []string) error {
 			if err != nil {
 				return fmt.Errorf("ParseCookeJson: %w", err)
 			}
-		case "netscape":
+		case "netscape", "netscaple":
 			ck, err := mozcookie.Read(c.File)
 			if err != nil {
 				return fmt.Errorf("mozcookie.Read: %w", err)
 			}
 			cookies = ck
 		case "header":
-			ck, err := http.ParseCookie(content)
+			data, err := os.ReadFile(c.File)
 			if err != nil {
-				return fmt.Errorf("ParseCookie: %ww", err)
+				return fmt.Errorf("read: %w", err)
+			}
+			ck, err := http.ParseCookie(string(data))
+			if err != nil {
+				return fmt.Errorf("ParseCookie: %w", err)
 			}
 			cookies = ck
 		default:
@@ -190,7 +195,7 @@ func (c *loginCookieCmd) execute(ctx context.Context, args []string) error {
 				return fmt.Errorf("ParseCookeJson: %w", err)
 			}
 			cookies = ck
-		case "netscape":
+		case "netscape", "netscaple":
 			ck, err := mozcookie.Decode(binary)
 			if err != nil {
 				return fmt.Errorf("mozcookie.Decode: %w", err)
@@ -204,13 +209,13 @@ func (c *loginCookieCmd) execute(ctx context.Context, args []string) error {
 			cookies = ck
 		default:
 			// 走探测逻辑
-			ck, err := mozcookie.Decode(binary)
+			ck, err := mozcookie.Decode(strings.NewReader(content))
 			if err != nil {
 				log.Debug("retry decode netscape err: %s", err)
 			}
 			cookies = ck
 			if len(cookies) <= 0 {
-				cookies, err = ParseCookeJson(binary)
+				cookies, err = ParseCookeJson(strings.NewReader(content))
 				if err != nil {
 					log.Debug("retry parse json ere: %s", err)
 				}
@@ -312,7 +317,7 @@ func (c *loginCookieCmd) execute(ctx context.Context, args []string) error {
 	}
 	c.cmd.Printf("login success: uid=%d nickname=%s\n", user.Account.Id, user.Profile.Nickname)
 
-	err = c.root.saveLoginResult(ctx, user.Profile.Nickname, user.Account.Id, tempCookieFile, "", c.File)
+	err = c.root.saveLoginResult(ctx, user.Profile.Nickname, user.Account.Id, tempCookieFile, c.Output, c.File)
 	if err != nil {
 		return err
 	}
