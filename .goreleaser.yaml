@@ -53,6 +53,8 @@ archives:
       - README.md
       - src: config/config.yaml
         dst: config.yaml
+      - src: config/notify.yaml
+        dst: notify.yaml
 
 # 发布日志配置
 changelog:
