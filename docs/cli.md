@@ -27,6 +27,8 @@ ncmm web --listen 0.0.0.0:3899 --scheduler
 - `--token`：指定管理令牌，也可使用 `NCMM_WEB_TOKEN` 环境变量。
 - `--web-config`：指定 WebUI 设置文件，默认位于 `--home` 下的 `webui.yaml`。
 
+首次启动且未提供 `--token` / `NCMM_WEB_TOKEN`、`--home` 下也没有 `webui.secret` 时，WebUI 会显示首次设置页面，由用户设置并确认至少 8 位的管理令牌。设置完成后令牌写入 `--home/webui.secret`，后续启动进入正常登录页面。
+
 WebUI 的“系统”页可以修改管理令牌。新令牌会立即生效并写入 `--home/webui.secret`；如果启动时使用了 `--token` 或 `NCMM_WEB_TOKEN`，重启后仍以外部令牌为准。
 
 同一页可手动检查和安装更新。也可通过命令行执行：
@@ -63,16 +65,20 @@ ncmm update --apply
 
 ### 二维码扫码登录 (`qrcode`)
 ```bash
-ncmm login qrcode [-m] [-t 超时时间] [-d 图片输出目录] [-l 二维码纠错等级]
+ncmm login qrcode [-m] [-t 超时时间] [-d 图片输出目录] [-l 二维码纠错等级] [-o Cookie输出文件]
 
 # 示例 1：作为辅助账号登录（默认），二维码图片保存在当前目录
 ncmm login qrcode
 
 # 示例 2：作为主账号登录（显式传入 -m）
 ncmm login qrcode -m
+
+# 示例 3：作为辅助账号登录并指定 Cookie 输出文件名
+ncmm login qrcode -o fan1.json
 ```
 - `-t` / `--timeout` (Duration): 扫码等待和状态轮询的超时时长，默认 `5m` (5分钟)，可填 `10m`、`30s` 等。
 - `-d` / `--dir` (String): 保存临时二维码图片 `qrcode.png` 的目录路径，默认当前工作目录。登录成功或超时后该文件会自动清理。
+- `-o` / `--output` (String): 自定义登录成功后的 Cookie 输出文件。未指定时保持自动命名：主账号优先使用 `accounts.main`，未配置时使用 `cookie.json`；辅助账号使用 `fan_<UID>.json`。
 - `-l` / `--level` (Int): 二维码纠错等级（`0` -> 7%, `1` -> 15% 默认, `2` -> 25%, `3` -> 30%）。
 
 ### 手机号登录 (`phone`) (⚠️ 存在高风控拦截风险，不推荐)

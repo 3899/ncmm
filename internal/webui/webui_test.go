@@ -93,6 +93,90 @@ func TestManagementTokenUpdateSwitchesAuthorization(t *testing.T) {
 	}
 }
 
+func TestInitialSetupConfiguresManagementToken(t *testing.T) {
+	home := t.TempDir()
+	server := &Server{opts: Options{Home: home}, setupRequired: true}
+	handler := server.routes()
+
+	request := func(method, path, token, body string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		if body != "" {
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Origin", "http://example.com")
+		}
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, req)
+		return response
+	}
+
+	if got := request(http.MethodGet, "/api/v1/setup", "", "").Code; got != http.StatusOK {
+		t.Fatalf("setup status = %d; want %d", got, http.StatusOK)
+	}
+	if got := request(http.MethodGet, "/api/v1/security", "", "").Code; got != http.StatusUnauthorized {
+		t.Fatalf("protected API before setup = %d; want %d", got, http.StatusUnauthorized)
+	}
+	if got := request(http.MethodPost, "/api/v1/setup", "", `{"token":"new-token-123","confirmation":"different-token"}`).Code; got != http.StatusBadRequest {
+		t.Fatalf("mismatched setup = %d; want %d", got, http.StatusBadRequest)
+	}
+
+	response := request(http.MethodPost, "/api/v1/setup", "", `{"token":"new-token-123","confirmation":"new-token-123"}`)
+	if response.Code != http.StatusOK {
+		t.Fatalf("setup status = %d, body = %s", response.Code, response.Body.String())
+	}
+	data, err := os.ReadFile(filepath.Join(home, "webui.secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(data)); got != "new-token-123" {
+		t.Fatalf("saved setup token = %q", got)
+	}
+	if got := request(http.MethodGet, "/api/v1/security", "new-token-123", "").Code; got != http.StatusOK {
+		t.Fatalf("new setup token status = %d; want %d", got, http.StatusOK)
+	}
+	if got := request(http.MethodPost, "/api/v1/setup", "", `{"token":"another-token","confirmation":"another-token"}`).Code; got != http.StatusConflict {
+		t.Fatalf("repeated setup = %d; want %d", got, http.StatusConflict)
+	}
+}
+
+func TestInitialSetupRejectsCrossSiteRequests(t *testing.T) {
+	server := &Server{opts: Options{Home: t.TempDir()}, setupRequired: true}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/setup", strings.NewReader(`{"token":"new-token-123","confirmation":"new-token-123"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Sec-Fetch-Site", "cross-site")
+	response := httptest.NewRecorder()
+	server.routes().ServeHTTP(response, req)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("cross-site setup status = %d; want %d", response.Code, http.StatusForbidden)
+	}
+}
+
+func TestResolveTokenRequiresInitialSetup(t *testing.T) {
+	home := t.TempDir()
+	token, required, err := resolveToken(home, "")
+	if err != nil || token != "" || !required {
+		t.Fatalf("resolveToken() = %q, %v, %v; want empty token and setup required", token, required, err)
+	}
+	if _, err := os.Stat(filepath.Join(home, "webui.secret")); !os.IsNotExist(err) {
+		t.Fatalf("webui.secret should not be generated, stat error = %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(home, "webui.secret"), []byte("saved-token-123\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	token, required, err = resolveToken(home, "")
+	if err != nil || token != "saved-token-123" || required {
+		t.Fatalf("saved resolveToken() = %q, %v, %v", token, required, err)
+	}
+	token, required, err = resolveToken(home, "external-token-123")
+	if err != nil || token != "external-token-123" || required {
+		t.Fatalf("external resolveToken() = %q, %v, %v", token, required, err)
+	}
+}
+
 func TestMakeUpdateViewUsesRunningVersion(t *testing.T) {
 	t.Setenv("NCMM_DOCKER_OFFICIAL", "")
 	server := &Server{opts: Options{Version: "1.2.0"}}

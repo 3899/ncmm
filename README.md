@@ -54,7 +54,7 @@
 8. **📢 每日歌曲分享与抽奖 (`ncmm daily-song-share`)**：自动选择歌曲（固定或随机）发布到移动端动态，支持挂载专属活动话题，并在分享成功后自动参与活动抽奖，支持发布后自动删除动态以保持主页整洁。
 9. **🎁 黑胶会员赠送与领取 (`ncmm vip-member-gift`)**：自动将账号内多余的免费黑胶会员天数生成赠送 Token 并上报云端；同时支持从云端拉取可用 Token 自动为自己领取会员天数，支持私有化云服务部署。
 10. **📁 灵活的 `--home` 隔离机制**：多账号下配置、Cookie、数据库、日志自动隔离，安全无干扰。
-11. **🖥️ 可选 WebUI (`ncmm web`)**：可视化编辑 `config.yaml` / `notify.yaml`、导入 Cookie、管理定时任务与运行日志，并支持修改管理令牌和手动检查更新；Docker 镜像默认在 `3899` 端口启用。
+11. **🖥️ 可选 WebUI (`ncmm web`)**：可视化编辑 `config.yaml` / `notify.yaml`，支持 Cookie 和二维码登录、自定义 Cookie 文件名、管理定时任务与运行日志，并支持修改管理令牌和手动检查更新；Docker 镜像默认在 `3899` 端口启用。
 
 ---
 
@@ -82,7 +82,7 @@
 
 `--listen 0.0.0.0:3899`  #端口3899，0.0.0.0 表示可以别的机器访问，127.0.0.1 仅本机访问。默认`127.0.0.1:3899`
 
-`--token xxx` # webui登录密码`xxx`,不指定则首次运行自动生成，可登录webui修改
+`--token xxx` # WebUI 登录令牌；不指定时首次打开页面由用户自行设置，后续也可在 WebUI 中修改
 
 预览图：
 
@@ -100,6 +100,7 @@
 
 * ⚙️ [配置文件详解](docs/configuration.md) — 了解 `config.yaml` 详细配置字段及各项任务开关说明。
 * 🔔 [失败通知](docs/notify.md) — 运行失败汇总推送（Webhook / Bark / TG / 钉钉等，通道配置独立 `notify.yaml`）。
+* 🪟 [Windows 运行指南](docs/windows.md) — 了解 Windows 前台运行、无窗口一键启动和停止方式。
 * 🐳 [Docker 部署指南](docs/docker.md) — 了解如何通过 Docker/Docker Compose 一键部署并配合定时任务运行。
 * 🐲 [青龙 / 呆呆面板部署指南](docs/qinglong.md) — 了解如何在青龙面板（Qinglong）与呆呆面板（Dumb-Panel）中订阅部署并配置自动化打卡任务。
 * 📖 [命令行使用说明](docs/cli.md) — 查看完整的命令树、通用参数以及所有子命令的使用实例。

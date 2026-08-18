@@ -15,10 +15,11 @@ import (
 )
 
 type webOptions struct {
-	listen    string
-	token     string
-	webConfig string
-	scheduler bool
+	listen     string
+	token      string
+	webConfig  string
+	scheduler  bool
+	background bool
 }
 
 func newWebCommand(root *Root) *cobra.Command {
@@ -27,6 +28,9 @@ func newWebCommand(root *Root) *cobra.Command {
 		Use:   "web",
 		Short: "Start the optional ncmm WebUI",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if opts.background {
+				return startWebBackground(opts.listen)
+			}
 			return runWeb(cmd.Context(), root, opts)
 		},
 	}
@@ -34,6 +38,7 @@ func newWebCommand(root *Root) *cobra.Command {
 	cmd.Flags().StringVar(&opts.token, "token", os.Getenv("NCMM_WEB_TOKEN"), "management token (or NCMM_WEB_TOKEN)")
 	cmd.Flags().StringVar(&opts.webConfig, "web-config", "", "WebUI settings file path")
 	cmd.Flags().BoolVar(&opts.scheduler, "scheduler", false, "enable the built-in scheduler")
+	cmd.Flags().BoolVar(&opts.background, "background", false, "start the WebUI without a console window (Windows only)")
 	return cmd
 }
 

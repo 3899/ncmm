@@ -26,7 +26,7 @@ services:
       - "host.docker.internal:host-gateway"
     environment:
       - TZ=Asia/Shanghai
-      # 推荐显式设置；留空会自动生成并保存至 /data/webui.secret。
+      # 可选：显式设置后会跳过首次设置页面。
       # - NCMM_WEB_TOKEN=replace-with-a-long-random-token
       #- COOKIECLOUD_SERVER=http://host.docker.internal:8088
       #- COOKIECLOUD_UUID=your-uuid
@@ -45,17 +45,19 @@ docker logs ncmm
 - `config.yaml`：ncmm 任务配置。
 - `notify.yaml`：通知通道配置。
 - `webui.yaml`：WebUI 定时任务和日志保留设置。
-- `webui.secret`：未设置 `NCMM_WEB_TOKEN` 时生成的管理令牌。
+- `webui.secret`：未设置 `NCMM_WEB_TOKEN` 时，在 WebUI 完成首次设置后生成。
 - `log/runs/`：定时任务运行日志。
 
 ## WebUI
 
-打开 `http://localhost:3899`，输入 `NCMM_WEB_TOKEN`，或输入 `docker logs ncmm` 首次启动时显示的管理令牌。
+打开 `http://localhost:3899`。未设置 `NCMM_WEB_TOKEN` 且 `/data/webui.secret` 不存在时，页面会要求设置并确认至少 8 位的管理令牌；设置成功后自动进入管理界面。后续启动使用该令牌登录。
+
+首次设置完成前仅应在可信网络中暴露端口 `3899`。如果端口直接开放到公网，首个访问 WebUI 的用户可能抢先设置管理令牌。公网部署建议预先设置 `NCMM_WEB_TOKEN`，或先限制防火墙来源，完成首次设置后再开放访问。
 
 WebUI 支持：
 
 - 带字段说明可视化编辑 `config.yaml` 和 `notify.yaml`，也可直接编辑 YAML。
-- 粘贴 Cookie 登录，自定义导出的 `.json` 文件名。
+- 支持粘贴 Cookie 或二维码登录，并可自定义导出的 `.json` 文件名。
 - 创建、修改、启停和立即运行定时任务。
 - 查看、停止运行任务以及查看运行日志。
 - 按保留天数和最大容量自动清理日志。
@@ -120,6 +122,5 @@ docker run -d --name ncmm \
   -p 3899:3899 \
   -v ./data:/data \
   -e TZ=Asia/Shanghai \
-  -e NCMM_WEB_TOKEN=replace-with-a-long-random-token \
   ghcr.io/3899/ncmm:latest
 ```

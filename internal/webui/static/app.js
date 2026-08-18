@@ -17,6 +17,10 @@
     security: null,
     update: null,
     accountMain: true,
+    accountMethod: 'cookie',
+    qrcodeSession: null,
+    qrcodePoller: null,
+    qrcodeImageURL: '',
     poller: null,
   };
 
@@ -83,6 +87,30 @@
     return payload;
   }
 
+  async function publicApi(path, options = {}) {
+    const headers = { ...(options.headers || {}) };
+    if (options.body && typeof options.body !== 'string') {
+      headers['Content-Type'] = 'application/json';
+      options.body = JSON.stringify(options.body);
+    }
+    const response = await fetch(path, { ...options, headers });
+    const type = response.headers.get('content-type') || '';
+    const payload = type.includes('application/json') ? await response.json() : await response.text();
+    if (!response.ok) throw new Error(payload?.error || payload || `HTTP ${response.status}`);
+    return payload;
+  }
+
+  async function apiBlob(path) {
+    const response = await fetch(path, { headers: { Authorization: `Bearer ${state.token}` } });
+    if (!response.ok) {
+      const type = response.headers.get('content-type') || '';
+      const payload = type.includes('application/json') ? await response.json() : await response.text();
+      if (response.status === 401) logout(true);
+      throw new Error(payload?.error || payload || `HTTP ${response.status}`);
+    }
+    return response.blob();
+  }
+
   function toast(message, error = false) {
     const node = document.createElement('div');
     node.className = `toast${error ? ' error' : ''}`;
@@ -101,19 +129,40 @@
     startPolling();
   }
 
+  function showLoginView() {
+    $('#auth-title').textContent = '管理控制台';
+    $('#setup-form').classList.add('hidden');
+    $('#login-form').classList.remove('hidden');
+    $('#login-view').classList.remove('hidden');
+    $('#token-input').focus();
+  }
+
+  function showSetupView() {
+    sessionStorage.removeItem('ncmm-token');
+    state.token = '';
+    $('#auth-title').textContent = '首次设置';
+    $('#login-form').classList.add('hidden');
+    $('#setup-form').classList.remove('hidden');
+    $('#login-view').classList.remove('hidden');
+    $('#setup-token').focus();
+  }
+
   function logout(showLogin = true) {
     sessionStorage.removeItem('ncmm-token');
     state.token = '';
     clearInterval(state.poller);
+    clearInterval(state.qrcodePoller);
     state.poller = null;
+    state.qrcodePoller = null;
+    clearQRCodeImage();
     $('#app-shell').classList.add('hidden');
-    if (showLogin) $('#login-view').classList.remove('hidden');
+    if (showLogin) showLoginView();
   }
 
   async function loadAll() {
-    const [status, config, notify, schedules, runs, settings, security, update] = await Promise.all([
+    const [status, config, notify, schedules, runs, settings, security, update, qrcodeSession] = await Promise.all([
       api('/api/v1/status'), api('/api/v1/config'), api('/api/v1/notify'), api('/api/v1/schedules'), api('/api/v1/runs'), api('/api/v1/settings'),
-      api('/api/v1/security'), api('/api/v1/update'),
+      api('/api/v1/security'), api('/api/v1/update'), api('/api/v1/accounts/qrcode'),
     ]);
     state.status = status;
     state.config = config;
@@ -123,9 +172,18 @@
     state.settings = settings;
     state.security = security;
     state.update = update;
+    state.qrcodeSession = qrcodeSession;
+    if (qrcodeSession) {
+      state.accountMain = !!qrcodeSession.main;
+      state.accountMethod = 'qrcode';
+      $('#account-filename').value = qrcodeSession.filename;
+      $$('.account-type button').forEach(button => button.classList.toggle('active', (button.dataset.main === 'true') === state.accountMain));
+    }
     state.configDirty = false;
     state.configDirtyMode = '';
     renderAll();
+    setAccountMethod(state.accountMethod);
+    if (qrcodeSessionActive()) startQRCodePolling();
   }
 
   function renderAll() {
@@ -136,6 +194,98 @@
     renderSettings();
     renderSystem();
     renderDashboard();
+    renderQRCodeSession();
+  }
+
+  function clearQRCodeImage() {
+    if (state.qrcodeImageURL) URL.revokeObjectURL(state.qrcodeImageURL);
+    state.qrcodeImageURL = '';
+    const image = $('#qrcode-image');
+    if (image) {
+      image.removeAttribute('src');
+      image.classList.add('hidden');
+    }
+    $('#qrcode-placeholder')?.classList.remove('hidden');
+  }
+
+  function qrcodeSessionActive(session = state.qrcodeSession) {
+    return !!session && ['starting', 'waiting', 'cancelling'].includes(session.status);
+  }
+
+  function renderQRCodeSession() {
+    const session = state.qrcodeSession;
+    const status = session?.status || 'idle';
+    const labels = {
+      idle: '未生成', starting: '生成中', waiting: '等待扫码', cancelling: '取消中',
+      succeeded: '登录成功', failed: '登录失败', expired: '已超时', canceled: '已取消',
+    };
+    const badgeClasses = {
+      idle: 'disabled', starting: 'running', waiting: 'running', cancelling: 'running',
+      succeeded: 'success', failed: 'failed', expired: 'failed', canceled: 'disabled',
+    };
+    $('#qrcode-badge').className = `badge ${badgeClasses[status] || 'disabled'}`;
+    $('#qrcode-badge').textContent = labels[status] || status;
+    $('#qrcode-message').textContent = session?.message || '等待生成二维码';
+    $('#qrcode-filename').textContent = session?.filename || $('#account-filename').value || 'cookie.json';
+    $('#qrcode-cancel').classList.toggle('hidden', !qrcodeSessionActive());
+    $('#account-submit').disabled = qrcodeSessionActive();
+    $$('#account-login-method button, .account-type button').forEach(button => { button.disabled = qrcodeSessionActive(); });
+  }
+
+  async function loadQRCodeImage(id) {
+    if (state.qrcodeImageURL) return;
+    const blob = await apiBlob(`/api/v1/accounts/qrcode/${encodeURIComponent(id)}/image`);
+    state.qrcodeImageURL = URL.createObjectURL(blob);
+    $('#qrcode-image').src = state.qrcodeImageURL;
+    $('#qrcode-image').classList.remove('hidden');
+    $('#qrcode-placeholder').classList.add('hidden');
+  }
+
+  async function refreshQRCodeSession() {
+    if (!state.qrcodeSession?.id) return;
+    const previousStatus = state.qrcodeSession.status;
+    try {
+      state.qrcodeSession = await api(`/api/v1/accounts/qrcode/${encodeURIComponent(state.qrcodeSession.id)}`);
+      renderQRCodeSession();
+      if (state.qrcodeSession.imageReady && !state.qrcodeImageURL) {
+        try { await loadQRCodeImage(state.qrcodeSession.id); }
+        catch (error) { if (!qrcodeSessionActive()) toast(error.message, true); }
+      }
+      if (!qrcodeSessionActive()) {
+        clearInterval(state.qrcodePoller);
+        state.qrcodePoller = null;
+        if (previousStatus !== state.qrcodeSession.status && state.qrcodeSession.status === 'succeeded') {
+          state.config = await api('/api/v1/config');
+          renderConfig();
+          toast('二维码登录成功');
+        } else if (previousStatus !== state.qrcodeSession.status && ['failed', 'expired'].includes(state.qrcodeSession.status)) {
+          toast(state.qrcodeSession.message, true);
+        }
+      }
+    } catch (error) {
+      clearInterval(state.qrcodePoller);
+      state.qrcodePoller = null;
+      toast(error.message, true);
+    }
+  }
+
+  function startQRCodePolling() {
+    clearInterval(state.qrcodePoller);
+    state.qrcodePoller = setInterval(refreshQRCodeSession, 1000);
+    refreshQRCodeSession();
+  }
+
+  function setAccountMethod(method) {
+    state.accountMethod = method;
+    $$('#account-login-method button').forEach(button => button.classList.toggle('active', button.dataset.loginMethod === method));
+    $('#cookie-login-fields').classList.toggle('hidden', method !== 'cookie');
+    $('#qrcode-login-fields').classList.toggle('hidden', method !== 'qrcode');
+    $('#cookie-result').classList.toggle('hidden', method !== 'cookie' || !$('#cookie-result').textContent);
+    $('#cookie-format').disabled = method !== 'cookie';
+    $('#cookie-content').disabled = method !== 'cookie';
+    $('#account-submit-label').textContent = method === 'cookie' ? '验证并导入' : '生成二维码';
+    $('#account-submit-icon').setAttribute('href', method === 'cookie' ? '#i-user' : '#i-qr');
+    renderQRCodeSession();
   }
 
   function activeDocument() {
@@ -475,6 +625,27 @@
       catch (error) { $('#login-error').textContent = error.message; }
     });
     $('#token-toggle').addEventListener('click', () => { $('#token-input').type = $('#token-input').type === 'password' ? 'text' : 'password'; });
+    $('#setup-token-toggle').addEventListener('click', () => { $('#setup-token').type = $('#setup-token').type === 'password' ? 'text' : 'password'; });
+    $('#setup-confirm-toggle').addEventListener('click', () => { $('#setup-confirm').type = $('#setup-confirm').type === 'password' ? 'text' : 'password'; });
+    $('#setup-form').addEventListener('submit', async event => {
+      event.preventDefault();
+      const token = $('#setup-token').value.trim();
+      const confirmation = $('#setup-confirm').value.trim();
+      $('#setup-error').textContent = '';
+      if (token !== confirmation) {
+        $('#setup-confirm').setCustomValidity('两次输入的令牌不一致');
+        $('#setup-confirm').reportValidity();
+        return;
+      }
+      $('#setup-confirm').setCustomValidity('');
+      try {
+        await publicApi('/api/v1/setup', { method: 'POST', body: { token, confirmation } });
+        await login(token);
+      } catch (error) {
+        $('#setup-error').textContent = error.message;
+      }
+    });
+    $('#setup-confirm').addEventListener('input', () => $('#setup-confirm').setCustomValidity(''));
     $('#logout-button').addEventListener('click', () => logout());
     $('#theme-button').addEventListener('click', () => {
       const dark = document.documentElement.dataset.theme === 'dark';
@@ -534,20 +705,46 @@
       catch (error) { toast(error.message, true); }
     });
 
+    $$('#account-login-method button').forEach(button => button.addEventListener('click', () => {
+      if (qrcodeSessionActive()) {
+        toast('请先完成或取消当前二维码登录', true);
+        return;
+      }
+      setAccountMethod(button.dataset.loginMethod);
+    }));
     $$('.account-type button').forEach(button => button.addEventListener('click', () => {
+      if (qrcodeSessionActive()) return;
       const previousDefault = state.accountMain ? 'cookie.json' : 'fan1.json';
       state.accountMain = button.dataset.main === 'true';
       $$('.account-type button').forEach(x => x.classList.toggle('active', x === button));
       const nextDefault = state.accountMain ? 'cookie.json' : 'fan1.json';
-      if ($('#cookie-filename').value === previousDefault || $('#cookie-filename').value === 'account.json') $('#cookie-filename').value = nextDefault;
+      if ($('#account-filename').value === previousDefault || $('#account-filename').value === 'account.json') $('#account-filename').value = nextDefault;
+      renderQRCodeSession();
     }));
-    $('#cookie-form').addEventListener('submit', async event => {
+    $('#account-filename').addEventListener('input', renderQRCodeSession);
+    $('#account-form').addEventListener('submit', async event => {
       event.preventDefault();
-      const submit = $('#cookie-submit'); submit.disabled = true;
+      const submit = $('#account-submit'); submit.disabled = true;
+      if (state.accountMethod === 'qrcode') {
+        clearQRCodeImage();
+        state.qrcodeSession = null;
+        renderQRCodeSession();
+        try {
+          state.qrcodeSession = await api('/api/v1/accounts/qrcode', { method: 'POST', body: {
+            filename: $('#account-filename').value, main: state.accountMain,
+          }});
+          renderQRCodeSession();
+          startQRCodePolling();
+        } catch (error) {
+          toast(error.message, true);
+          submit.disabled = false;
+        }
+        return;
+      }
       try {
         const result = await api('/api/v1/accounts/cookie', { method: 'POST', body: {
           content: $('#cookie-content').value, format: $('#cookie-format').value,
-          filename: $('#cookie-filename').value, main: state.accountMain,
+          filename: $('#account-filename').value, main: state.accountMain,
         }});
         $('#cookie-content').value = '';
         $('#cookie-result').textContent = result.message || `已导入 ${result.filename}`;
@@ -556,6 +753,15 @@
         toast('Cookie 验证并导入成功');
       } catch (error) { toast(error.message, true); }
       finally { submit.disabled = false; }
+    });
+    $('#qrcode-cancel').addEventListener('click', async () => {
+      if (!state.qrcodeSession?.id || !qrcodeSessionActive()) return;
+      $('#qrcode-cancel').disabled = true;
+      try {
+        state.qrcodeSession = await api(`/api/v1/accounts/qrcode/${encodeURIComponent(state.qrcodeSession.id)}`, { method: 'DELETE' });
+        renderQRCodeSession();
+      } catch (error) { toast(error.message, true); }
+      finally { $('#qrcode-cancel').disabled = false; }
     });
 
     $('#schedule-add').addEventListener('click', () => openScheduleDialog());
@@ -642,11 +848,22 @@
   async function boot() {
     document.documentElement.dataset.theme = localStorage.getItem('ncmm-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
     bindEvents();
+    try {
+      const setup = await publicApi('/api/v1/setup');
+      if (setup.required) {
+        showSetupView();
+        return;
+      }
+    } catch (error) {
+      showLoginView();
+      $('#login-error').textContent = error.message;
+      return;
+    }
     if (state.token) {
       try { await login(state.token); return; }
       catch { sessionStorage.removeItem('ncmm-token'); state.token = ''; }
     }
-    $('#login-view').classList.remove('hidden');
+    showLoginView();
   }
 
   boot();

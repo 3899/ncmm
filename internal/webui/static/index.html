@@ -29,13 +29,14 @@
     <symbol id="i-shield" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-8 9-4.5-1.5-8-4-8-9V5l8-3 8 3z"/><path d="m9 12 2 2 4-4"/></symbol>
     <symbol id="i-key" viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6M15 6l3 3M18 3l3 3"/></symbol>
     <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M5 21h14"/></symbol>
+    <symbol id="i-qr" viewBox="0 0 24 24"><rect width="5" height="5" x="3" y="3" rx="1"/><rect width="5" height="5" x="16" y="3" rx="1"/><rect width="5" height="5" x="3" y="16" rx="1"/><path d="M16 16h2v2h-2zm4 0v4h-4m4-9v2m-9-2h2v2h-2z"/></symbol>
   </svg>
 
   <section id="login-view" class="login-view">
     <div class="login-panel">
       <div class="brand-mark">N</div>
       <p class="eyebrow">NCMM CONTROL</p>
-      <h1>管理控制台</h1>
+      <h1 id="auth-title">管理控制台</h1>
       <form id="login-form">
         <label for="token-input">管理令牌</label>
         <div class="password-field">
@@ -44,6 +45,20 @@
         </div>
         <button class="button primary full" type="submit">连接</button>
         <p id="login-error" class="form-error" role="alert"></p>
+      </form>
+      <form id="setup-form" class="hidden">
+        <label for="setup-token">设置管理令牌</label>
+        <div class="password-field">
+          <input id="setup-token" type="password" minlength="8" maxlength="256" autocomplete="new-password" required autofocus>
+          <button id="setup-token-toggle" type="button" class="icon-button" title="显示或隐藏令牌"><svg><use href="#i-eye"/></svg></button>
+        </div>
+        <label for="setup-confirm">确认管理令牌</label>
+        <div class="password-field">
+          <input id="setup-confirm" type="password" minlength="8" maxlength="256" autocomplete="new-password" required>
+          <button id="setup-confirm-toggle" type="button" class="icon-button" title="显示或隐藏令牌"><svg><use href="#i-eye"/></svg></button>
+        </div>
+        <button class="button primary full" type="submit">设置并进入</button>
+        <p id="setup-error" class="form-error" role="alert"></p>
       </form>
     </div>
   </section>
@@ -114,15 +129,34 @@
         </section>
 
         <section id="page-accounts" class="page">
-          <div class="section-head"><div><p class="eyebrow">COOKIE LOGIN</p><h3>导入账号</h3></div></div>
-          <form id="cookie-form" class="form-surface">
+          <div class="section-head">
+            <div><p class="eyebrow">ACCOUNT LOGIN</p><h3>登录账号</h3></div>
+            <div id="account-login-method" class="segmented"><button type="button" class="active" data-login-method="cookie">Cookie</button><button type="button" data-login-method="qrcode">二维码</button></div>
+          </div>
+          <form id="account-form" class="form-surface">
             <div class="form-grid two">
               <label>账号类型<div class="segmented account-type"><button type="button" class="active" data-main="true">主账号</button><button type="button" data-main="false">辅助账号</button></div></label>
-              <label>Cookie 格式<select id="cookie-format"><option value="auto">自动识别</option><option value="header">Header</option><option value="json">JSON</option><option value="netscape">Netscape</option></select></label>
+              <label>输出文件名<input id="account-filename" type="text" value="cookie.json" maxlength="128" autocomplete="off" required></label>
             </div>
-            <label>输出文件名<input id="cookie-filename" type="text" value="cookie.json" maxlength="128" autocomplete="off" required></label>
-            <label>Cookie 内容<textarea id="cookie-content" class="cookie-input" autocomplete="off" spellcheck="false" required></textarea></label>
-            <div class="form-actions"><button id="cookie-submit" class="button primary" type="submit"><svg><use href="#i-user"/></svg>验证并导入</button></div>
+            <div id="cookie-login-fields" class="method-fields">
+              <label>Cookie 格式<select id="cookie-format"><option value="auto">自动识别</option><option value="header">Header</option><option value="json">JSON</option><option value="netscape">Netscape</option></select></label>
+              <label>Cookie 内容<textarea id="cookie-content" class="cookie-input" autocomplete="off" spellcheck="false" required></textarea></label>
+            </div>
+            <div id="qrcode-login-fields" class="qrcode-login hidden" aria-live="polite">
+              <div class="qrcode-image-wrap">
+                <svg id="qrcode-placeholder" aria-hidden="true"><use href="#i-qr"/></svg>
+                <img id="qrcode-image" class="hidden" alt="网易云音乐登录二维码">
+              </div>
+              <div class="qrcode-status">
+                <span id="qrcode-badge" class="badge disabled">未生成</span>
+                <strong id="qrcode-message">等待生成二维码</strong>
+                <span id="qrcode-filename" class="muted">cookie.json</span>
+              </div>
+            </div>
+            <div class="form-actions">
+              <button id="qrcode-cancel" class="button subtle hidden" type="button"><svg><use href="#i-stop"/></svg>取消登录</button>
+              <button id="account-submit" class="button primary" type="submit"><svg><use id="account-submit-icon" href="#i-user"/></svg><span id="account-submit-label">验证并导入</span></button>
+            </div>
           </form>
           <div id="cookie-result" class="result-panel hidden" role="status"></div>
         </section>

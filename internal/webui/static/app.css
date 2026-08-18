@@ -71,6 +71,7 @@ textarea { resize: vertical; }
 .password-field { position: relative; }
 .password-field input { padding-right: 46px; }
 .password-field .icon-button { position: absolute; right: 3px; top: 3px; }
+#setup-form .password-field + label { margin-top: 16px; }
 .form-error { min-height: 20px; margin: 10px 0 0; color: var(--danger); font-size: 13px; }
 
 .app-shell { min-height: 100vh; display: grid; grid-template-columns: 230px minmax(0, 1fr); }
@@ -112,6 +113,7 @@ main { width: min(100%, 1420px); margin: 0 auto; padding: 28px; }
 .stat-card small { margin-top: auto; color: var(--muted); }
 .content-section { margin-top: 22px; border-top: 1px solid var(--line); padding-top: 20px; }
 .section-head { min-height: 46px; display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
+#page-accounts .section-head { max-width: 850px; }
 .compact-list { border: 1px solid var(--line); background: var(--surface); border-radius: var(--radius); overflow: hidden; }
 .compact-row { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(170px, .8fr) 160px; align-items: center; gap: 20px; min-height: 58px; padding: 10px 16px; border-bottom: 1px solid var(--line); }
 .compact-row:last-child { border-bottom: 0; }
@@ -155,7 +157,16 @@ input:checked + .toggle::after { transform: translateX(18px); }
 .form-grid { display: grid; gap: 16px; }
 .form-grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .form-actions, .dialog-actions { display: flex; justify-content: flex-end; gap: 9px; }
+.method-fields { display: grid; gap: 18px; }
 .cookie-input { min-height: 250px; font: 12px/1.55 "Cascadia Code", Consolas, monospace; }
+.qrcode-login { display: grid; grid-template-columns: 240px minmax(0, 1fr); align-items: center; gap: 28px; min-height: 240px; }
+.qrcode-image-wrap { width: 240px; aspect-ratio: 1; display: grid; place-items: center; overflow: hidden; border: 1px solid var(--line); border-radius: 6px; background: white; }
+.qrcode-image-wrap > * { grid-area: 1 / 1; }
+.qrcode-image-wrap > svg { width: 54px; height: 54px; color: #87918c; }
+.qrcode-image-wrap img { width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; }
+.qrcode-status { min-width: 0; display: grid; justify-items: start; gap: 12px; }
+.qrcode-status strong { max-width: 100%; font-size: 16px; overflow-wrap: anywhere; }
+.qrcode-status .muted { font-size: 13px; overflow-wrap: anywhere; }
 .result-panel { max-width: 850px; margin-top: 14px; padding: 16px; border-left: 3px solid var(--accent); background: var(--accent-soft); color: var(--ink); white-space: pre-wrap; font-size: 13px; }
 .field-note { min-height: 18px; margin: -4px 0 4px; color: var(--muted); font-size: 12px; }
 
@@ -227,6 +238,8 @@ tbody tr:last-child td { border-bottom: 0; }
   .section-tabs { position: static; display: flex; overflow-x: auto; margin-bottom: 15px; padding-bottom: 4px; }
   .section-tabs button { flex: 0 0 auto; }
   .config-fields, .form-grid.two { grid-template-columns: 1fr; }
+  .qrcode-login { grid-template-columns: 1fr; justify-items: center; gap: 18px; }
+  .qrcode-status { justify-items: center; text-align: center; }
   .config-field.full { grid-column: auto; }
   .yaml-wrap { height: 70vh; min-height: 440px; }
   .settings-band { grid-template-columns: 1fr 1fr; }
@@ -241,6 +254,8 @@ tbody tr:last-child td { border-bottom: 0; }
   .settings-band { grid-template-columns: 1fr; }
   .settings-band label:nth-of-type(3) { grid-column: auto; }
   .page-toolbar { display: grid; }
+  #page-accounts .section-head { align-items: flex-start; flex-direction: column; }
+  .qrcode-image-wrap { width: min(100%, 240px); }
   .toolbar-actions { justify-content: flex-start; }
   .update-summary { grid-template-columns: 1fr; }
   .update-summary > div { border-right: 0; border-bottom: 1px solid var(--line); }

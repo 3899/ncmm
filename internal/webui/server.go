@@ -2,16 +2,16 @@ package webui
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/subtle"
 	"embed"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"mime"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -30,11 +30,13 @@ type Server struct {
 	tokenMu           sync.RWMutex
 	token             string
 	tokenFromExternal bool
+	setupRequired     bool
 	config            *configStore
 	notify            *configStore
 	webConfig         *webConfigStore
 	runner            *runManager
 	scheduler         *scheduler
+	qrcode            *qrcodeLoginManager
 	updateMu          sync.Mutex
 	http              *http.Server
 }
@@ -50,13 +52,12 @@ func New(ctx context.Context, opts Options) (*Server, error) {
 		opts.WebConfig = filepath.Join(opts.Home, "webui.yaml")
 	}
 	tokenFromExternal := strings.TrimSpace(opts.Token) != ""
-	token, generated, err := resolveToken(opts.Home, opts.Token)
+	token, setupRequired, err := resolveToken(opts.Home, opts.Token)
 	if err != nil {
 		return nil, err
 	}
-	if generated {
-		opts.Output("[webui] generated management token: %s\n", token)
-		opts.Output("[webui] token saved to: %s\n", filepath.Join(opts.Home, "webui.secret"))
+	if setupRequired {
+		opts.Output("[webui] management token is not configured; open the WebUI to complete initial setup\n")
 	}
 	notifyPath, err := resolveNotifyPath(opts.ConfigPath, opts.Home)
 	if err != nil {
@@ -79,9 +80,10 @@ func New(ctx context.Context, opts Options) (*Server, error) {
 		return nil, err
 	}
 	s := &Server{
-		opts: opts, token: token, tokenFromExternal: tokenFromExternal,
+		opts: opts, token: token, tokenFromExternal: tokenFromExternal, setupRequired: setupRequired,
 		config: newConfigStore(opts.ConfigPath), notify: notifyStore,
 		webConfig: webConfig, runner: runner, scheduler: scheduler,
+		qrcode: newQRCodeLoginManager(ctx, opts.Executable, opts.ConfigPath, opts.Home),
 	}
 	s.http = &http.Server{
 		Addr:              opts.Listen,
@@ -95,6 +97,7 @@ func New(ctx context.Context, opts Options) (*Server, error) {
 }
 
 func (s *Server) Run(ctx context.Context) error {
+	defer s.qrcode.close()
 	s.opts.Output("[webui] listening on http://%s\n", s.opts.Listen)
 	go s.cleanupLoop(ctx)
 	errCh := make(chan error, 1)
@@ -130,6 +133,8 @@ func (s *Server) cleanupLoop(ctx context.Context) {
 
 func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/setup", s.handleSetupGet)
+	mux.HandleFunc("POST /api/v1/setup", s.handleSetupPost)
 	mux.HandleFunc("GET /api/v1/status", s.handleStatus)
 	mux.HandleFunc("GET /api/v1/security", s.handleSecurityGet)
 	mux.HandleFunc("PUT /api/v1/security/token", s.handleSecurityTokenPut)
@@ -152,6 +157,11 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /api/v1/runs/{id}/stop", s.handleRunStop)
 	mux.HandleFunc("POST /api/v1/logs/cleanup", s.handleLogsCleanup)
 	mux.HandleFunc("POST /api/v1/accounts/cookie", s.handleCookieImport)
+	mux.HandleFunc("GET /api/v1/accounts/qrcode", s.handleQRCodeLoginCurrent)
+	mux.HandleFunc("POST /api/v1/accounts/qrcode", s.handleQRCodeLoginStart)
+	mux.HandleFunc("GET /api/v1/accounts/qrcode/{id}", s.handleQRCodeLoginGet)
+	mux.HandleFunc("GET /api/v1/accounts/qrcode/{id}/image", s.handleQRCodeLoginImage)
+	mux.HandleFunc("DELETE /api/v1/accounts/qrcode/{id}", s.handleQRCodeLoginCancel)
 
 	staticFS, _ := fs.Sub(staticFiles, "static")
 	fileServer := http.FileServer(http.FS(staticFS))
@@ -161,8 +171,9 @@ func (s *Server) routes() http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "no-referrer")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'")
-		if strings.HasPrefix(r.URL.Path, "/api/") && !s.authorized(r) {
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'")
+		publicSetupRequest := r.URL.Path == "/api/v1/setup" && (r.Method == http.MethodGet || r.Method == http.MethodPost)
+		if strings.HasPrefix(r.URL.Path, "/api/") && !publicSetupRequest && !s.authorized(r) {
 			writeError(w, http.StatusUnauthorized, "invalid management token")
 			return
 		}
@@ -174,10 +185,74 @@ func (s *Server) authorized(r *http.Request) bool {
 	provided := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
 	s.tokenMu.RLock()
 	defer s.tokenMu.RUnlock()
+	if s.setupRequired || s.token == "" {
+		return false
+	}
 	if len(provided) != len(s.token) {
 		return false
 	}
 	return subtle.ConstantTimeCompare([]byte(provided), []byte(s.token)) == 1
+}
+
+func (s *Server) handleSetupGet(w http.ResponseWriter, _ *http.Request) {
+	s.tokenMu.RLock()
+	required := s.setupRequired
+	s.tokenMu.RUnlock()
+	writeJSON(w, http.StatusOK, map[string]bool{"required": required})
+}
+
+func (s *Server) handleSetupPost(w http.ResponseWriter, r *http.Request) {
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || mediaType != "application/json" {
+		writeError(w, http.StatusUnsupportedMediaType, "content type must be application/json")
+		return
+	}
+	if site := strings.ToLower(strings.TrimSpace(r.Header.Get("Sec-Fetch-Site"))); site != "" && site != "same-origin" && site != "none" {
+		writeError(w, http.StatusForbidden, "cross-site setup is not allowed")
+		return
+	}
+	if origin := strings.TrimSpace(r.Header.Get("Origin")); origin != "" {
+		parsed, parseErr := url.Parse(origin)
+		if parseErr != nil || !strings.EqualFold(parsed.Host, r.Host) {
+			writeError(w, http.StatusForbidden, "cross-origin setup is not allowed")
+			return
+		}
+	}
+
+	var req struct {
+		Token        string `json:"token"`
+		Confirmation string `json:"confirmation"`
+	}
+	if !decodeJSON(w, r, &req, 4<<10) {
+		return
+	}
+	token := strings.TrimSpace(req.Token)
+	if token != strings.TrimSpace(req.Confirmation) {
+		writeError(w, http.StatusBadRequest, "management token confirmation does not match")
+		return
+	}
+	if err := validateManagementToken(token); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	s.tokenMu.Lock()
+	defer s.tokenMu.Unlock()
+	if !s.setupRequired {
+		writeError(w, http.StatusConflict, "initial setup is already complete")
+		return
+	}
+	if err := os.MkdirAll(s.opts.Home, 0755); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := writeFileAtomic(filepath.Join(s.opts.Home, "webui.secret"), []byte(token+"\n"), 0600); err != nil {
+		writeError(w, http.StatusInternalServerError, "save management token: "+err.Error())
+		return
+	}
+	s.token = token
+	s.setupRequired = false
+	writeJSON(w, http.StatusOK, map[string]bool{"configured": true})
 }
 
 func (s *Server) handleSecurityGet(w http.ResponseWriter, _ *http.Request) {
@@ -538,6 +613,97 @@ func (s *Server) handleCookieImport(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handleQRCodeLoginStart(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Filename string `json:"filename"`
+		Main     bool   `json:"main"`
+	}
+	if !decodeJSON(w, r, &req, 4<<10) {
+		return
+	}
+	if strings.TrimSpace(req.Filename) == "" {
+		if req.Main {
+			req.Filename = "cookie.json"
+		} else {
+			req.Filename = "fan1.json"
+		}
+	}
+	filename, err := validateCookieFilename(req.Filename)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if s.qrcode == nil {
+		writeError(w, http.StatusServiceUnavailable, "qrcode login is unavailable")
+		return
+	}
+	view, err := s.qrcode.start(filename, req.Main)
+	if errors.Is(err, errQRCodeLoginActive) {
+		writeError(w, http.StatusConflict, "another qrcode login is already in progress")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusAccepted, view)
+}
+
+func (s *Server) handleQRCodeLoginCurrent(w http.ResponseWriter, _ *http.Request) {
+	if s.qrcode == nil {
+		writeError(w, http.StatusServiceUnavailable, "qrcode login is unavailable")
+		return
+	}
+	view, ok := s.qrcode.current()
+	if !ok {
+		writeJSON(w, http.StatusOK, nil)
+		return
+	}
+	writeJSON(w, http.StatusOK, view)
+}
+
+func (s *Server) handleQRCodeLoginGet(w http.ResponseWriter, r *http.Request) {
+	if s.qrcode == nil {
+		writeError(w, http.StatusServiceUnavailable, "qrcode login is unavailable")
+		return
+	}
+	view, ok := s.qrcode.get(r.PathValue("id"))
+	if !ok {
+		writeError(w, http.StatusNotFound, "qrcode login session not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, view)
+}
+
+func (s *Server) handleQRCodeLoginImage(w http.ResponseWriter, r *http.Request) {
+	if s.qrcode == nil {
+		writeError(w, http.StatusServiceUnavailable, "qrcode login is unavailable")
+		return
+	}
+	data, ok := s.qrcode.image(r.PathValue("id"))
+	if !ok {
+		writeError(w, http.StatusNotFound, "qrcode image is not ready")
+		return
+	}
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
+}
+
+func (s *Server) handleQRCodeLoginCancel(w http.ResponseWriter, r *http.Request) {
+	if s.qrcode == nil {
+		writeError(w, http.StatusServiceUnavailable, "qrcode login is unavailable")
+		return
+	}
+	view, ok := s.qrcode.cancelSession(r.PathValue("id"))
+	if !ok {
+		writeError(w, http.StatusNotFound, "qrcode login session not found")
+		return
+	}
+	writeJSON(w, http.StatusAccepted, view)
+}
+
 func validateCookieFilename(name string) (string, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -563,18 +729,7 @@ func resolveToken(home, configured string) (string, bool, error) {
 	if data, err := os.ReadFile(path); err == nil && strings.TrimSpace(string(data)) != "" {
 		return strings.TrimSpace(string(data)), false, nil
 	}
-	var raw [24]byte
-	if _, err := rand.Read(raw[:]); err != nil {
-		return "", false, err
-	}
-	token := hex.EncodeToString(raw[:])
-	if err := os.MkdirAll(home, 0755); err != nil {
-		return "", false, err
-	}
-	if err := os.WriteFile(path, []byte(token+"\n"), 0600); err != nil {
-		return "", false, err
-	}
-	return token, true, nil
+	return "", true, nil
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, dst any, limit int64) bool {
