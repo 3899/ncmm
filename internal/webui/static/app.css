@@ -44,7 +44,8 @@
 }
 
 * { box-sizing: border-box; }
-html, body { min-height: 100%; }
+html { min-height: 100%; overflow-y: scroll; scrollbar-gutter: stable; }
+body { min-height: 100%; }
 body { margin: 0; background: var(--bg); color: var(--ink); }
 button, input, select, textarea { font: inherit; letter-spacing: 0; }
 button { color: inherit; }
