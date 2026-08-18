@@ -27,6 +27,7 @@ type loginQrcodeCmd struct {
 	timeout time.Duration // 登录超时时间
 	dir     string        // 二维码文件路径
 	level   int           // 二维码恢复能力等级
+	output  string        // Cookie 输出文件路径
 }
 
 func qrcode(root *Login, l *log.Logger) *cobra.Command {
@@ -50,6 +51,7 @@ func (c *loginQrcodeCmd) addFlags() {
 	c.cmd.Flags().DurationVarP(&c.timeout, "timeout", "t", time.Minute*5, "login timeout, eg: 1s、1m")
 	c.cmd.Flags().StringVarP(&c.dir, "dir", "d", "", "qrcode file output path. default ./")
 	c.cmd.Flags().IntVarP(&c.level, "level", "l", 1, "qrcode recovery capacity,0->7% 1->15%(default) 2->25% 3->30%")
+	c.cmd.Flags().StringVarP(&c.output, "output", "o", "", "output cookie file path")
 }
 
 func (c *loginQrcodeCmd) execute(ctx context.Context, _ []string) error {
@@ -59,7 +61,26 @@ func (c *loginQrcodeCmd) execute(ctx context.Context, _ []string) error {
 
 	networkCfg := c.root.root.Cfg.Network
 	var tempCookieFile string
-	if !c.root.isMain {
+	if c.output != "" {
+		outputPath := c.output
+		if !filepath.IsAbs(outputPath) {
+			var targetDir string
+			if networkCfg.Cookie.Filepath != "" {
+				targetDir = filepath.Dir(networkCfg.Cookie.Filepath)
+			} else {
+				home := c.root.root.Opts.Home
+				if home == "" {
+					home = config.HomeDir
+				}
+				targetDir = filepath.Clean(home)
+			}
+			outputPath = filepath.Join(targetDir, outputPath)
+		}
+		tempCookieFile = filepath.Clean(outputPath)
+		networkCfgCopy := *networkCfg
+		networkCfgCopy.Cookie.Filepath = tempCookieFile
+		networkCfg = &networkCfgCopy
+	} else if !c.root.isMain {
 		var targetDir string
 		if networkCfg.Cookie.Filepath != "" {
 			targetDir = filepath.Dir(networkCfg.Cookie.Filepath)
@@ -167,7 +188,7 @@ ok:
 	}
 	c.cmd.Printf("login success: uid=%d nickname=%s\n", user.Account.Id, user.Profile.Nickname)
 
-	err = c.root.saveLoginResult(ctx, user.Profile.Nickname, user.Account.Id, tempCookieFile, "", "")
+	err = c.root.saveLoginResult(ctx, user.Profile.Nickname, user.Account.Id, tempCookieFile, c.output, "")
 	if err != nil {
 		return err
 	}

@@ -179,7 +179,7 @@ func (c *Root) CheckForUpdatesPreRun() {
 	if state.LatestVersion != "" && CompareVersions(currentVer, state.LatestVersion) < 0 {
 		log.Info("[updater] 发现可用新版本: %s (当前版本: %s)", state.LatestVersion, currentVer)
 		if needAutoUpdate && state.UpdatedVersion != state.LatestVersion {
-			c.performSelfUpdateFromState(&state, statePath)
+			_ = c.performSelfUpdateFromState(&state, statePath)
 			return
 		}
 	}
@@ -190,10 +190,14 @@ func (c *Root) CheckForUpdatesPreRun() {
 	}
 
 	// 3. 发起同步网络 API 检测并处理热替换
-	c.checkNewVersionSync(statePath, currentVer, needAutoUpdate)
+	_, _ = c.checkNewVersionSync(statePath, currentVer, needAutoUpdate)
 }
 
-func (c *Root) checkNewVersionSync(statePath string, currentVer string, autoUpdateEnabled bool) {
+func (c *Root) checkNewVersionSync(statePath string, currentVer string, autoUpdateEnabled bool) (UpdateState, error) {
+	state := c.initDefaultUpdateState()
+	if data, err := os.ReadFile(statePath); err == nil {
+		_ = json.Unmarshal(data, &state)
+	}
 	proxyMirrors := []string{"https://gh-proxy.com/", "https://ghproxy.net/", "https://githubproxy.cc/"}
 	if c.Cfg != nil && c.Cfg.Updater != nil && len(c.Cfg.Updater.ProxyMirrors) > 0 {
 		proxyMirrors = c.Cfg.Updater.ProxyMirrors
@@ -208,6 +212,7 @@ func (c *Root) checkNewVersionSync(statePath string, currentVer string, autoUpda
 	}
 
 	var resp *http.Response
+	var responseCancel context.CancelFunc
 	var lastErr error
 	var succeeded bool
 
@@ -226,7 +231,7 @@ func (c *Root) checkNewVersionSync(statePath string, currentVer string, autoUpda
 		resp, lastErr = http.DefaultClient.Do(req)
 		if lastErr == nil {
 			if resp.StatusCode == http.StatusOK {
-				cancel()
+				responseCancel = cancel
 				succeeded = true
 				break
 			}
@@ -240,19 +245,20 @@ func (c *Root) checkNewVersionSync(statePath string, currentVer string, autoUpda
 
 	if !succeeded {
 		log.Debug("[updater] 获取最新版本信息失败: %v", lastErr)
-		return
+		return state, fmt.Errorf("获取最新版本信息失败: %w", lastErr)
 	}
+	defer responseCancel()
 	defer resp.Body.Close()
 
 	var rel githubRelease
 	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
 		log.Warn("[updater] 解析版本信息失败: %v", err)
-		return
+		return state, fmt.Errorf("解析版本信息失败: %w", err)
 	}
 
 	tag := strings.TrimSpace(rel.TagName)
 	if tag == "" {
-		return
+		return state, fmt.Errorf("最新版本响应缺少 tag_name")
 	}
 
 	osPart, archPart, ext := getPlatformInfo()
@@ -268,13 +274,6 @@ func (c *Root) checkNewVersionSync(statePath string, currentVer string, autoUpda
 		downloadURL = fmt.Sprintf("https://github.com/3899/ncmm/releases/download/%s/%s", tag, targetName)
 	}
 
-	var state UpdateState
-	if utils.FileExists(statePath) {
-		if data, err := os.ReadFile(statePath); err == nil {
-			_ = json.Unmarshal(data, &state)
-		}
-	}
-
 	state.LastCheckTime = time.Now()
 	state.CurrentVersion = currentVer
 	state.LatestVersion = tag
@@ -287,18 +286,19 @@ func (c *Root) checkNewVersionSync(statePath string, currentVer string, autoUpda
 	c.saveUpdateState(statePath, &state)
 
 	if CompareVersions(currentVer, tag) >= 0 {
-		return
+		return state, nil
 	}
 
 	log.Info("[updater] 发现可用新版本: %s (当前版本: %s)", tag, currentVer)
 
 	if autoUpdateEnabled && state.UpdatedVersion != tag {
-		c.performSelfUpdateFromState(&state, statePath)
+		_ = c.performSelfUpdateFromState(&state, statePath)
 	}
+	return state, nil
 }
 
 // performSelfUpdateFromState 从状态结构中提取配置并执行全自动热替换
-func (c *Root) performSelfUpdateFromState(state *UpdateState, statePath string) {
+func (c *Root) performSelfUpdateFromState(state *UpdateState, statePath string) error {
 	state.UpdateStatus = "updating"
 	c.saveUpdateState(statePath, state)
 
@@ -309,6 +309,7 @@ func (c *Root) performSelfUpdateFromState(state *UpdateState, statePath string) 
 		state.LastError = err.Error()
 		c.saveUpdateState(statePath, state)
 		log.Warn("[updater] 自动升级失败: %s", err)
+		return err
 	} else {
 		state.UpdateStatus = "success"
 		state.UpdatedVersion = state.LatestVersion
@@ -317,6 +318,43 @@ func (c *Root) performSelfUpdateFromState(state *UpdateState, statePath string) 
 		c.saveUpdateState(statePath, state)
 		log.Info("[updater] ncmm 已成功升级至 %s 版本", state.LatestVersion)
 	}
+	return nil
+}
+
+// CheckForUpdatesNow bypasses the daily throttle for an explicit user request.
+func (c *Root) CheckForUpdatesNow() (UpdateState, error) {
+	updaterMu.Lock()
+	defer updaterMu.Unlock()
+	currentVer := strings.TrimSpace(c.AppVersion)
+	if currentVer == "" {
+		currentVer = "0.0.0"
+	}
+	return c.checkNewVersionSync(c.getUpdateStatePath(), currentVer, false)
+}
+
+// ApplyAvailableUpdate installs the release recorded by the latest manual check.
+func (c *Root) ApplyAvailableUpdate() (UpdateState, error) {
+	updaterMu.Lock()
+	defer updaterMu.Unlock()
+	statePath := c.getUpdateStatePath()
+	state := c.initDefaultUpdateState()
+	if data, err := os.ReadFile(statePath); err == nil {
+		_ = json.Unmarshal(data, &state)
+	}
+	currentVer := strings.TrimSpace(c.AppVersion)
+	if currentVer == "" {
+		currentVer = "0.0.0"
+	}
+	if os.Getenv("NCMM_DOCKER_OFFICIAL") == "1" {
+		return state, fmt.Errorf("官方 Docker 容器不支持替换镜像内二进制，请拉取新镜像后重建容器")
+	}
+	if state.LatestVersion == "" || CompareVersions(currentVer, state.LatestVersion) >= 0 {
+		return state, fmt.Errorf("当前没有可应用的新版本，请先检查更新")
+	}
+	if err := c.performSelfUpdateFromState(&state, statePath); err != nil {
+		return state, err
+	}
+	return state, nil
 }
 
 // performSelfUpdateWithInfo 执行真正的升级下载与文件覆盖
@@ -342,6 +380,7 @@ func (c *Root) performSelfUpdateWithInfo(tag string, assetName string, rawDownlo
 	}
 
 	var resp *http.Response
+	var responseCancel context.CancelFunc
 	var lastErr error
 	var succeeded bool
 
@@ -360,7 +399,7 @@ func (c *Root) performSelfUpdateWithInfo(tag string, assetName string, rawDownlo
 		resp, lastErr = http.DefaultClient.Do(req)
 		if lastErr == nil {
 			if resp.StatusCode == http.StatusOK {
-				cancel()
+				responseCancel = cancel
 				succeeded = true
 				break
 			}
@@ -376,6 +415,7 @@ func (c *Root) performSelfUpdateWithInfo(tag string, assetName string, rawDownlo
 	if !succeeded {
 		return fmt.Errorf("下载更新包失败，已尝试所有下载方式。最后一次错误: %w", lastErr)
 	}
+	defer responseCancel()
 	defer resp.Body.Close()
 
 	archiveBytes, err := io.ReadAll(resp.Body)

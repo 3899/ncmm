@@ -18,6 +18,12 @@ import tarfile
 import time
 import subprocess
 
+# 用户配置中这些键包含动态映射或完整列表，更新时必须整体保留。
+ATOMIC_BLOCK_KEYS = {
+    'antiCheatTokens', 'topics', 'fast_tasks', 'slow_tasks',
+    'proxy_mirrors', 'idsFile', 'titlesFile', 'messagesFile', 'imageUrls'
+}
+
 # 1. 稳定获取当前脚本所在的真实目录
 current_dir = os.path.dirname(os.path.abspath(__file__))
 target_dir = current_dir  # 直接使用脚本所在目录作为目标目录
@@ -354,7 +360,9 @@ def merge_yaml(default_content, user_content):
             merged = dict(def_dict)
             for k, u_val in user_dict.items():
                 if k in merged:
-                    if isinstance(merged[k], dict) and isinstance(u_val, dict):
+                    if k in ATOMIC_BLOCK_KEYS:
+                        merged[k] = u_val
+                    elif isinstance(merged[k], dict) and isinstance(u_val, dict):
                         merged[k] = deep_merge(merged[k], u_val)
                     else:
                         merged[k] = u_val
@@ -373,9 +381,6 @@ def merge_yaml(default_content, user_content):
     # 方案 2：纯 Python 文本级解析与原子 Block 保护合并
     default_lines = parse_yaml(default_content)
     user_lines = parse_yaml(user_content)
-
-    # 必须作为整体原子 Block 替换的键（包含自定义字典 Key 或复杂列表结构）
-    ATOMIC_BLOCK_KEYS = {'antiCheatTokens', 'topics', 'fast_tasks', 'slow_tasks', 'proxy_mirrors', 'idsFile', 'titlesFile', 'messagesFile', 'imageUrls'}
 
     user_data_paths = get_data_paths(user_lines)
     default_data_paths = get_data_paths(default_lines)

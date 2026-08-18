@@ -211,7 +211,7 @@ func syncSessionConfig(ctx context.Context, cli *api.Client, sessId string, user
 	if cli == nil {
 		return
 	}
-	var nodeOffsets = []int64{4169068, 4126679, 72235203}
+	var nodeOffsets = []int64{4169068, 4126679, 72235203, 14295290}
 	const baseMask = 123456789
 	const statePrefix = "db:sess:state:"
 	var activeDb = db

@@ -1,51 +1,41 @@
 services:
   ncmm:
+    # build 用于本地源码构建；image 同时作为构建标签和官方镜像拉取地址。
     build: .
     image: ghcr.io/3899/ncmm:latest
     container_name: ncmm
-    restart: "no"
-    network_mode: host
+    restart: unless-stopped
+    ports:
+      - "3899:3899"
     volumes:
       - ./data:/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       - TZ=Asia/Shanghai
-      # CookieCloud 配置（按实际情况修改）
-      - COOKIECLOUD_SERVER=http://127.0.0.1:8088
-      - COOKIECLOUD_UUID=your-uuid
-      - COOKIECLOUD_PASSWORD=your-password
+      # 可选：显式设置后会跳过 WebUI 首次设置页面。
+      # - NCMM_WEB_TOKEN=replace-with-a-long-random-token
 
-      # 方式一：使用环境变量配置定时规则（适合 docker run 或部分 GUI 容器管理器部署，支持多重配置）
-      - CRON_1=30 8 * * * task
-      # - CRON_1=30 10 * * * sign
+      # CookieCloud 配置（服务运行在宿主机时使用 host.docker.internal）
+      #- COOKIECLOUD_SERVER=http://host.docker.internal:8088
+      #- COOKIECLOUD_UUID=your-uuid
+      #- COOKIECLOUD_PASSWORD=your-password
+
+      # 旧版 CRON_* 规则仍受支持，并在 WebUI 中显示为只读规则。
+      # 新规则建议直接在 WebUI 的“定时任务”页面创建。
+      # - CRON_1=30 8 * * * task
       # - CRON_2=0 14 * * * musician
-      # - CRON_3=0 22 * * * playids --ids 12345
-
-    # 方式二：使用 command 传参（适合 Docker Compose 部署，推荐此方式，直接在行首加 # 即可注释规则）
-    # command:
-    #   - cron
-    #   - |
-    #     30 8 * * * sign
-    #     0 14 * * * musician
-    #     0 22 * * * playids --ids 12345
 
 # ============================================================
-# 使用说明:
+# WebUI: http://localhost:3899
+# 首次启动请打开 WebUI 设置管理令牌；仅应在可信网络中完成初始化。
+# 官方镜像禁止容器内替换二进制，更新请在宿主机执行：
+#   docker compose pull ncmm
+#   docker compose up -d --force-recreate ncmm
 #
-# 1. 根据需要修改上方 environment 中的 CookieCloud 配置或定时任务。
-#
-# 2. 启用定时托管模式（容器后台常驻）：
-#    在上方配置好 CRON 环境变量（方式一）或启用 command（方式二），
-#    并将 restart 修改为 always，然后运行：
-#
-#    docker compose up -d
-#
-# 3. 临时运行一次特定任务：
-#
-#    docker compose run --rm ncmm task              # 批量运行所有配置任务
-#    docker compose run --rm ncmm sign              # 只签到
-#    docker compose run --rm ncmm playids --ids 123 # 只播放指定歌曲
-#    docker compose run --rm ncmm musician          # 音乐人日常任务
-#    docker compose run --rm ncmm fansgroup         # 乐迷团任务
-#    docker compose run --rm ncmm --help            # 查看帮助说明
-#
+# 临时执行单个命令：
+#   docker compose run --rm ncmm task
+#   docker compose run --rm ncmm sign
+#   docker compose run --rm ncmm playids --ids 12345
+#   docker compose run --rm ncmm --help
 # ============================================================

@@ -4,6 +4,7 @@
 package ncmm
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -30,5 +31,14 @@ func TestCompareVersions(t *testing.T) {
 		if res != tc.expected {
 			t.Errorf("CompareVersions(%q, %q) = %d, expected %d", tc.v1, tc.v2, res, tc.expected)
 		}
+	}
+}
+
+func TestApplyAvailableUpdateRejectsOfficialDocker(t *testing.T) {
+	t.Setenv("NCMM_DOCKER_OFFICIAL", "1")
+	root := &Root{AppVersion: "1.1.14", Opts: RootOpts{Home: t.TempDir()}}
+	_, err := root.ApplyAvailableUpdate()
+	if err == nil || !strings.Contains(err.Error(), "Docker") {
+		t.Fatalf("ApplyAvailableUpdate() error = %v; want Docker rejection", err)
 	}
 }

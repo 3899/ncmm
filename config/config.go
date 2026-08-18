@@ -58,10 +58,10 @@ func decodeB64(s string) string {
 }
 
 type AccountsConf struct {
-	Main             string            `json:"main" yaml:"main"`
-	Primary          string            `json:"primary" yaml:"primary"` // 兼容旧版
-	Secondary        []string          `json:"secondary" yaml:"secondary"`
-	AntiCheatTokens  map[string]string `json:"antiCheatTokens" yaml:"antiCheatTokens"`
+	Main            string            `json:"main" yaml:"main"`
+	Primary         string            `json:"primary" yaml:"primary"` // 兼容旧版
+	Secondary       []string          `json:"secondary" yaml:"secondary"`
+	AntiCheatTokens map[string]string `json:"antiCheatTokens" yaml:"antiCheatTokens"`
 }
 
 // AntiCheatTokenFor returns the antiCheatToken for the given cookie file path.
@@ -293,6 +293,7 @@ type VipMemberGiftCloudConf struct {
 	BaseURL string `json:"baseUrl" yaml:"baseUrl"`
 	Token   string `json:"token" yaml:"token"`
 }
+
 // MusicianPlayConf 播放任务配置
 type MusicianPlayConf struct {
 	IDs      string        `json:"ids" yaml:"ids"`
@@ -463,6 +464,13 @@ func (c *Config) Validate() error {
 
 func GetDefault() *Config {
 	return defaultConfig
+}
+
+// DefaultYAML returns a copy of the embedded default configuration.
+func DefaultYAML() []byte {
+	data := make([]byte, len(defaultConfigByte))
+	copy(data, defaultConfigByte)
+	return data
 }
 
 func New(cfgPath ...string) (*Config, error) {
@@ -783,8 +791,6 @@ func migrateNode(node *yaml.Node) bool {
 				modified = true
 			}
 
-
-
 			if migrateNode(valNode) {
 				modified = true
 			}
@@ -801,8 +807,6 @@ func migrateNode(node *yaml.Node) bool {
 
 	return modified
 }
-
-
 
 // UpdateAccountsInFile 更新配置文件中的 accounts 并为每个账号添加昵称注释，同时保持原有文件的注释和排版
 func UpdateAccountsInFile(cfgPath string, mainPath string, mainNickname string, secondaryPaths []string, secondaryNicknames []string) error {
