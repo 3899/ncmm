@@ -17,9 +17,9 @@ func TestWithoutBackgroundFlag(t *testing.T) {
 
 func TestBackgroundReadyURL(t *testing.T) {
 	tests := map[string]string{
-		"127.0.0.1:3899": "http://127.0.0.1:3899/api/v1/setup",
-		"0.0.0.0:3899":   "http://127.0.0.1:3899/api/v1/setup",
-		"[::]:3899":      "http://127.0.0.1:3899/api/v1/setup",
+		"127.0.0.1:3899": "http://127.0.0.1:3899/api/v1/auth/status",
+		"0.0.0.0:3899":   "http://127.0.0.1:3899/api/v1/auth/status",
+		"[::]:3899":      "http://127.0.0.1:3899/api/v1/auth/status",
 	}
 	for listen, want := range tests {
 		got, err := backgroundReadyURL(listen)

@@ -1,38 +1,11 @@
 package webui
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"net"
 	"strconv"
 	"strings"
 )
-
-func newBootstrapCode() (string, error) {
-	var raw [8]byte
-	if _, err := rand.Read(raw[:]); err != nil {
-		return "", fmt.Errorf("generate initial setup code: %w", err)
-	}
-	encoded := strings.ToUpper(hex.EncodeToString(raw[:]))
-	return strings.Join([]string{encoded[0:4], encoded[4:8], encoded[8:12], encoded[12:16]}, "-"), nil
-}
-
-func normalizeBootstrapCode(value string) string {
-	value = strings.ToUpper(strings.TrimSpace(value))
-	return strings.NewReplacer("-", "", " ", "").Replace(value)
-}
-
-func isLoopbackListen(listen string) (bool, error) {
-	host, port, err := net.SplitHostPort(listen)
-	if err != nil {
-		return false, fmt.Errorf("invalid WebUI listen address %q: %w", listen, err)
-	}
-	if err := validatePort(port); err != nil {
-		return false, fmt.Errorf("invalid WebUI listen address %q: %w", listen, err)
-	}
-	return isLoopbackHost(host), nil
-}
 
 func isLoopbackHost(host string) bool {
 	host = strings.TrimSpace(strings.TrimSuffix(host, "."))
@@ -136,16 +109,4 @@ func validatePort(port string) error {
 		return fmt.Errorf("port must be between 1 and 65535")
 	}
 	return nil
-}
-
-func isDirectLoopbackRequest(rRemoteAddr string) bool {
-	host, _, err := net.SplitHostPort(rRemoteAddr)
-	if err != nil {
-		return false
-	}
-	if zone := strings.LastIndexByte(host, '%'); zone >= 0 {
-		host = host[:zone]
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
 }

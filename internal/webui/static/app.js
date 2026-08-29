@@ -2,7 +2,12 @@
   'use strict';
 
   const state = {
-    token: sessionStorage.getItem('ncmm-token') || '',
+    authenticated: false,
+    csrf: '',
+    auth: null,
+    authMode: 'login',
+    authSettings: null,
+    authSessions: [],
     status: null,
     config: null,
     notify: null,
@@ -14,7 +19,6 @@
     schedules: [],
     runs: [],
     settings: null,
-    security: null,
     update: null,
     accountMain: true,
     accountMethod: 'cookie',
@@ -70,18 +74,71 @@
   const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
   const escapeHTML = (value) => String(value ?? '').replace(/[&<>'"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[c]));
   const icon = (name) => `<svg aria-hidden="true"><use href="#i-${name}"></use></svg>`;
+  const passwordMaxLength = 64;
+
+  function passwordSettings() {
+    return state.auth?.settings || {
+      passwordMinLength: 8,
+      passwordRequireLetters: true,
+      passwordRequireDigits: true,
+      passwordRequireSymbols: true,
+    };
+  }
+
+  function passwordCharAllowed(char, settings) {
+    if (!/^[\x21-\x7E]$/.test(char)) return false;
+    if (!settings) return true;
+    return (settings.passwordRequireLetters && /^[A-Za-z]$/.test(char))
+      || (settings.passwordRequireDigits && /^\d$/.test(char))
+      || (settings.passwordRequireSymbols && /^[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]$/.test(char));
+  }
+
+  function normalizePasswordInput(value, settings) {
+    return Array.from(value).filter(char => passwordCharAllowed(char, settings)).join('').slice(0, passwordMaxLength);
+  }
+
+  function enabledPasswordTypesText(settings) {
+    const labels = [];
+    if (settings.passwordRequireLetters) labels.push('英文字母');
+    if (settings.passwordRequireDigits) labels.push('数字');
+    if (settings.passwordRequireSymbols) labels.push('符号');
+    if (labels.length === 1) return labels[0];
+    if (labels.length === 2) return `${labels[0]}和${labels[1]}`;
+    return `${labels.slice(0, -1).join('、')}和${labels.at(-1)}`;
+  }
+
+  function analyzePassword(password, settings = passwordSettings()) {
+    const hasLetters = /[A-Za-z]/.test(password);
+    const hasDigits = /\d/.test(password);
+    const hasSymbols = /[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]/.test(password);
+    const categories = [/[a-z]/.test(password), /[A-Z]/.test(password), hasDigits, hasSymbols].filter(Boolean).length;
+    const lengthOk = password.length >= settings.passwordMinLength && password.length <= passwordMaxLength;
+    const charsOk = password.length > 0 && password === normalizePasswordInput(password, settings);
+    const lettersOk = !settings.passwordRequireLetters || hasLetters;
+    const digitsOk = !settings.passwordRequireDigits || hasDigits;
+    const symbolsOk = !settings.passwordRequireSymbols || hasSymbols;
+    const requiredTypesOk = lettersOk && digitsOk && symbolsOk;
+    const score = Number(lengthOk) + Number(requiredTypesOk) + Number(password.length >= 12) + Number(categories >= 3);
+    return {
+      lengthOk, charsOk, lettersOk, digitsOk, symbolsOk,
+      valid: lengthOk && charsOk && requiredTypesOk,
+      strength: score >= 4 ? 'strong' : score >= 2 ? 'medium' : 'weak',
+    };
+  }
 
   async function api(path, options = {}) {
-    const headers = { Authorization: `Bearer ${state.token}`, ...(options.headers || {}) };
+    const method = (options.method || 'GET').toUpperCase();
+    const headers = { ...(options.headers || {}) };
+    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && state.csrf) headers['X-NCMM-CSRF'] = state.csrf;
     if (options.body && typeof options.body !== 'string') {
       headers['Content-Type'] = 'application/json';
       options.body = JSON.stringify(options.body);
     }
-    const response = await fetch(path, { ...options, headers });
+    const response = await fetch(path, { ...options, headers, credentials: 'same-origin' });
     const type = response.headers.get('content-type') || '';
     const payload = type.includes('application/json') ? await response.json() : await response.text();
     if (!response.ok) {
-      if (response.status === 401) logout(true);
+      if (response.status === 401) clearSession(true);
       throw new Error(payload?.error || payload || `HTTP ${response.status}`);
     }
     return payload;
@@ -93,7 +150,7 @@
       headers['Content-Type'] = 'application/json';
       options.body = JSON.stringify(options.body);
     }
-    const response = await fetch(path, { ...options, headers });
+    const response = await fetch(path, { ...options, headers, credentials: 'same-origin' });
     const type = response.headers.get('content-type') || '';
     const payload = type.includes('application/json') ? await response.json() : await response.text();
     if (!response.ok) throw new Error(payload?.error || payload || `HTTP ${response.status}`);
@@ -101,11 +158,11 @@
   }
 
   async function apiBlob(path) {
-    const response = await fetch(path, { headers: { Authorization: `Bearer ${state.token}` } });
+    const response = await fetch(path, { credentials: 'same-origin' });
     if (!response.ok) {
       const type = response.headers.get('content-type') || '';
       const payload = type.includes('application/json') ? await response.json() : await response.text();
-      if (response.status === 401) logout(true);
+      if (response.status === 401) clearSession(true);
       throw new Error(payload?.error || payload || `HTTP ${response.status}`);
     }
     return response.blob();
@@ -119,40 +176,88 @@
     setTimeout(() => node.remove(), 4200);
   }
 
-  async function login(token) {
-    state.token = token.trim();
-    await api('/api/v1/status');
-    sessionStorage.setItem('ncmm-token', state.token);
+  async function enterApp(auth) {
+    state.authenticated = true;
+    state.csrf = auth.csrfToken || state.csrf;
+    state.auth = { ...(state.auth || {}), ...auth };
+    await loadAll();
     $('#login-view').classList.add('hidden');
     $('#app-shell').classList.remove('hidden');
-    await loadAll();
     startPolling();
   }
 
-  function showLoginView() {
-    $('#auth-title').textContent = '管理控制台';
-    $('#setup-form').classList.add('hidden');
-    $('#login-form').classList.remove('hidden');
+  function clearAuthError() {
+    $('#auth-error-message').textContent = '';
+    $('#auth-error').classList.add('hidden');
+  }
+
+  function showAuthError(message, revealRecovery = false) {
+    $('#auth-error-message').textContent = message;
+    $('#auth-error').classList.remove('hidden');
+    $('#forgot-password-wrap').classList.toggle('visible', revealRecovery);
+  }
+
+  function renderPasswordStrength() {
+    const password = $('#password-input').value;
+    const container = $('#password-strength');
+    if (state.authMode !== 'setup' || !password) {
+      container.classList.add('hidden');
+      return;
+    }
+    const settings = passwordSettings();
+    const analysis = analyzePassword(password, settings);
+    const labels = { weak: '弱', medium: '中', strong: '强' };
+    const progress = { weak: 28, medium: 62, strong: 100 };
+    const colors = { weak: '#ef4444', medium: '#ed6c02', strong: '#2aae67' };
+    const rules = [
+      { ok: analysis.lengthOk, label: `${settings.passwordMinLength}-${passwordMaxLength} 个字符` },
+      ...(settings.passwordRequireLetters ? [{ ok: analysis.lettersOk, label: '包含英文字母' }] : []),
+      ...(settings.passwordRequireDigits ? [{ ok: analysis.digitsOk, label: '包含数字' }] : []),
+      ...(settings.passwordRequireSymbols ? [{ ok: analysis.symbolsOk, label: '包含符号' }] : []),
+    ];
+    $('#strength-label').className = `strength-chip ${analysis.strength}`;
+    $('#strength-label').textContent = labels[analysis.strength];
+    $('#strength-progress').style.width = `${progress[analysis.strength]}%`;
+    $('#strength-progress').style.backgroundColor = colors[analysis.strength];
+    $('#strength-rules').innerHTML = rules.map(rule => `<span class="${rule.ok ? 'ok' : ''}">${rule.ok ? '✓' : '—'} ${escapeHTML(rule.label)}</span>`).join('');
+    container.classList.remove('hidden');
+  }
+
+  function setAuthMode(mode, status = state.auth || {}) {
+    state.authMode = mode;
+    state.auth = status;
+    const setup = mode === 'setup';
+    $('#auth-title').textContent = setup ? '设置管理员密码' : 'NCMM';
+    $('#auth-subtitle').textContent = setup ? '此密码用于保护本机的管理后台' : '网易云音乐任务管理后台';
+    $('#password-input').placeholder = setup ? '设置管理员密码' : '管理员密码';
+    $('#password-input').autocomplete = setup ? 'new-password' : 'current-password';
+    $('#login-submit').classList.toggle('hidden', setup);
+    $('#setup-confirm-field').classList.toggle('hidden', !setup);
+    $('#setup-confirm-password').required = setup;
+    $('#setup-submit').classList.toggle('hidden', !setup);
+    $('#forgot-password-wrap').classList.remove('visible', 'open');
+    clearAuthError();
+    renderPasswordStrength();
+    if (status.version) $('#auth-version').textContent = `v${String(status.version).split('\n')[0].replace(/^v/i, '')}`;
+  }
+
+  function showLoginView(status = state.auth || {}) {
+    setAuthMode('login', status);
     $('#login-view').classList.remove('hidden');
-    $('#token-input').focus();
+    $('#password-input').focus();
   }
 
   function showSetupView(setup = {}) {
-    sessionStorage.removeItem('ncmm-token');
-    state.token = '';
-    $('#auth-title').textContent = '首次设置';
-    $('#login-form').classList.add('hidden');
-    $('#setup-form').classList.remove('hidden');
+    state.authenticated = false;
+    state.csrf = '';
+    setAuthMode('setup', setup);
     $('#login-view').classList.remove('hidden');
-    const code = setup.bootstrapCode || '';
-    $('#setup-code').value = code;
-    $('#bootstrap-code-field').classList.toggle('hidden', !!code);
-    (code ? $('#setup-token') : $('#setup-code')).focus();
+    $('#password-input').focus();
   }
 
-  function logout(showLogin = true) {
-    sessionStorage.removeItem('ncmm-token');
-    state.token = '';
+  function clearSession(showLogin = true) {
+    state.authenticated = false;
+    state.csrf = '';
     clearInterval(state.poller);
     clearInterval(state.qrcodePoller);
     state.poller = null;
@@ -162,10 +267,16 @@
     if (showLogin) showLoginView();
   }
 
+  async function logout() {
+    try { await publicApi('/api/v1/auth/logout', { method: 'POST', headers: { 'X-NCMM-CSRF': state.csrf } }); }
+    catch { /* local logout still clears the browser state */ }
+    clearSession(true);
+  }
+
   async function loadAll() {
-    const [status, config, notify, schedules, runs, settings, security, update, qrcodeSession] = await Promise.all([
+    const [status, config, notify, schedules, runs, settings, auth, authSettings, authSessions, update, qrcodeSession] = await Promise.all([
       api('/api/v1/status'), api('/api/v1/config'), api('/api/v1/notify'), api('/api/v1/schedules'), api('/api/v1/runs'), api('/api/v1/settings'),
-      api('/api/v1/security'), api('/api/v1/update'), api('/api/v1/accounts/qrcode'),
+      publicApi('/api/v1/auth/status'), api('/api/v1/auth/settings'), api('/api/v1/auth/sessions'), api('/api/v1/update'), api('/api/v1/accounts/qrcode'),
     ]);
     state.status = status;
     state.config = config;
@@ -173,7 +284,10 @@
     state.schedules = schedules;
     state.runs = runs;
     state.settings = settings;
-    state.security = security;
+    state.auth = auth;
+    state.authSettings = authSettings;
+    state.authSessions = authSessions;
+    state.csrf = auth.csrfToken || state.csrf;
     state.update = update;
     state.qrcodeSession = qrcodeSession;
     if (qrcodeSession) {
@@ -465,7 +579,7 @@
       <td><code>${escapeHTML(job.cron)}</code></td>
       <td><code>${escapeHTML(job.command)} ${escapeHTML((job.args || []).join(' '))}</code></td>
       <td>${job.nextRuns?.[0] ? formatDate(job.nextRuns[0]) : '--'}</td>
-      <td><span class="badge ${job.running ? 'running' : job.enabled ? 'enabled' : 'disabled'}">${job.running ? '运行中' : job.enabled ? '已启用' : '已停用'}</span></td>
+      <td><span class="badge ${job.running ? 'running' : job.queued ? 'queued' : job.enabled ? 'enabled' : 'disabled'}">${job.running ? `运行中${job.queued ? ` · 排队 ${job.queued}` : ''}` : job.queued ? `排队 ${job.queued}` : job.enabled ? '已启用' : '已停用'}</span></td>
       <td><div class="row-actions">
         <button class="icon-button" data-action="run" data-id="${escapeHTML(job.id)}" title="立即运行">${icon('play')}</button>
         <button class="icon-button" data-action="edit" data-id="${escapeHTML(job.id)}" title="编辑" ${job.readOnly ? 'disabled' : ''}>${icon('edit')}</button>
@@ -521,7 +635,7 @@
       <td><code>${escapeHTML(run.command)} ${escapeHTML((run.args || []).join(' '))}</code></td>
       <td>${formatDate(run.startedAt)}</td><td>${duration(run.startedAt, run.finishedAt)}</td>
       <td><span class="badge ${escapeHTML(run.status)}">${statusLabel(run.status)}</span></td>
-      <td><div class="row-actions"><button class="icon-button" data-run-action="log" data-id="${escapeHTML(run.id)}" title="查看日志">${icon('eye')}</button>${run.status === 'running' ? `<button class="icon-button" data-run-action="stop" data-id="${escapeHTML(run.id)}" title="停止">${icon('stop')}</button>` : ''}</div></td>
+      <td><div class="row-actions"><button class="icon-button" data-run-action="log" data-id="${escapeHTML(run.id)}" title="查看日志">${icon('eye')}</button>${['running', 'queued'].includes(run.status) ? `<button class="icon-button" data-run-action="stop" data-id="${escapeHTML(run.id)}" title="停止">${icon('stop')}</button>` : ''}</div></td>
     </tr>`).join('');
   }
 
@@ -530,16 +644,34 @@
     $('#retention-days').value = state.settings.logs.retentionDays;
     $('#max-log-size').value = state.settings.logs.maxTotalSizeMB;
     $('#timezone-input').value = state.settings.timezone;
+	$('#max-parallel').value = state.settings.concurrency?.maxParallel || 1;
     $('#logs-summary').textContent = `${state.settings.stats.files} 个文件 · ${formatBytes(state.settings.stats.sizeBytes)}`;
   }
 
   function renderSystem() {
-    if (state.security) {
-      $('#token-source').textContent = state.security.source || '--';
-      $('#token-note').textContent = state.security.externallyManaged
-        ? '当前令牌由 --token 或 NCMM_WEB_TOKEN 提供，WebUI 修改在重启后会被外部值覆盖。'
-        : '令牌保存在 webui.secret，修改后立即生效。';
+    if (state.authSettings) {
+      $('#password-min-length').value = state.authSettings.passwordMinLength;
+      $('#new-password').minLength = state.authSettings.passwordMinLength;
+      $('#require-letters').checked = !!state.authSettings.passwordRequireLetters;
+      $('#require-digits').checked = !!state.authSettings.passwordRequireDigits;
+      $('#require-symbols').checked = !!state.authSettings.passwordRequireSymbols;
+      $('#session-ttl').value = String(state.authSettings.sessionTTLSeconds);
+      $('#idle-timeout').value = String(state.authSettings.idleTimeoutSeconds);
     }
+    if (state.auth) {
+      $('#auth-mode').textContent = state.auth.secureCookie ? 'Secure Session' : 'Session';
+      $('#session-auth-note').textContent = '浏览器仅使用 HttpOnly Session Cookie，认证信息不会写入浏览器存储。';
+    }
+    const sessions = state.authSessions || [];
+    $('#sessions-list').classList.toggle('empty-state', !sessions.length);
+    $('#sessions-list').innerHTML = sessions.length ? sessions.map(session => `
+      <div class="compact-row">
+        <div><strong>${session.current ? '当前会话' : '其他会话'}</strong><span>${escapeHTML(session.ip || '未知来源')}</span></div>
+        <span class="session-client">${escapeHTML(session.userAgent || '未知客户端')}</span>
+        <span>最近活动 ${formatDate(session.lastSeen)}<br>到期 ${formatDate(session.expiresAt)}</span>
+        <button class="button ${session.current ? 'subtle' : 'danger'}" data-session-id="${escapeHTML(session.id)}" ${session.current ? 'disabled' : ''}>${session.current ? '当前' : '撤销'}</button>
+      </div>`).join('') : '暂无登录会话';
+    $('#sessions-revoke-others').disabled = sessions.filter(session => !session.current).length === 0;
     const update = state.update;
     if (!update) return;
     $('#update-current').textContent = update.current_version || '--';
@@ -559,7 +691,7 @@
   }
 
   async function refreshRunsAndStatus() {
-    if (!state.token) return;
+    if (!state.authenticated) return;
     try {
       const [runs, status] = await Promise.all([api('/api/v1/runs'), api('/api/v1/status')]);
       state.runs = runs; state.status = status;
@@ -589,7 +721,7 @@
   }
 
   function statusLabel(status) {
-    return ({ success: '成功', failed: '失败', running: '运行中', stopped: '已停止', interrupted: '已中断' })[status] || status;
+    return ({ success: '成功', failed: '失败', running: '运行中', queued: '排队中', skipped: '已跳过', stopped: '已停止', interrupted: '已中断' })[status] || status;
   }
 
   function formatDate(value) {
@@ -621,36 +753,80 @@
   }
 
   function bindEvents() {
-    $('#login-form').addEventListener('submit', async event => {
+    $('#auth-form').addEventListener('submit', async event => {
       event.preventDefault();
-      $('#login-error').textContent = '';
-      try { await login($('#token-input').value); }
-      catch (error) { $('#login-error').textContent = error.message; }
-    });
-    $('#token-toggle').addEventListener('click', () => { $('#token-input').type = $('#token-input').type === 'password' ? 'text' : 'password'; });
-    $('#setup-token-toggle').addEventListener('click', () => { $('#setup-token').type = $('#setup-token').type === 'password' ? 'text' : 'password'; });
-    $('#setup-confirm-toggle').addEventListener('click', () => { $('#setup-confirm').type = $('#setup-confirm').type === 'password' ? 'text' : 'password'; });
-    $('#setup-form').addEventListener('submit', async event => {
-      event.preventDefault();
-      const bootstrapCode = $('#setup-code').value.trim();
-      const token = $('#setup-token').value.trim();
-      const confirmation = $('#setup-confirm').value.trim();
-      $('#setup-error').textContent = '';
-      if (token !== confirmation) {
-        $('#setup-confirm').setCustomValidity('两次输入的令牌不一致');
-        $('#setup-confirm').reportValidity();
+      clearAuthError();
+      $('#forgot-password-wrap').classList.remove('visible', 'open');
+      const password = $('#password-input').value;
+      if (!password) {
+        showAuthError(state.authMode === 'setup' ? '请设置管理员密码。' : '请输入管理员密码。');
         return;
       }
-      $('#setup-confirm').setCustomValidity('');
+      if (state.authMode === 'setup') {
+        const settings = passwordSettings();
+        const analysis = analyzePassword(password, settings);
+        if (!analysis.charsOk) {
+          showAuthError(`密码只能包含${enabledPasswordTypesText(settings)}，不能包含空格或中文。`);
+          return;
+        }
+        if (!analysis.lengthOk) {
+          showAuthError(`密码长度需为 ${settings.passwordMinLength}-${passwordMaxLength} 个字符。`);
+          return;
+        }
+        if (!analysis.valid) {
+          showAuthError('密码不符合安全要求，请根据上方规则调整。');
+          return;
+        }
+        if (password !== $('#setup-confirm-password').value) {
+          showAuthError('两次输入的密码不一致');
+          return;
+        }
+      }
+      const form = $('#auth-form');
+      form.classList.add('loading');
+      $('#login-submit').disabled = true;
+      $('#setup-submit').disabled = true;
       try {
-        await publicApi('/api/v1/setup', { method: 'POST', body: { bootstrapCode, token, confirmation } });
-        await login(token);
+        const path = state.authMode === 'setup' ? '/api/v1/auth/setup' : '/api/v1/auth/login';
+        const auth = await publicApi(path, { method: 'POST', body: { password } });
+        $('#password-input').value = '';
+        $('#setup-confirm-password').value = '';
+        await enterApp(auth);
       } catch (error) {
-        $('#setup-error').textContent = error.message;
+        const revealRecovery = state.authMode === 'login' && error.message.includes('密码不正确');
+        showAuthError(error.message, revealRecovery);
+      } finally {
+        form.classList.remove('loading');
+        $('#login-submit').disabled = false;
+        $('#setup-submit').disabled = false;
       }
     });
-    $('#setup-confirm').addEventListener('input', () => $('#setup-confirm').setCustomValidity(''));
-    $('#logout-button').addEventListener('click', () => logout());
+    $('#password-input').addEventListener('input', event => {
+      const settings = state.authMode === 'setup' ? passwordSettings() : undefined;
+      const normalized = normalizePasswordInput(event.target.value, settings);
+      if (event.target.value !== normalized) {
+        event.target.value = normalized;
+        showAuthError(`密码只能包含${state.authMode === 'setup' ? enabledPasswordTypesText(settings) : '英文字母、数字和符号'}，不能包含空格或中文。`);
+      } else {
+        clearAuthError();
+      }
+      $('#forgot-password-wrap').classList.remove('visible', 'open');
+      renderPasswordStrength();
+    });
+    $('#setup-confirm-password').addEventListener('input', event => {
+      const settings = passwordSettings();
+      const normalized = normalizePasswordInput(event.target.value, settings);
+      if (event.target.value !== normalized) {
+        event.target.value = normalized;
+        showAuthError(`密码只能包含${enabledPasswordTypesText(settings)}，不能包含空格或中文。`);
+      } else {
+        clearAuthError();
+      }
+    });
+    $('#password-input').addEventListener('focus', () => $('#login-logo').classList.add('active'));
+    $('#password-input').addEventListener('blur', () => $('#login-logo').classList.remove('active'));
+    $('#forgot-password').addEventListener('click', () => $('#forgot-password-wrap').classList.toggle('open'));
+    $('#logout-button').addEventListener('click', logout);
     $('#theme-button').addEventListener('click', () => {
       const dark = document.documentElement.dataset.theme === 'dark';
       document.documentElement.dataset.theme = dark ? 'light' : 'dark';
@@ -791,31 +967,55 @@
       } catch (error) { toast(error.message, true); }
     });
     $$('.log-close').forEach(x => x.addEventListener('click', () => $('#log-dialog').close()));
-    $('#token-form').addEventListener('submit', async event => {
+    $('#password-form').addEventListener('submit', async event => {
       event.preventDefault();
-      const token = $('#new-token').value.trim();
-      const confirmation = $('#confirm-token').value.trim();
-      if (token !== confirmation) {
-        $('#confirm-token').setCustomValidity('两次输入的令牌不一致');
-        $('#confirm-token').reportValidity();
+      const newPassword = $('#new-password').value;
+      const confirmation = $('#confirm-password').value;
+      if (newPassword !== confirmation) {
+        $('#confirm-password').setCustomValidity('两次输入的密码不一致');
+        $('#confirm-password').reportValidity();
         return;
       }
-      $('#confirm-token').setCustomValidity('');
-      const button = $('#token-save'); button.disabled = true;
+      $('#confirm-password').setCustomValidity('');
+      const button = $('#password-save'); button.disabled = true;
       try {
-        const result = await api('/api/v1/security/token', { method: 'PUT', body: { token } });
-        state.token = token;
-        sessionStorage.setItem('ncmm-token', token);
-        $('#new-token').value = '';
-        $('#confirm-token').value = '';
-        state.security.externallyManaged = !!result.externallyManaged;
-        renderSystem();
-        if (result.warning) $('#token-note').textContent = result.warning;
-        toast('管理令牌已修改');
+        const result = await api('/api/v1/auth/password', { method: 'PUT', body: { newPassword } });
+        state.csrf = result.csrfToken;
+        $('#new-password').value = ''; $('#confirm-password').value = '';
+        state.authSessions = await api('/api/v1/auth/sessions');
+        renderSystem(); toast('管理员密码已修改，旧会话已全部撤销');
       } catch (error) { toast(error.message, true); }
       finally { button.disabled = false; }
     });
-    $('#confirm-token').addEventListener('input', () => $('#confirm-token').setCustomValidity(''));
+    $('#confirm-password').addEventListener('input', () => $('#confirm-password').setCustomValidity(''));
+    $('#auth-settings-form').addEventListener('submit', async event => {
+      event.preventDefault();
+      try {
+        state.authSettings = await api('/api/v1/auth/settings', { method: 'PUT', body: {
+          passwordMinLength: Number($('#password-min-length').value),
+          passwordRequireLetters: $('#require-letters').checked,
+          passwordRequireDigits: $('#require-digits').checked,
+          passwordRequireSymbols: $('#require-symbols').checked,
+          sessionTTLSeconds: Number($('#session-ttl').value),
+          idleTimeoutSeconds: Number($('#idle-timeout').value),
+        }});
+        renderSystem(); toast('密码与会话策略已保存');
+      } catch (error) { toast(error.message, true); }
+    });
+    $('#sessions-list').addEventListener('click', async event => {
+      const button = event.target.closest('[data-session-id]');
+      if (!button || button.disabled) return;
+      try {
+        await api(`/api/v1/auth/sessions/${encodeURIComponent(button.dataset.sessionId)}`, { method: 'DELETE' });
+        state.authSessions = await api('/api/v1/auth/sessions'); renderSystem(); toast('会话已撤销');
+      } catch (error) { toast(error.message, true); }
+    });
+    $('#sessions-revoke-others').addEventListener('click', async () => {
+      try {
+        await api('/api/v1/auth/sessions/revoke-others', { method: 'POST' });
+        state.authSessions = await api('/api/v1/auth/sessions'); renderSystem(); toast('其他会话已全部撤销');
+      } catch (error) { toast(error.message, true); }
+    });
     $('#update-check').addEventListener('click', async () => {
       const button = $('#update-check'); button.disabled = true; $('#update-apply').disabled = true;
       try {
@@ -839,6 +1039,7 @@
       try {
         state.settings = await api('/api/v1/settings', { method: 'PUT', body: {
           timezone: $('#timezone-input').value.trim(), logs: { retentionDays: Number($('#retention-days').value), maxTotalSizeMB: Number($('#max-log-size').value) },
+		  concurrency: { maxParallel: Number($('#max-parallel').value) },
         }});
         renderSettings(); await refreshSchedules(); toast('日志保留设置已保存');
       } catch (error) { toast(error.message, true); }
@@ -853,19 +1054,19 @@
     document.documentElement.dataset.theme = localStorage.getItem('ncmm-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
     bindEvents();
     try {
-      const setup = await publicApi('/api/v1/setup');
-      if (setup.required) {
-        showSetupView(setup);
+      const auth = await publicApi('/api/v1/auth/status');
+      if (auth.setupRequired) {
+        showSetupView(auth);
+        return;
+      }
+      if (auth.authenticated) {
+        await enterApp(auth);
         return;
       }
     } catch (error) {
       showLoginView();
-      $('#login-error').textContent = error.message;
+      showAuthError(error.message);
       return;
-    }
-    if (state.token) {
-      try { await login(state.token); return; }
-      catch { sessionStorage.removeItem('ncmm-token'); state.token = ''; }
     }
     showLoginView();
   }

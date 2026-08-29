@@ -11,16 +11,19 @@ import (
 	"strings"
 
 	"github.com/3899/ncmm/config"
+	"github.com/3899/ncmm/internal/loginresult"
 	"github.com/3899/ncmm/pkg/log"
 
 	"github.com/spf13/cobra"
 )
 
 type Login struct {
-	root   *Root
-	cmd    *cobra.Command
-	l      *log.Logger
-	isMain bool
+	root          *Root
+	cmd           *cobra.Command
+	l             *log.Logger
+	isMain        bool
+	noConfigWrite bool
+	jsonResult    bool
 }
 
 func NewLogin(root *Root, l *log.Logger) *Login {
@@ -44,6 +47,8 @@ func NewLogin(root *Root, l *log.Logger) *Login {
 
 func (c *Login) addFlags() {
 	c.cmd.PersistentFlags().BoolVarP(&c.isMain, "main", "m", false, "是否作为主账号登录 (默认登录为辅助账号)")
+	c.cmd.PersistentFlags().BoolVar(&c.noConfigWrite, "no-config-write", false, "save the Cookie without updating config.yaml")
+	c.cmd.PersistentFlags().BoolVar(&c.jsonResult, "json-result", false, "print a machine-readable login result")
 }
 
 func (c *Login) Add(command ...*cobra.Command) {
@@ -122,23 +127,36 @@ func (c *Login) saveLoginResult(ctx context.Context, nickname string, uid int64,
 
 	// 规范化显示路径为包含 ${HOME} 的相对路径形式（若位于 Home 目录下）
 	finalPathDisplay := formatHomePath(finalPath)
+	result := loginresult.Result{
+		UID: uid, Nickname: nickname, CookiePath: finalPath,
+		AccountPath: finalPathDisplay, Main: c.isMain,
+	}
+	writeResult := func() error {
+		if !c.jsonResult {
+			return nil
+		}
+		return loginresult.Write(c.cmd.OutOrStdout(), result)
+	}
+
+	if c.noConfigWrite {
+		c.cmd.Printf("Cookie 已保存至: %s\n", finalPath)
+		return writeResult()
+	}
 
 	if c.root.CfgPath == "" || c.root.CfgPath == "default" {
 		c.cmd.Printf("未检测到本地配置文件，跳过配置自动回写。Cookie 已保存至: %s\n", finalPath)
-		return nil
+		return writeResult()
 	}
 
 	if c.root.Cfg.Accounts == nil {
 		c.root.Cfg.Accounts = &config.AccountsConf{}
 	}
 
-	var mainPath, mainNickname string
+	var mainPath string
 	var secondaryPaths []string
-	var secondaryNicknames []string
 
 	if c.isMain {
 		mainPath = finalPathDisplay
-		mainNickname = nickname
 		secondaryPaths = make([]string, len(c.root.Cfg.Accounts.Secondary))
 		for i, sec := range c.root.Cfg.Accounts.Secondary {
 			secondaryPaths[i] = formatHomePath(sec)
@@ -159,28 +177,18 @@ func (c *Login) saveLoginResult(ctx context.Context, nickname string, uid int64,
 		}
 	}
 
-	// 传递我们此次登录生成的昵称注释。非本账号的既有注释将在 config.UpdateAccountsInFile 中被完美还原。
-	if !c.isMain {
-		secondaryNicknames = make([]string, len(secondaryPaths))
-		for i, path := range secondaryPaths {
-			if path == finalPathDisplay {
-				secondaryNicknames[i] = nickname
-			}
-		}
-	}
-
 	// 更新内存配置
 	c.root.Cfg.Accounts.Main = mainPath
 	c.root.Cfg.Accounts.Secondary = secondaryPaths
 
-	// 更新配置文件
-	err := config.UpdateAccountsInFile(c.root.CfgPath, mainPath, mainNickname, secondaryPaths, secondaryNicknames)
+	// 更新配置文件时重新读取最新内容，并只合并当前账号，避免覆盖并发修改。
+	err := config.UpdateAccountInFile(c.root.CfgPath, finalPathDisplay, nickname, c.isMain)
 	if err != nil {
 		return fmt.Errorf("回写配置文件失败: %w", err)
 	}
 
 	c.cmd.Printf("账号登录配置已更新成功！\nCookie 文件: %s\n", finalPath)
-	return nil
+	return writeResult()
 }
 
 func formatHomePath(path string) string {

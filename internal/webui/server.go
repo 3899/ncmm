@@ -2,14 +2,13 @@ package webui
 
 import (
 	"context"
-	"crypto/subtle"
 	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
-	"mime"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -19,6 +18,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/3899/ncmm/internal/loginresult"
+	webauth "github.com/3899/ncmm/internal/webui/auth"
 	"gopkg.in/yaml.v3"
 )
 
@@ -26,20 +27,17 @@ import (
 var staticFiles embed.FS
 
 type Server struct {
-	opts              Options
-	tokenMu           sync.RWMutex
-	token             string
-	tokenFromExternal bool
-	setupRequired     bool
-	setupCode         string
-	config            *configStore
-	notify            *configStore
-	webConfig         *webConfigStore
-	runner            *runManager
-	scheduler         *scheduler
-	qrcode            *qrcodeLoginManager
-	updateMu          sync.Mutex
-	http              *http.Server
+	opts         Options
+	authManager  *webauth.Manager
+	loginLimiter *loginRateLimiter
+	config       *configStore
+	notify       *configStore
+	webConfig    *webConfigStore
+	runner       *runManager
+	scheduler    *scheduler
+	qrcode       *qrcodeLoginManager
+	updateMu     sync.Mutex
+	http         *http.Server
 }
 
 func New(ctx context.Context, opts Options) (*Server, error) {
@@ -52,29 +50,9 @@ func New(ctx context.Context, opts Options) (*Server, error) {
 	if opts.WebConfig == "" {
 		opts.WebConfig = filepath.Join(opts.Home, "webui.yaml")
 	}
-	tokenFromExternal := strings.TrimSpace(opts.Token) != ""
-	token, setupRequired, err := resolveToken(opts.Home, opts.Token)
+	authManager, err := webauth.NewManager(filepath.Join(opts.Home, webauth.DefaultStoreName))
 	if err != nil {
-		return nil, err
-	}
-	setupCode := ""
-	if setupRequired {
-		loopback, listenErr := isLoopbackListen(opts.Listen)
-		if listenErr != nil {
-			return nil, listenErr
-		}
-		if !loopback && !opts.AllowRemoteSetup {
-			return nil, fmt.Errorf("initial setup on non-loopback address %q is disabled; configure --token/NCMM_WEB_TOKEN first or explicitly use --allow-remote-setup", opts.Listen)
-		}
-		setupCode, err = newBootstrapCode()
-		if err != nil {
-			return nil, err
-		}
-		if !loopback {
-			opts.Output("[webui] WARNING: remote initial setup is enabled on %s\n", opts.Listen)
-		}
-		opts.Output("[webui] initial setup code: %s\n", setupCode)
-		opts.Output("[webui] open the WebUI and use this one-time code to configure the management token\n")
+		return nil, fmt.Errorf("initialize WebUI authentication: %w", err)
 	}
 	notifyPath, err := resolveNotifyPath(opts.ConfigPath, opts.Home)
 	if err != nil {
@@ -88,7 +66,8 @@ func New(ctx context.Context, opts Options) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	runner, err := newRunManager(opts.Executable, opts.ConfigPath, opts.Home, webConfig.snapshot().Logs)
+	webSettings := webConfig.snapshot()
+	runner, err := newRunManager(opts.Executable, opts.ConfigPath, opts.Home, webSettings.Logs, webSettings.Concurrency)
 	if err != nil {
 		return nil, err
 	}
@@ -96,12 +75,15 @@ func New(ctx context.Context, opts Options) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	configRepository := newConfigStore(opts.ConfigPath)
 	s := &Server{
-		opts: opts, token: token, tokenFromExternal: tokenFromExternal, setupRequired: setupRequired,
-		setupCode: setupCode,
-		config:    newConfigStore(opts.ConfigPath), notify: notifyStore,
+		opts: opts, authManager: authManager, loginLimiter: newLoginRateLimiter(),
+		config: configRepository, notify: notifyStore,
 		webConfig: webConfig, runner: runner, scheduler: scheduler,
-		qrcode: newQRCodeLoginManager(ctx, opts.Executable, opts.ConfigPath, opts.Home),
+		qrcode: newQRCodeLoginManager(ctx, opts.Executable, opts.ConfigPath, opts.Home, func(expectedRevision string, result loginresult.Result) error {
+			_, updateErr := configRepository.updateAccount(expectedRevision, result)
+			return updateErr
+		}),
 	}
 	s.http = &http.Server{
 		Addr:              opts.Listen,
@@ -116,20 +98,37 @@ func New(ctx context.Context, opts Options) (*Server, error) {
 
 func (s *Server) Run(ctx context.Context) error {
 	defer s.qrcode.close()
-	s.opts.Output("[webui] listening on http://%s\n", s.opts.Listen)
+	instanceLock, err := acquireWebInstanceLock(s.opts.Home)
+	if err != nil {
+		return err
+	}
+	defer instanceLock.Close()
+	listener, err := net.Listen("tcp", s.opts.Listen)
+	if err != nil {
+		return fmt.Errorf("bind WebUI listener %q: %w", s.opts.Listen, err)
+	}
+	defer listener.Close()
+	listen := listener.Addr().String()
+	metadata, err := instanceLock.writeMetadata(listen, s.opts.Version)
+	if err != nil {
+		return err
+	}
+	s.scheduler.start()
+	defer s.scheduler.close()
+	s.opts.Output("[webui] listening on http://%s (instance %s)\n", listen, metadata.InstanceID)
 	go s.cleanupLoop(ctx)
 	errCh := make(chan error, 1)
 	go func() {
-		if err := s.http.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errCh <- err
+		serveErr := s.http.Serve(listener)
+		if errors.Is(serveErr, http.ErrServerClosed) {
+			serveErr = nil
 		}
-		close(errCh)
+		errCh <- serveErr
 	}()
 	select {
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		s.scheduler.close()
 		return s.http.Shutdown(shutdownCtx)
 	case err := <-errCh:
 		return err
@@ -151,11 +150,17 @@ func (s *Server) cleanupLoop(ctx context.Context) {
 
 func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/v1/setup", s.handleSetupGet)
-	mux.HandleFunc("POST /api/v1/setup", s.handleSetupPost)
+	mux.HandleFunc("GET /api/v1/auth/status", s.handleAuthStatus)
+	mux.HandleFunc("POST /api/v1/auth/setup", s.handleAuthSetup)
+	mux.HandleFunc("POST /api/v1/auth/login", s.handleAuthLogin)
+	mux.HandleFunc("POST /api/v1/auth/logout", s.handleAuthLogout)
+	mux.HandleFunc("PUT /api/v1/auth/password", s.handleAuthPasswordPut)
+	mux.HandleFunc("GET /api/v1/auth/settings", s.handleAuthSettingsGet)
+	mux.HandleFunc("PUT /api/v1/auth/settings", s.handleAuthSettingsPut)
+	mux.HandleFunc("GET /api/v1/auth/sessions", s.handleAuthSessionsGet)
+	mux.HandleFunc("DELETE /api/v1/auth/sessions/{id}", s.handleAuthSessionDelete)
+	mux.HandleFunc("POST /api/v1/auth/sessions/revoke-others", s.handleAuthSessionsRevokeOthers)
 	mux.HandleFunc("GET /api/v1/status", s.handleStatus)
-	mux.HandleFunc("GET /api/v1/security", s.handleSecurityGet)
-	mux.HandleFunc("PUT /api/v1/security/token", s.handleSecurityTokenPut)
 	mux.HandleFunc("GET /api/v1/update", s.handleUpdateGet)
 	mux.HandleFunc("POST /api/v1/update/check", s.handleUpdateCheck)
 	mux.HandleFunc("POST /api/v1/update/apply", s.handleUpdateApply)
@@ -198,156 +203,80 @@ func (s *Server) routes() http.Handler {
 			writeError(w, http.StatusMisdirectedRequest, "request Host is not allowed for this WebUI listener")
 			return
 		}
-		publicSetupRequest := r.URL.Path == "/api/v1/setup" && (r.Method == http.MethodGet || r.Method == http.MethodPost)
-		if strings.HasPrefix(r.URL.Path, "/api/") && !publicSetupRequest && !s.authorized(r) {
-			writeError(w, http.StatusUnauthorized, "invalid management token")
-			return
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			if isMutation(r.Method) && !mutationSourceAllowed(r) {
+				writeError(w, http.StatusForbidden, "cross-origin request is not allowed")
+				return
+			}
+			if !publicAuthRequest(r) {
+				authenticated, ok := s.authenticateRequest(r)
+				if !ok {
+					writeError(w, http.StatusUnauthorized, "authentication required")
+					return
+				}
+				if isMutation(r.Method) && !constantStringEqual(r.Header.Get(csrfHeader), authenticated.Session.CSRFToken) {
+					writeError(w, http.StatusForbidden, "invalid CSRF token")
+					return
+				}
+				r = r.WithContext(withRequestAuthentication(r.Context(), authenticated))
+			}
 		}
 		mux.ServeHTTP(w, r)
 	})
 }
 
-func (s *Server) authorized(r *http.Request) bool {
-	provided := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
-	s.tokenMu.RLock()
-	defer s.tokenMu.RUnlock()
-	if s.setupRequired || s.token == "" {
-		return false
-	}
-	if len(provided) != len(s.token) {
-		return false
-	}
-	return subtle.ConstantTimeCompare([]byte(provided), []byte(s.token)) == 1
+type requestAuth struct {
+	Session webauth.AuthenticatedSession
 }
 
-func (s *Server) handleSetupGet(w http.ResponseWriter, r *http.Request) {
-	s.tokenMu.RLock()
-	required := s.setupRequired
-	setupCode := s.setupCode
-	s.tokenMu.RUnlock()
-	response := map[string]any{"required": required, "bootstrapRequired": required}
-	listen := s.opts.Listen
-	if listen == "" {
-		listen = defaultListen
-	}
-	loopback, _ := isLoopbackListen(listen)
-	if required && loopback && isDirectLoopbackRequest(r.RemoteAddr) {
-		response["bootstrapCode"] = setupCode
-	}
-	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, response)
-}
+type requestAuthKey struct{}
 
-func (s *Server) handleSetupPost(w http.ResponseWriter, r *http.Request) {
-	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	if err != nil || mediaType != "application/json" {
-		writeError(w, http.StatusUnsupportedMediaType, "content type must be application/json")
-		return
-	}
-	if site := strings.ToLower(strings.TrimSpace(r.Header.Get("Sec-Fetch-Site"))); site != "" && site != "same-origin" && site != "none" {
-		writeError(w, http.StatusForbidden, "cross-site setup is not allowed")
-		return
-	}
-	if origin := strings.TrimSpace(r.Header.Get("Origin")); origin != "" {
-		parsed, parseErr := url.Parse(origin)
-		if parseErr != nil || !strings.EqualFold(parsed.Host, r.Host) {
-			writeError(w, http.StatusForbidden, "cross-origin setup is not allowed")
-			return
+func (s *Server) authenticateRequest(r *http.Request) (requestAuth, bool) {
+	if s.authManager != nil {
+		if token := sessionToken(r); token != "" {
+			session, err := s.authManager.Authenticate(r.Context(), token)
+			if err == nil {
+				return requestAuth{Session: session}, true
+			}
 		}
 	}
-
-	var req struct {
-		Token         string `json:"token"`
-		Confirmation  string `json:"confirmation"`
-		BootstrapCode string `json:"bootstrapCode"`
-	}
-	if !decodeJSON(w, r, &req, 4<<10) {
-		return
-	}
-	token := strings.TrimSpace(req.Token)
-	if token != strings.TrimSpace(req.Confirmation) {
-		writeError(w, http.StatusBadRequest, "management token confirmation does not match")
-		return
-	}
-	if err := validateManagementToken(token); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	s.tokenMu.Lock()
-	defer s.tokenMu.Unlock()
-	if !s.setupRequired {
-		writeError(w, http.StatusConflict, "initial setup is already complete")
-		return
-	}
-	providedCode := normalizeBootstrapCode(req.BootstrapCode)
-	expectedCode := normalizeBootstrapCode(s.setupCode)
-	if providedCode == "" || len(providedCode) != len(expectedCode) || subtle.ConstantTimeCompare([]byte(providedCode), []byte(expectedCode)) != 1 {
-		writeError(w, http.StatusForbidden, "invalid initial setup code")
-		return
-	}
-	if err := os.MkdirAll(s.opts.Home, 0755); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if err := writeFileAtomic(filepath.Join(s.opts.Home, "webui.secret"), []byte(token+"\n"), 0600); err != nil {
-		writeError(w, http.StatusInternalServerError, "save management token: "+err.Error())
-		return
-	}
-	s.token = token
-	s.setupRequired = false
-	s.setupCode = ""
-	writeJSON(w, http.StatusOK, map[string]bool{"configured": true})
+	return requestAuth{}, false
 }
 
-func (s *Server) handleSecurityGet(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
-		"externallyManaged": s.tokenFromExternal,
-		"source":            map[bool]string{true: "启动参数或环境变量", false: "webui.secret"}[s.tokenFromExternal],
-	})
+func withRequestAuthentication(ctx context.Context, authenticated requestAuth) context.Context {
+	return context.WithValue(ctx, requestAuthKey{}, authenticated)
 }
 
-func (s *Server) handleSecurityTokenPut(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Token string `json:"token"`
-	}
-	if !decodeJSON(w, r, &req, 4<<10) {
-		return
-	}
-	token := strings.TrimSpace(req.Token)
-	if err := validateManagementToken(token); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if err := os.MkdirAll(s.opts.Home, 0755); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if err := writeFileAtomic(filepath.Join(s.opts.Home, "webui.secret"), []byte(token+"\n"), 0600); err != nil {
-		writeError(w, http.StatusInternalServerError, "save management token: "+err.Error())
-		return
-	}
-	s.tokenMu.Lock()
-	s.token = token
-	s.tokenMu.Unlock()
-	response := map[string]any{"updated": true, "externallyManaged": s.tokenFromExternal}
-	if s.tokenFromExternal {
-		response["warning"] = "当前令牌由 --token 或 NCMM_WEB_TOKEN 提供；本次运行已生效，但重启后仍会使用外部令牌"
-	}
-	writeJSON(w, http.StatusOK, response)
+func requestAuthentication(r *http.Request) requestAuth {
+	authenticated, _ := r.Context().Value(requestAuthKey{}).(requestAuth)
+	return authenticated
 }
 
-func validateManagementToken(token string) error {
-	if len(token) < 8 {
-		return fmt.Errorf("management token must be at least 8 characters")
+func publicAuthRequest(r *http.Request) bool {
+	switch r.URL.Path {
+	case "/api/v1/auth/status":
+		return r.Method == http.MethodGet
+	case "/api/v1/auth/setup", "/api/v1/auth/login", "/api/v1/auth/logout":
+		return r.Method == http.MethodPost
+	default:
+		return false
 	}
-	if len(token) > 256 {
-		return fmt.Errorf("management token is too long")
+}
+
+func isMutation(method string) bool {
+	return method == http.MethodPost || method == http.MethodPut || method == http.MethodPatch || method == http.MethodDelete
+}
+
+func mutationSourceAllowed(r *http.Request) bool {
+	if site := strings.ToLower(strings.TrimSpace(r.Header.Get("Sec-Fetch-Site"))); site != "" && site != "same-origin" && site != "none" {
+		return false
 	}
-	if strings.ContainsAny(token, "\r\n") {
-		return fmt.Errorf("management token must be a single line")
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin == "" {
+		return true
 	}
-	return nil
+	parsed, err := url.Parse(origin)
+	return err == nil && parsed.Scheme != "" && strings.EqualFold(parsed.Host, r.Host)
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
@@ -356,7 +285,8 @@ func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
 		"version": s.opts.Version, "commit": s.opts.Commit, "buildTime": s.opts.BuildTime,
 		"schedulerEnabled": s.scheduler.isEnabled(), "timezone": s.scheduler.timezone(),
 		"schedules": len(s.scheduler.list()), "running": s.runner.runningCount(),
-		"logs": s.runner.stats(), "configRevision": doc.Revision,
+		"queued": s.runner.queuedCount(),
+		"logs":   s.runner.stats(), "configRevision": doc.Revision,
 	})
 }
 
@@ -388,11 +318,7 @@ func (s *Server) handleConfigPut(w http.ResponseWriter, r *http.Request) {
 		err = fmt.Errorf("raw or data is required")
 	}
 	if err != nil {
-		status := http.StatusBadRequest
-		if strings.Contains(err.Error(), "changed since") {
-			status = http.StatusConflict
-		}
-		writeError(w, status, err.Error())
+		writeError(w, configWriteStatus(err), err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, doc)
@@ -426,11 +352,7 @@ func (s *Server) handleNotifyPut(w http.ResponseWriter, r *http.Request) {
 		err = fmt.Errorf("raw or data is required")
 	}
 	if err != nil {
-		status := http.StatusBadRequest
-		if strings.Contains(err.Error(), "changed since") {
-			status = http.StatusConflict
-		}
-		writeError(w, status, err.Error())
+		writeError(w, configWriteStatus(err), err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, doc)
@@ -470,13 +392,16 @@ func resolveNotifyPath(configPath, home string) (string, error) {
 
 func (s *Server) handleSettingsGet(w http.ResponseWriter, _ *http.Request) {
 	cfg := s.webConfig.snapshot()
-	writeJSON(w, http.StatusOK, map[string]any{"timezone": cfg.Timezone, "logs": cfg.Logs, "stats": s.runner.stats()})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"timezone": cfg.Timezone, "logs": cfg.Logs, "concurrency": cfg.Concurrency, "stats": s.runner.stats(),
+	})
 }
 
 func (s *Server) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Timezone string    `json:"timezone"`
-		Logs     LogPolicy `json:"logs"`
+		Timezone    string            `json:"timezone"`
+		Logs        LogPolicy         `json:"logs"`
+		Concurrency ConcurrencyPolicy `json:"concurrency"`
 	}
 	if !decodeJSON(w, r, &req, 64<<10) {
 		return
@@ -485,12 +410,13 @@ func (s *Server) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid timezone")
 		return
 	}
-	cfg, err := s.webConfig.updateSettings(req.Timezone, req.Logs)
+	cfg, err := s.webConfig.updateSettings(req.Timezone, req.Logs, req.Concurrency)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	s.runner.setPolicy(cfg.Logs)
+	s.runner.setConcurrencyPolicy(cfg.Concurrency)
 	if err := s.scheduler.reload(); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -617,6 +543,11 @@ func (s *Server) handleCookieImport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "unsupported cookie format")
 		return
 	}
+	configDocument, err := s.config.get()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "load config revision: "+err.Error())
+		return
+	}
 	tmp, err := os.CreateTemp(s.opts.Home, ".cookie-import-*")
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -632,7 +563,11 @@ func (s *Server) handleCookieImport(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = tmp.Close()
 
-	args := []string{"--config", s.opts.ConfigPath, "--home", s.opts.Home, "login", "cookie", "--file", tmpPath, "--output", filename}
+	args := []string{
+		"--config", s.opts.ConfigPath, "--home", s.opts.Home,
+		"login", "cookie", "--file", tmpPath, "--output", filename,
+		"--no-config-write", "--json-result",
+	}
 	if req.Format != "" && req.Format != "auto" {
 		args = append(args, "--format", req.Format)
 	}
@@ -653,8 +588,24 @@ func (s *Server) handleCookieImport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, message)
 		return
 	}
+	result, err := loginresult.Parse(string(output))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if result.Main != req.Main || !strings.EqualFold(filepath.Base(result.CookiePath), filename) {
+		writeError(w, http.StatusInternalServerError, "login process returned an unexpected account result")
+		return
+	}
+	updated, err := s.config.updateAccount(configDocument.Revision, result)
+	if err != nil {
+		message := "Cookie 已保存，但账号配置提交失败: " + err.Error()
+		writeError(w, configWriteStatus(err), message)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"filename": filename, "main": req.Main, "message": strings.TrimSpace(string(output)),
+		"filename": filename, "main": req.Main,
+		"message": "账号登录配置已更新成功", "configRevision": updated.Revision,
 	})
 }
 
@@ -682,7 +633,12 @@ func (s *Server) handleQRCodeLoginStart(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusServiceUnavailable, "qrcode login is unavailable")
 		return
 	}
-	view, err := s.qrcode.start(filename, req.Main)
+	configDocument, err := s.config.get()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "load config revision: "+err.Error())
+		return
+	}
+	view, err := s.qrcode.start(filename, req.Main, configDocument.Revision)
 	if errors.Is(err, errQRCodeLoginActive) {
 		writeError(w, http.StatusConflict, "another qrcode login is already in progress")
 		return
@@ -692,6 +648,17 @@ func (s *Server) handleQRCodeLoginStart(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusAccepted, view)
+}
+
+func configWriteStatus(err error) int {
+	switch {
+	case errors.Is(err, errConfigRevisionRequired):
+		return http.StatusPreconditionRequired
+	case errors.Is(err, errConfigRevisionConflict):
+		return http.StatusConflict
+	default:
+		return http.StatusBadRequest
+	}
 }
 
 func (s *Server) handleQRCodeLoginCurrent(w http.ResponseWriter, _ *http.Request) {
@@ -764,17 +731,6 @@ func validateCookieFilename(name string) (string, error) {
 		return "", fmt.Errorf("filename is too long")
 	}
 	return name, nil
-}
-
-func resolveToken(home, configured string) (string, bool, error) {
-	if strings.TrimSpace(configured) != "" {
-		return strings.TrimSpace(configured), false, nil
-	}
-	path := filepath.Join(home, "webui.secret")
-	if data, err := os.ReadFile(path); err == nil && strings.TrimSpace(string(data)) != "" {
-		return strings.TrimSpace(string(data)), false, nil
-	}
-	return "", true, nil
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, dst any, limit int64) bool {

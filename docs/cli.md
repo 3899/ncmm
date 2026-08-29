@@ -19,20 +19,36 @@ WebUI 默认不随本地单文件命令启动，需要显式运行：
 ```bash
 ncmm web
 ncmm web --scheduler
-ncmm web --listen 0.0.0.0:3899 --scheduler --token "your-strong-token"
+ncmm web --listen 0.0.0.0:3899 --scheduler
 ```
 
 - `--listen`：监听地址，默认 `127.0.0.1:3899`。
 - `--scheduler`：启用内置定时任务调度器。
-- `--token`：指定管理令牌，也可使用 `NCMM_WEB_TOKEN` 环境变量。
 - `--web-config`：指定 WebUI 设置文件，默认位于 `--home` 下的 `webui.yaml`。
-- `--allow-remote-setup`：显式允许在非回环监听地址上执行首次设置；默认关闭，仅应在无法预设令牌时临时使用。
+- `--secure-cookie`：为 Session Cookie 增加 `Secure`，通过 HTTPS 反向代理访问时启用；也可设置 `NCMM_WEB_SECURE_COOKIE=true`。
 
-首次启动且未提供 `--token` / `NCMM_WEB_TOKEN`、`--home` 下也没有 `webui.secret` 时，ncmm 会生成只在本次进程有效的一次性设置码。直接通过 `127.0.0.1` / `localhost` 访问时，页面会自动取得该设置码，用户只需设置并确认至少 8 位的管理令牌；设置完成后令牌写入 `--home/webui.secret`，一次性设置码立即失效。
+WebUI 的运行设置中可将最大并发调整为 1–8，默认值为 1。提高并发后，不同显式账号可并行执行；同一账号以及共享 Badger 数据库的命令仍会排队。定时规则的 `skip` 表示同一规则已有活动运行时记录一次 skipped，`allow` 表示允许重复触发进入队列，不表示绕过资源锁强制并行。
 
-未配置凭据时，`0.0.0.0`、`::` 和其他非回环地址默认拒绝启动。推荐先使用 `--token` 或 `NCMM_WEB_TOKEN` 配置令牌；确需远程完成初始化时，再显式增加 `--allow-remote-setup`，并从启动控制台获取一次性设置码。WebUI 同时校验请求 Host、Origin 和浏览器跨站来源信息。
+首次启动且 `--home/webui-auth.json` 中没有管理员密码时，页面直接显示“设置管理员密码”。默认要求 8–64 个 ASCII 可见字符且包含英文字母、数字和符号，不允许空格或中文。密码只以 PBKDF2 加盐哈希保存，设置成功后立即签发 HttpOnly Session Cookie。
 
-WebUI 的“系统”页可以修改管理令牌。新令牌会立即生效并写入 `--home/webui.secret`；如果启动时使用了 `--token` 或 `NCMM_WEB_TOKEN`，重启后仍以外部令牌为准。
+v1.2.0 不读取 `webui.secret`，不提供 `--token` / `NCMM_WEB_TOKEN`，也不接受 `Authorization: Bearer`。升级后如果没有新的 `webui-auth.json`，只需重新设置管理员密码；`config.yaml`、Cookie、业务数据库、`webui.yaml` 调度规则和 `log/runs` 运行记录均保留。首次设置仍会校验 Host、Origin 和浏览器跨站来源，并通过认证存储事务保证并发请求只有一个成功。
+
+默认监听 `127.0.0.1`。如主动监听 `0.0.0.0`，请先在受信任网络完成首次设置，再开放防火墙或反向代理；未初始化页面不再要求额外设置码，因此不应直接暴露到不可信网络。
+
+WebUI 的“系统”页可以修改管理员密码和密码/会话策略，并查看、撤销登录会话。修改密码会立即撤销全部旧会话，仅为当前浏览器签发新会话。浏览器使用 HttpOnly Session Cookie，不会把密码或 Session Token 写入 Web Storage。
+
+忘记密码时先停止同一 home 的 WebUI，再执行本机恢复命令：
+
+```bash
+ncmm --home /path/to/home auth reset-password
+ncmm --home /path/to/home auth reset-password --password-file ./new-password.txt
+printf '%s\n' 'New#Password123' | ncmm --home /path/to/home auth reset-password --password-stdin
+ncmm --home /path/to/home auth clear --yes
+```
+
+`reset-password` 会撤销全部浏览器会话；交互终端会隐藏输入，也可从 `--password-file`、`--password-stdin` 或 `NCMM_WEB_ADMIN_PASSWORD` 读取。`clear --yes` 只删除新的 `webui-auth.json`（管理员密码和 Session），不会读取或删除任何旧认证文件，也不会修改任务数据；重启 WebUI 后重新执行首次设置。
+
+同一个规范化 `--home` 同时只允许一个 WebUI 实例运行，即使两个实例使用不同的 `--listen` 端口也会拒绝后启动者，避免重复调度和并发修改共享状态。`--home/webui.instance.lock` 保存当前或上次实例的 PID、启动时间、监听地址、版本和 instance ID，仅用于诊断；文件残留不代表服务仍在运行，实际所有权由操作系统文件锁决定，进程退出后会自动释放。需要并行运行多个 WebUI 时，必须为它们配置不同的 home 和监听端口。
 
 同一页可手动检查和安装更新。也可通过命令行执行：
 
@@ -63,6 +79,8 @@ ncmm update --apply
 ### 💡 顶级通用登录 Flag
 所有登录子命令均支持以下通用 Flag（可以加在子命令后）：
 - `-m` / `--main` (Bool): 是否作为主账号登录。默认 `false`，即默认作为辅助（刷歌）账号登录。
+
+`--no-config-write` 与 `--json-result` 是 WebUI 调用登录子进程时使用的集成参数：前者禁止子进程直接修改 `config.yaml`，后者输出带版本的结构化登录结果。普通命令行登录无需指定；直接使用时，调用方必须自行安全登记生成的 Cookie 路径。
 
 ---
 

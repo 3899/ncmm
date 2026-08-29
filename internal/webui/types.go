@@ -11,23 +11,26 @@ const (
 )
 
 type Options struct {
-	Listen           string
-	Token            string
-	Home             string
-	ConfigPath       string
-	WebConfig        string
-	Executable       string
-	Version          string
-	Commit           string
-	BuildTime        string
-	Scheduler        bool
-	AllowRemoteSetup bool
-	Output           func(string, ...any)
+	Listen       string
+	Home         string
+	ConfigPath   string
+	WebConfig    string
+	Executable   string
+	Version      string
+	Commit       string
+	BuildTime    string
+	Scheduler    bool
+	SecureCookie bool
+	Output       func(string, ...any)
 }
 
 type LogPolicy struct {
 	RetentionDays  int   `json:"retentionDays" yaml:"retentionDays"`
 	MaxTotalSizeMB int64 `json:"maxTotalSizeMB" yaml:"maxTotalSizeMB"`
+}
+
+type ConcurrencyPolicy struct {
+	MaxParallel int `json:"maxParallel" yaml:"maxParallel"`
 }
 
 type Schedule struct {
@@ -43,32 +46,36 @@ type Schedule struct {
 }
 
 type WebConfig struct {
-	Version  int        `json:"version" yaml:"version"`
-	Timezone string     `json:"timezone" yaml:"timezone"`
-	Logs     LogPolicy  `json:"logs" yaml:"logs"`
-	Jobs     []Schedule `json:"jobs" yaml:"jobs"`
+	Version     int               `json:"version" yaml:"version"`
+	Timezone    string            `json:"timezone" yaml:"timezone"`
+	Logs        LogPolicy         `json:"logs" yaml:"logs"`
+	Concurrency ConcurrencyPolicy `json:"concurrency" yaml:"concurrency"`
+	Jobs        []Schedule        `json:"jobs" yaml:"jobs"`
 }
 
 type ScheduleView struct {
 	Schedule
 	NextRuns []time.Time `json:"nextRuns"`
 	Running  bool        `json:"running"`
+	Queued   int         `json:"queued"`
 }
 
 type RunRecord struct {
-	ID         string     `json:"id"`
-	JobID      string     `json:"jobId"`
-	JobName    string     `json:"jobName"`
-	Command    string     `json:"command"`
-	Args       []string   `json:"args,omitempty"`
-	Status     string     `json:"status"`
-	Source     string     `json:"source"`
-	StartedAt  time.Time  `json:"startedAt"`
-	FinishedAt *time.Time `json:"finishedAt,omitempty"`
-	ExitCode   *int       `json:"exitCode,omitempty"`
-	Error      string     `json:"error,omitempty"`
-	LogFile    string     `json:"-"`
-	MetaFile   string     `json:"-"`
+	ID          string     `json:"id"`
+	JobID       string     `json:"jobId"`
+	JobName     string     `json:"jobName"`
+	Command     string     `json:"command"`
+	Args        []string   `json:"args,omitempty"`
+	Status      string     `json:"status"`
+	Source      string     `json:"source"`
+	TriggeredAt time.Time  `json:"triggeredAt"`
+	StartedAt   time.Time  `json:"startedAt"`
+	FinishedAt  *time.Time `json:"finishedAt,omitempty"`
+	ExitCode    *int       `json:"exitCode,omitempty"`
+	Error       string     `json:"error,omitempty"`
+	Resources   []string   `json:"resources,omitempty"`
+	LogFile     string     `json:"-"`
+	MetaFile    string     `json:"-"`
 }
 
 type LogStats struct {

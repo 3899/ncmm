@@ -4,13 +4,16 @@
 package ncmm
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/3899/ncmm/config"
+	"github.com/3899/ncmm/internal/filelock"
 	"github.com/3899/ncmm/pkg/log"
 	"github.com/3899/ncmm/pkg/notify"
 	"github.com/3899/ncmm/pkg/utils"
@@ -50,6 +53,9 @@ func New() *Root {
 	}
 	c.cmd.SetVersionTemplate(`{{printf "%s\n" .Version}}`)
 	c.cmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
+		if cmd.Annotations[skipConfigAnnotation] == "true" {
+			return nil
+		}
 		var (
 			cfgPath = c.Opts.Config
 			home    = filepath.Clean(utils.Ternary(c.Opts.Home != "", c.Opts.Home, config.HomeDir))
@@ -60,10 +66,12 @@ func New() *Root {
 				return fmt.Errorf("config file not exists: %s", c.Opts.Config)
 			}
 			c.CfgPath = c.Opts.Config
-			if err := config.AutoUpgradeConfigIfNeeded(c.CfgPath); err != nil {
-				return fmt.Errorf("upgrade config file error: %w", err)
+			if os.Getenv("NCMM_WEB_CHILD") != "1" {
+				if err := config.AutoUpgradeConfigIfNeeded(c.CfgPath); err != nil {
+					return fmt.Errorf("upgrade config file error: %w", err)
+				}
 			}
-			c.Cfg, err = config.New(c.CfgPath)
+			c.Cfg, err = loadConfigLocked(c.CfgPath)
 			if err != nil {
 				return fmt.Errorf("init config error: %s", err)
 			}
@@ -72,10 +80,12 @@ func New() *Root {
 			if utils.FileExists(autoCfgPath) {
 				var err error
 				c.CfgPath = autoCfgPath
-				if err := config.AutoUpgradeConfigIfNeeded(c.CfgPath); err != nil {
-					return fmt.Errorf("upgrade config file error: %w", err)
+				if os.Getenv("NCMM_WEB_CHILD") != "1" {
+					if err := config.AutoUpgradeConfigIfNeeded(c.CfgPath); err != nil {
+						return fmt.Errorf("upgrade config file error: %w", err)
+					}
 				}
-				c.Cfg, err = config.New(autoCfgPath)
+				c.Cfg, err = loadConfigLocked(autoCfgPath)
 				if err != nil {
 					return fmt.Errorf("init config error: %s", err)
 				}
@@ -116,6 +126,9 @@ func New() *Root {
 		return nil
 	}
 	c.cmd.PersistentPostRunE = func(cmd *cobra.Command, args []string) error {
+		if cmd.Annotations[skipConfigAnnotation] == "true" {
+			return nil
+		}
 		if c.Report != nil {
 			c.Report.SetCommand(strings.TrimSpace(cmd.CommandPath()))
 		}
@@ -143,8 +156,20 @@ func New() *Root {
 	c.Add(NewFansGroup(c, c.l).Command())
 	c.Add(NewTask(c, c.l).Command())
 	c.Add(newWebCommand(c))
+	c.Add(newAuthCommand(c))
 	c.Add(newUpdateCommand(c))
 	return c
+}
+
+func loadConfigLocked(path string) (*config.Config, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	lock, err := filelock.Acquire(ctx, path+".lock")
+	if err != nil {
+		return nil, err
+	}
+	defer lock.Close()
+	return config.New(path)
 }
 
 func (c *Root) addFlags() {

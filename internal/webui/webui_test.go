@@ -2,8 +2,7 @@ package webui
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/3899/ncmm/internal/loginresult"
 )
 
 func TestValidateCookieFilename(t *testing.T) {
@@ -41,120 +42,63 @@ func TestValidateCookieFilename(t *testing.T) {
 	}
 }
 
-func TestValidateManagementToken(t *testing.T) {
-	tests := []struct {
-		name    string
-		token   string
-		wantErr bool
-	}{
-		{name: "valid", token: "new-token-123"},
-		{name: "too short", token: "1234567", wantErr: true},
-		{name: "multiline", token: "12345678\nsecond", wantErr: true},
-		{name: "too long", token: strings.Repeat("x", 257), wantErr: true},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			err := validateManagementToken(test.token)
-			if (err != nil) != test.wantErr {
-				t.Fatalf("validateManagementToken() error = %v, wantErr %v", err, test.wantErr)
-			}
-		})
-	}
-}
-
-func TestManagementTokenUpdateSwitchesAuthorization(t *testing.T) {
+func TestInitialSetupConfiguresAdministratorPasswordAndSession(t *testing.T) {
 	home := t.TempDir()
-	server := &Server{opts: Options{Home: home}, token: "old-token-123"}
+	server := newAuthTestServer(t, home)
 	handler := server.routes()
 
-	request := func(method, path, token, body string) *httptest.ResponseRecorder {
+	request := func(method, path, body string, cookie *http.Cookie) *httptest.ResponseRecorder {
 		t.Helper()
 		req := httptest.NewRequest(method, path, strings.NewReader(body))
-		req.Header.Set("Authorization", "Bearer "+token)
-		if body != "" {
-			req.Header.Set("Content-Type", "application/json")
-		}
-		req.Host = "localhost:3899"
-		response := httptest.NewRecorder()
-		handler.ServeHTTP(response, req)
-		return response
-	}
-
-	response := request(http.MethodPut, "/api/v1/security/token", "old-token-123", `{"token":"new-token-456"}`)
-	if response.Code != http.StatusOK {
-		t.Fatalf("token update status = %d, body = %s", response.Code, response.Body.String())
-	}
-	data, err := os.ReadFile(filepath.Join(home, "webui.secret"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := strings.TrimSpace(string(data)); got != "new-token-456" {
-		t.Fatalf("saved token = %q", got)
-	}
-	if got := request(http.MethodGet, "/api/v1/security", "old-token-123", "").Code; got != http.StatusUnauthorized {
-		t.Fatalf("old token status = %d; want %d", got, http.StatusUnauthorized)
-	}
-	if got := request(http.MethodGet, "/api/v1/security", "new-token-456", "").Code; got != http.StatusOK {
-		t.Fatalf("new token status = %d; want %d", got, http.StatusOK)
-	}
-}
-
-func TestInitialSetupConfiguresManagementToken(t *testing.T) {
-	home := t.TempDir()
-	server := &Server{opts: Options{Home: home}, setupRequired: true, setupCode: "ABCD-EF01-2345-6789"}
-	handler := server.routes()
-
-	request := func(method, path, token, body string) *httptest.ResponseRecorder {
-		t.Helper()
-		req := httptest.NewRequest(method, path, strings.NewReader(body))
-		if token != "" {
-			req.Header.Set("Authorization", "Bearer "+token)
-		}
 		if body != "" {
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("Origin", "http://localhost:3899")
 		}
+		if cookie != nil {
+			req.AddCookie(cookie)
+		}
 		req.Host = "localhost:3899"
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, req)
 		return response
 	}
 
-	if got := request(http.MethodGet, "/api/v1/setup", "", "").Code; got != http.StatusOK {
-		t.Fatalf("setup status = %d; want %d", got, http.StatusOK)
+	if got := request(http.MethodGet, "/api/v1/auth/status", "", nil).Code; got != http.StatusOK {
+		t.Fatalf("auth status = %d; want %d", got, http.StatusOK)
 	}
-	if got := request(http.MethodGet, "/api/v1/security", "", "").Code; got != http.StatusUnauthorized {
+	if got := request(http.MethodGet, "/api/v1/auth/settings", "", nil).Code; got != http.StatusUnauthorized {
 		t.Fatalf("protected API before setup = %d; want %d", got, http.StatusUnauthorized)
 	}
-	if got := request(http.MethodPost, "/api/v1/setup", "", `{"bootstrapCode":"ABCD-EF01-2345-6789","token":"new-token-123","confirmation":"different-token"}`).Code; got != http.StatusBadRequest {
-		t.Fatalf("mismatched setup = %d; want %d", got, http.StatusBadRequest)
-	}
-	if got := request(http.MethodPost, "/api/v1/setup", "", `{"token":"new-token-123","confirmation":"new-token-123"}`).Code; got != http.StatusForbidden {
-		t.Fatalf("setup without bootstrap code = %d; want %d", got, http.StatusForbidden)
+	if got := request(http.MethodPost, "/api/v1/auth/setup", `{"password":"Admin 中文123#"}`, nil).Code; got != http.StatusBadRequest {
+		t.Fatalf("invalid setup password = %d; want %d", got, http.StatusBadRequest)
 	}
 
-	response := request(http.MethodPost, "/api/v1/setup", "", `{"bootstrapCode":"abcd ef01 2345 6789","token":"new-token-123","confirmation":"new-token-123"}`)
+	response := request(http.MethodPost, "/api/v1/auth/setup", `{"password":"Admin#123"}`, nil)
 	if response.Code != http.StatusOK {
 		t.Fatalf("setup status = %d, body = %s", response.Code, response.Body.String())
 	}
-	data, err := os.ReadFile(filepath.Join(home, "webui.secret"))
+	cookies := response.Result().Cookies()
+	if len(cookies) != 1 || cookies[0].Name != "ncmm_session" || !cookies[0].HttpOnly || cookies[0].SameSite != http.SameSiteStrictMode {
+		t.Fatalf("unexpected session cookie: %+v", cookies)
+	}
+	data, err := os.ReadFile(filepath.Join(home, "webui-auth.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.TrimSpace(string(data)); got != "new-token-123" {
-		t.Fatalf("saved setup token = %q", got)
+	if strings.Contains(string(data), "Admin#123") || strings.Contains(string(data), cookies[0].Value) {
+		t.Fatal("authentication store contains a plaintext credential")
 	}
-	if got := request(http.MethodGet, "/api/v1/security", "new-token-123", "").Code; got != http.StatusOK {
-		t.Fatalf("new setup token status = %d; want %d", got, http.StatusOK)
+	if got := request(http.MethodGet, "/api/v1/auth/settings", "", cookies[0]).Code; got != http.StatusOK {
+		t.Fatalf("new session status = %d; want %d", got, http.StatusOK)
 	}
-	if got := request(http.MethodPost, "/api/v1/setup", "", `{"bootstrapCode":"ABCD-EF01-2345-6789","token":"another-token","confirmation":"another-token"}`).Code; got != http.StatusConflict {
+	if got := request(http.MethodPost, "/api/v1/auth/setup", `{"password":"Another#456"}`, nil).Code; got != http.StatusConflict {
 		t.Fatalf("repeated setup = %d; want %d", got, http.StatusConflict)
 	}
 }
 
 func TestInitialSetupRejectsCrossSiteRequests(t *testing.T) {
-	server := &Server{opts: Options{Home: t.TempDir()}, setupRequired: true, setupCode: "ABCD-EF01-2345-6789"}
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/setup", strings.NewReader(`{"bootstrapCode":"ABCD-EF01-2345-6789","token":"new-token-123","confirmation":"new-token-123"}`))
+	server := newAuthTestServer(t, t.TempDir())
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/setup", strings.NewReader(`{"password":"Admin#123"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Sec-Fetch-Site", "cross-site")
 	req.Host = "localhost:3899"
@@ -166,8 +110,8 @@ func TestInitialSetupRejectsCrossSiteRequests(t *testing.T) {
 }
 
 func TestInitialSetupRejectsMismatchedOrigin(t *testing.T) {
-	server := &Server{opts: Options{Home: t.TempDir()}, setupRequired: true, setupCode: "ABCD-EF01-2345-6789"}
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/setup", strings.NewReader(`{"bootstrapCode":"ABCD-EF01-2345-6789","token":"new-token-123","confirmation":"new-token-123"}`))
+	server := newAuthTestServer(t, t.TempDir())
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/setup", strings.NewReader(`{"password":"Admin#123"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Origin", "http://attacker.example:3899")
 	req.Host = "localhost:3899"
@@ -178,38 +122,9 @@ func TestInitialSetupRejectsMismatchedOrigin(t *testing.T) {
 	}
 }
 
-func TestInitialSetupCodeOnlyRevealedToDirectLoopback(t *testing.T) {
-	server := &Server{opts: Options{Home: t.TempDir()}, setupRequired: true, setupCode: "ABCD-EF01-2345-6789"}
-	handler := server.routes()
-
-	request := func(remoteAddr string) map[string]any {
-		t.Helper()
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/setup", nil)
-		req.Host = "localhost:3899"
-		req.RemoteAddr = remoteAddr
-		response := httptest.NewRecorder()
-		handler.ServeHTTP(response, req)
-		if response.Code != http.StatusOK {
-			t.Fatalf("setup status = %d, body = %s", response.Code, response.Body.String())
-		}
-		var payload map[string]any
-		if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
-			t.Fatal(err)
-		}
-		return payload
-	}
-
-	if got := request("127.0.0.1:12345")["bootstrapCode"]; got != "ABCD-EF01-2345-6789" {
-		t.Fatalf("loopback bootstrap code = %#v", got)
-	}
-	if got := request("192.0.2.10:12345")["bootstrapCode"]; got != nil {
-		t.Fatalf("remote request received bootstrap code %#v", got)
-	}
-}
-
 func TestWebUIRejectsUnexpectedHost(t *testing.T) {
-	server := &Server{opts: Options{Home: t.TempDir()}, setupRequired: true, setupCode: "ABCD-EF01-2345-6789"}
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/setup", nil)
+	server := newAuthTestServer(t, t.TempDir())
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/status", nil)
 	req.Host = "attacker.example:3899"
 	response := httptest.NewRecorder()
 	server.routes().ServeHTTP(response, req)
@@ -219,9 +134,9 @@ func TestWebUIRejectsUnexpectedHost(t *testing.T) {
 }
 
 func TestInitialSetupAllowsOnlyOneConcurrentWinner(t *testing.T) {
-	server := &Server{opts: Options{Home: t.TempDir()}, setupRequired: true, setupCode: "ABCD-EF01-2345-6789"}
+	server := newAuthTestServer(t, t.TempDir())
 	handler := server.routes()
-	const attempts = 8
+	const attempts = 4
 	start := make(chan struct{})
 	var wg sync.WaitGroup
 	var succeeded atomic.Int32
@@ -231,7 +146,7 @@ func TestInitialSetupAllowsOnlyOneConcurrentWinner(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			req := httptest.NewRequest(http.MethodPost, "/api/v1/setup", strings.NewReader(`{"bootstrapCode":"ABCD-EF01-2345-6789","token":"new-token-123","confirmation":"new-token-123"}`))
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/setup", strings.NewReader(`{"password":"Admin#123"}`))
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("Origin", "http://localhost:3899")
 			req.Host = "localhost:3899"
@@ -254,75 +169,18 @@ func TestInitialSetupAllowsOnlyOneConcurrentWinner(t *testing.T) {
 	}
 }
 
-func TestNewRejectsUnconfiguredRemoteListener(t *testing.T) {
-	_, err := New(context.Background(), Options{Home: t.TempDir(), Listen: "0.0.0.0:3899"})
-	if err == nil || !strings.Contains(err.Error(), "--allow-remote-setup") {
-		t.Fatalf("New() error = %v; want remote setup refusal", err)
-	}
-}
-
-func TestNewAllowsExplicitRemoteSetup(t *testing.T) {
+func TestNewAllowsUnconfiguredRemoteListener(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	var output strings.Builder
-	server, err := New(ctx, Options{
-		Home: t.TempDir(), Listen: "0.0.0.0:3899", AllowRemoteSetup: true,
-		Output: func(format string, args ...any) { _, _ = fmt.Fprintf(&output, format, args...) },
-	})
+	server, err := New(ctx, Options{Home: t.TempDir(), Listen: "0.0.0.0:3899"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer server.scheduler.close()
 	defer server.qrcode.close()
-	if server.setupCode == "" || !strings.Contains(output.String(), "WARNING") || !strings.Contains(output.String(), server.setupCode) {
-		t.Fatalf("explicit remote setup was not initialized safely: output=%q code=%q", output.String(), server.setupCode)
-	}
-}
-
-func TestLoopbackListenDetection(t *testing.T) {
-	tests := []struct {
-		listen   string
-		loopback bool
-		wantErr  bool
-	}{
-		{listen: "127.0.0.1:3899", loopback: true},
-		{listen: "[::1]:3899", loopback: true},
-		{listen: "localhost:3899", loopback: true},
-		{listen: "0.0.0.0:3899"},
-		{listen: "[::]:3899"},
-		{listen: "192.0.2.1:3899"},
-		{listen: "not-an-address", wantErr: true},
-	}
-	for _, test := range tests {
-		t.Run(test.listen, func(t *testing.T) {
-			got, err := isLoopbackListen(test.listen)
-			if got != test.loopback || (err != nil) != test.wantErr {
-				t.Fatalf("isLoopbackListen(%q) = %v, %v", test.listen, got, err)
-			}
-		})
-	}
-}
-
-func TestResolveTokenRequiresInitialSetup(t *testing.T) {
-	home := t.TempDir()
-	token, required, err := resolveToken(home, "")
-	if err != nil || token != "" || !required {
-		t.Fatalf("resolveToken() = %q, %v, %v; want empty token and setup required", token, required, err)
-	}
-	if _, err := os.Stat(filepath.Join(home, "webui.secret")); !os.IsNotExist(err) {
-		t.Fatalf("webui.secret should not be generated, stat error = %v", err)
-	}
-
-	if err := os.WriteFile(filepath.Join(home, "webui.secret"), []byte("saved-token-123\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	token, required, err = resolveToken(home, "")
-	if err != nil || token != "saved-token-123" || required {
-		t.Fatalf("saved resolveToken() = %q, %v, %v", token, required, err)
-	}
-	token, required, err = resolveToken(home, "external-token-123")
-	if err != nil || token != "external-token-123" || required {
-		t.Fatalf("external resolveToken() = %q, %v, %v", token, required, err)
+	configured, err := server.authManager.Configured(ctx)
+	if err != nil || configured {
+		t.Fatalf("new remote authentication state = configured %v, err %v", configured, err)
 	}
 }
 
@@ -366,7 +224,7 @@ func TestWebConfigStoreDefaultsAndUpdates(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := store.snapshot()
-	if cfg.Logs.RetentionDays != defaultRetentionDays || cfg.Timezone != defaultTimezone {
+	if cfg.Logs.RetentionDays != defaultRetentionDays || cfg.Timezone != defaultTimezone || cfg.Concurrency.MaxParallel != 1 {
 		t.Fatalf("unexpected defaults: %+v", cfg)
 	}
 	job, err := store.upsert(Schedule{Name: "Daily", Enabled: true, Cron: "30 8 * * *", Command: "task"})
@@ -376,14 +234,14 @@ func TestWebConfigStoreDefaultsAndUpdates(t *testing.T) {
 	if job.ID == "" || len(store.snapshot().Jobs) != 1 {
 		t.Fatalf("schedule was not persisted: %+v", job)
 	}
-	if _, err := store.updateSettings("UTC", LogPolicy{RetentionDays: 14, MaxTotalSizeMB: 128}); err != nil {
+	if _, err := store.updateSettings("UTC", LogPolicy{RetentionDays: 14, MaxTotalSizeMB: 128}, ConcurrencyPolicy{MaxParallel: 2}); err != nil {
 		t.Fatal(err)
 	}
 	reloaded, err := newWebConfigStore(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := reloaded.snapshot(); got.Timezone != "UTC" || got.Logs.RetentionDays != 14 || len(got.Jobs) != 1 {
+	if got := reloaded.snapshot(); got.Timezone != "UTC" || got.Logs.RetentionDays != 14 || got.Concurrency.MaxParallel != 2 || len(got.Jobs) != 1 {
 		t.Fatalf("unexpected reloaded config: %+v", got)
 	}
 }
@@ -411,6 +269,100 @@ func TestConfigStorePreservesComments(t *testing.T) {
 	}
 	if _, err := os.Stat(path + ".bak"); err != nil {
 		t.Fatalf("backup missing: %v", err)
+	}
+}
+
+func TestConfigStoreRequiresRevisionAndRejectsConcurrentUpdate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, configForTest(), 0600); err != nil {
+		t.Fatal(err)
+	}
+	store := newConfigStore(path)
+	document, err := store.get()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.saveRaw("", document.Raw); !errors.Is(err, errConfigRevisionRequired) {
+		t.Fatalf("saveRaw() error = %v; want revision required", err)
+	}
+
+	rawA := strings.Replace(document.Raw, "timeout: 60s", "timeout: 61s", 1)
+	rawB := strings.Replace(document.Raw, "timeout: 60s", "timeout: 62s", 1)
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	for _, raw := range []string{rawA, rawB} {
+		raw := raw
+		go func() {
+			<-start
+			_, saveErr := store.saveRaw(document.Revision, raw)
+			results <- saveErr
+		}()
+	}
+	close(start)
+	var succeeded, conflicted int
+	for i := 0; i < 2; i++ {
+		switch err := <-results; {
+		case err == nil:
+			succeeded++
+		case errors.Is(err, errConfigRevisionConflict):
+			conflicted++
+		default:
+			t.Fatalf("unexpected concurrent save error: %v", err)
+		}
+	}
+	if succeeded != 1 || conflicted != 1 {
+		t.Fatalf("concurrent saves: succeeded=%d conflicted=%d", succeeded, conflicted)
+	}
+}
+
+func TestConfigAPIRequiresRevision(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, configForTest(), 0600); err != nil {
+		t.Fatal(err)
+	}
+	server := newAuthTestServer(t, t.TempDir())
+	credentials, err := server.authManager.Setup(context.Background(), "Admin#123", requestClientInfo(httptest.NewRequest(http.MethodGet, "/", nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.config = newConfigStore(path)
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/config", strings.NewReader(`{"data":{"version":"1.2.0"}}`))
+	req.Host = "localhost:3899"
+	req.Header.Set(csrfHeader, credentials.Session.CSRFToken)
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: "ncmm_session", Value: credentials.Token})
+	response := httptest.NewRecorder()
+	server.routes().ServeHTTP(response, req)
+	if response.Code != http.StatusPreconditionRequired {
+		t.Fatalf("missing revision status = %d, body = %s", response.Code, response.Body.String())
+	}
+}
+
+func TestConfigStoreAccountUpdatePreservesOtherData(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	raw := strings.Replace(string(configForTest()), "accounts:\n", "accounts:\n  # existing main account\n", 1)
+	if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
+		t.Fatal(err)
+	}
+	store := newConfigStore(path)
+	document, err := store.get()
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := store.updateAccount(document.Revision, loginresult.Result{
+		UID: 123, Nickname: "测试账号", CookiePath: filepath.Join(filepath.Dir(path), "fan1.json"),
+		AccountPath: "${HOME}/fan1.json", Main: false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(updated.Raw, "${HOME}/fan1.json") || !strings.Contains(updated.Raw, "昵称: 测试账号") || !strings.Contains(updated.Raw, "# keep this comment") {
+		t.Fatalf("account update did not preserve expected YAML:\n%s", updated.Raw)
+	}
+	if _, err := store.updateAccount(document.Revision, loginresult.Result{
+		UID: 456, AccountPath: "${HOME}/fan2.json", CookiePath: "fan2.json",
+	}); !errors.Is(err, errConfigRevisionConflict) {
+		t.Fatalf("stale account update error = %v; want revision conflict", err)
 	}
 }
 
@@ -491,7 +443,7 @@ func TestRunCleanupHonorsRetention(t *testing.T) {
 		logDir:  dir,
 		runs:    make(map[string]RunRecord),
 		running: make(map[string]*runningProcess),
-		jobRuns: make(map[string]string),
+		jobRuns: make(map[string]map[string]struct{}),
 		policy:  LogPolicy{RetentionDays: 7, MaxTotalSizeMB: 16},
 	}
 	oldPath := filepath.Join(dir, "old.log")

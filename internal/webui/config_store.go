@@ -2,19 +2,31 @@ package webui
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/3899/ncmm/config"
+	"github.com/3899/ncmm/internal/filelock"
+	"github.com/3899/ncmm/internal/loginresult"
 	"github.com/3899/ncmm/pkg/notify"
 	"gopkg.in/yaml.v3"
 )
+
+var (
+	errConfigRevisionRequired = errors.New("config revision is required")
+	errConfigRevisionConflict = errors.New("config revision conflict")
+)
+
+const configLockTimeout = 10 * time.Second
 
 type configDocument struct {
 	Revision     string            `json:"revision"`
@@ -42,6 +54,11 @@ func newNotifyStore(path string) (*configStore, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return nil, err
 	}
+	lock, err := acquireConfigLock(path)
+	if err != nil {
+		return nil, err
+	}
+	defer lock.Close()
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		data, marshalErr := yaml.Marshal(defaultNotifyConfig())
 		if marshalErr != nil {
@@ -59,6 +76,11 @@ func newNotifyStore(path string) (*configStore, error) {
 func (s *configStore) get() (configDocument, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	lock, err := acquireConfigLock(s.path)
+	if err != nil {
+		return configDocument{}, err
+	}
+	defer lock.Close()
 	return s.getLocked()
 }
 
@@ -86,7 +108,12 @@ func (s *configStore) getLocked() (configDocument, error) {
 func (s *configStore) saveRaw(expectedRevision, raw string) (configDocument, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.checkRevisionLocked(expectedRevision); err != nil {
+	lock, err := acquireConfigLock(s.path)
+	if err != nil {
+		return configDocument{}, err
+	}
+	defer lock.Close()
+	if _, err := s.checkRevisionLocked(expectedRevision); err != nil {
 		return configDocument{}, err
 	}
 	data := []byte(raw)
@@ -102,10 +129,12 @@ func (s *configStore) saveRaw(expectedRevision, raw string) (configDocument, err
 func (s *configStore) saveData(expectedRevision string, value any) (configDocument, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.checkRevisionLocked(expectedRevision); err != nil {
+	lock, err := acquireConfigLock(s.path)
+	if err != nil {
 		return configDocument{}, err
 	}
-	existing, err := os.ReadFile(s.path)
+	defer lock.Close()
+	existing, err := s.checkRevisionLocked(expectedRevision)
 	if err != nil {
 		return configDocument{}, err
 	}
@@ -145,15 +174,18 @@ func (s *configStore) saveData(expectedRevision string, value any) (configDocume
 	return s.getLocked()
 }
 
-func (s *configStore) checkRevisionLocked(expected string) error {
+func (s *configStore) checkRevisionLocked(expected string) ([]byte, error) {
+	if strings.TrimSpace(expected) == "" {
+		return nil, errConfigRevisionRequired
+	}
 	data, err := os.ReadFile(s.path)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if expected != "" && revision(data) != expected {
-		return fmt.Errorf("config changed since it was loaded; refresh and try again")
+	if revision(data) != expected {
+		return nil, fmt.Errorf("%w: config changed since it was loaded; refresh and try again", errConfigRevisionConflict)
 	}
-	return nil
+	return data, nil
 }
 
 func (s *configStore) validateAndWriteLocked(data []byte) error {
@@ -177,11 +209,55 @@ func (s *configStore) validateAndWriteLocked(data []byte) error {
 		}
 	}
 	if current, err := os.ReadFile(s.path); err == nil {
-		if err := os.WriteFile(s.path+".bak", current, 0600); err != nil {
+		if err := writeFileAtomic(s.path+".bak", current, 0600); err != nil {
 			return fmt.Errorf("write config backup: %w", err)
 		}
 	}
 	return writeFileAtomic(s.path, data, 0600)
+}
+
+func (s *configStore) updateAccount(expectedRevision string, result loginresult.Result) (configDocument, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	lock, err := acquireConfigLock(s.path)
+	if err != nil {
+		return configDocument{}, err
+	}
+	defer lock.Close()
+	existing, err := s.checkRevisionLocked(expectedRevision)
+	if err != nil {
+		return configDocument{}, err
+	}
+	var document yaml.Node
+	if err := yaml.Unmarshal(existing, &document); err != nil {
+		return configDocument{}, fmt.Errorf("parse config: %w", err)
+	}
+	if err := config.ApplyAccountUpdate(&document, result.AccountPath, result.Nickname, result.Main); err != nil {
+		return configDocument{}, err
+	}
+	var out bytes.Buffer
+	encoder := yaml.NewEncoder(&out)
+	encoder.SetIndent(2)
+	if err := encoder.Encode(&document); err != nil {
+		return configDocument{}, err
+	}
+	if err := encoder.Close(); err != nil {
+		return configDocument{}, err
+	}
+	if err := s.validateAndWriteLocked(out.Bytes()); err != nil {
+		return configDocument{}, err
+	}
+	return s.getLocked()
+}
+
+func acquireConfigLock(path string) (*filelock.Lock, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), configLockTimeout)
+	defer cancel()
+	lock, err := filelock.Acquire(ctx, path+".lock")
+	if err != nil {
+		return nil, fmt.Errorf("acquire config lock: %w", err)
+	}
+	return lock, nil
 }
 
 func validateConfigFile(path string) error {

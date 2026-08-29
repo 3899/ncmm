@@ -26,11 +26,11 @@ services:
       - "host.docker.internal:host-gateway"
     environment:
       - TZ=Asia/Shanghai
-      # 可选：显式设置后会跳过首次设置页面。
-      # - NCMM_WEB_TOKEN=replace-with-a-long-random-token
-      #- COOKIECLOUD_SERVER=http://host.docker.internal:8088
-      #- COOKIECLOUD_UUID=your-uuid
-      #- COOKIECLOUD_PASSWORD=your-password
+      # HTTPS 反向代理访问时启用 Secure Session Cookie。
+      # - NCMM_WEB_SECURE_COOKIE=true
+      # - COOKIECLOUD_SERVER=http://host.docker.internal:8088
+      # - COOKIECLOUD_UUID=your-uuid
+      # - COOKIECLOUD_PASSWORD=your-password
 ```
 
 启动容器：
@@ -45,14 +45,19 @@ docker logs ncmm
 - `config.yaml`：ncmm 任务配置。
 - `notify.yaml`：通知通道配置。
 - `webui.yaml`：WebUI 定时任务和日志保留设置。
-- `webui.secret`：未设置 `NCMM_WEB_TOKEN` 时，在 WebUI 完成首次设置后生成。
+- `webui-auth.json`：PBKDF2 管理员密码 hash、Session hash、策略和会话元数据，不含明文密码或明文 Session Token。
+- `webui.instance.lock`：WebUI 单实例锁及诊断元数据；容器停止后文件可保留，不能仅据此判断服务是否运行。
 - `log/runs/`：定时任务运行日志。
 
 ## WebUI
 
-打开 `http://localhost:3899`。未设置 `NCMM_WEB_TOKEN` 且 `/data/webui.secret` 不存在时，先从 `docker logs ncmm` 查找 `[webui] initial setup code`，再在页面输入该一次性设置码，并设置、确认至少 8 位的管理令牌。设置成功后一次性设置码立即失效，管理令牌写入 `/data/webui.secret`，后续启动使用该令牌登录。
+打开 `http://localhost:3899`。`/data/webui-auth.json` 尚未配置管理员密码时，页面直接显示与 SimAdmin 一致的首次设置界面，只需设置并确认管理员密码。密码只保存 PBKDF2 加盐 hash；登录成功后浏览器使用 HttpOnly、SameSite=Strict Session Cookie，服务端只保存 Session Token hash。
 
-Compose 默认使用 `127.0.0.1:3899:3899`，只从宿主机本机发布端口。容器内部因网络转发需要监听 `0.0.0.0`，官方启动命令显式启用受一次性设置码保护的远程初始化。需要通过局域网、公网或反向代理访问时，推荐先设置 `NCMM_WEB_TOKEN`，再把端口绑定改为所需地址；不要把一次性设置码当作长期凭据。
+Compose 默认使用 `127.0.0.1:3899:3899`，只从宿主机本机发布端口。容器内部因网络转发监听 `0.0.0.0`，但首次设置不再要求额外设置码；需要通过局域网或公网访问时，应先在宿主机完成首次设置，再开放端口或 HTTPS 反向代理，并设置 `NCMM_WEB_SECURE_COOKIE=true`。
+
+v1.2.0 不迁移旧 WebUI 令牌。升级后若 `/data/webui-auth.json` 不存在，重新设置管理员密码即可；挂载目录中的 `config.yaml`、Cookie、数据库、`webui.yaml` 调度规则与 `log/runs` 运行记录不会被清理或重建。
+
+同一个 `/data` 卷只能由一个 WebUI 容器实例托管。即使映射到不同宿主机端口，第二个共享该数据卷的实例也会被 home 级实例锁拒绝，避免两套调度器重复执行任务。横向运行多个实例时必须分别挂载独立数据目录。
 
 WebUI 支持：
 
@@ -61,7 +66,19 @@ WebUI 支持：
 - 创建、修改、启停和立即运行定时任务。
 - 查看、停止运行任务以及查看运行日志。
 - 按保留天数和最大容量自动清理日志。
-- 修改管理令牌，以及手动检查新版本。
+- 修改管理员密码与密码/会话策略，查看和撤销登录会话，以及手动检查新版本。
+
+忘记管理员密码时，先停止容器，再用相同 `/data` 卷运行一次恢复命令；密码通过标准输入传入，不出现在进程参数中：
+
+```bash
+printf '%s\n' 'New#Password123' | docker run --rm -i -v "$(pwd)/data:/data" ghcr.io/3899/ncmm:latest --home /data auth reset-password --password-stdin
+```
+
+### 任务并发
+
+内置调度器默认最多运行 1 个任务，无需额外配置。可在“运行记录”的运行设置中将最大并发调整为 1–8；即使调高，不同规则使用同一账号或共享数据库时仍会自动排队。
+
+规则的“跳过重复触发”只针对同一规则已有 running/queued 记录的场景，并会生成可查询的 `skipped` 运行记录。“重复触发进入队列”允许保存本次触发，但账号和数据库资源可用前不会启动子进程。排队记录可以和运行中记录一样手动停止。
 
 ## 更新镜像
 

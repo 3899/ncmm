@@ -22,6 +22,7 @@ var allowedCommands = map[string]bool{
 type scheduler struct {
 	mu      sync.RWMutex
 	enabled bool
+	active  bool
 	ctx     context.Context
 	store   *webConfigStore
 	runner  *runManager
@@ -78,10 +79,22 @@ func (s *scheduler) reload() error {
 			}
 		}
 	}
-	if s.enabled {
+	if s.enabled && s.active {
 		s.cron.Start()
 	}
 	return nil
+}
+
+func (s *scheduler) start() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.active {
+		return
+	}
+	s.active = true
+	if s.enabled && s.cron != nil {
+		s.cron.Start()
+	}
 }
 
 func validateSchedule(job Schedule, parser cron.Parser) error {
@@ -108,7 +121,8 @@ func (s *scheduler) list() []ScheduleView {
 	now := time.Now().In(location)
 	result := make([]ScheduleView, 0, len(s.jobs))
 	for _, job := range s.jobs {
-		view := ScheduleView{Schedule: job, Running: s.runner.isJobRunning(job.ID)}
+		running, queued := s.runner.jobActivity(job.ID)
+		view := ScheduleView{Schedule: job, Running: running, Queued: queued}
 		if schedule, err := s.parser.Parse(job.Cron); err == nil {
 			next := now
 			for range 5 {
@@ -177,9 +191,16 @@ func (s *scheduler) runNow(id string) (RunRecord, error) {
 func (s *scheduler) close() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.active = false
 	if s.cron != nil {
 		s.cron.Stop()
 	}
+}
+
+func (s *scheduler) isActive() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.active
 }
 
 func (s *scheduler) timezone() string {

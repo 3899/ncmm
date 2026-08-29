@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:,">
   <meta name="color-scheme" content="light dark">
   <title>NCMM Control</title>
   <link rel="stylesheet" href="/app.css">
@@ -30,41 +31,70 @@
     <symbol id="i-key" viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6M15 6l3 3M18 3l3 3"/></symbol>
     <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M5 21h14"/></symbol>
     <symbol id="i-qr" viewBox="0 0 24 24"><rect width="5" height="5" x="3" y="3" rx="1"/><rect width="5" height="5" x="16" y="3" rx="1"/><rect width="5" height="5" x="3" y="16" rx="1"/><path d="M16 16h2v2h-2zm4 0v4h-4m4-9v2m-9-2h2v2h-2z"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect width="16" height="11" x="4" y="11" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></symbol>
+    <symbol id="i-arrow-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+    <symbol id="i-star" viewBox="0 0 24 24"><path d="m12 2.8 2.8 5.7 6.3.9-4.5 4.4 1.1 6.2-5.7-3-5.7 3 1.1-6.2-4.5-4.4 6.3-.9z"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v5m0 3h.01"/></symbol>
   </svg>
 
   <section id="login-view" class="login-view">
-    <div class="login-panel">
-      <div class="brand-mark">N</div>
-      <p class="eyebrow">NCMM CONTROL</p>
-      <h1 id="auth-title">管理控制台</h1>
-      <form id="login-form">
-        <label for="token-input">管理令牌</label>
-        <div class="password-field">
-          <input id="token-input" type="password" autocomplete="off" required autofocus>
-          <button id="token-toggle" type="button" class="icon-button" title="显示或隐藏令牌"><svg><use href="#i-eye"/></svg></button>
-        </div>
-        <button class="button primary full" type="submit">连接</button>
-        <p id="login-error" class="form-error" role="alert"></p>
-      </form>
-      <form id="setup-form" class="hidden">
-        <div id="bootstrap-code-field">
-          <label for="setup-code">一次性设置码</label>
-          <input id="setup-code" type="text" inputmode="text" maxlength="32" autocomplete="one-time-code" spellcheck="false" required>
-          <p class="form-hint">请查看 ncmm 启动控制台或容器日志。</p>
-        </div>
-        <label for="setup-token">设置管理令牌</label>
-        <div class="password-field">
-          <input id="setup-token" type="password" minlength="8" maxlength="256" autocomplete="new-password" required autofocus>
-          <button id="setup-token-toggle" type="button" class="icon-button" title="显示或隐藏令牌"><svg><use href="#i-eye"/></svg></button>
-        </div>
-        <label for="setup-confirm">确认管理令牌</label>
-        <div class="password-field">
-          <input id="setup-confirm" type="password" minlength="8" maxlength="256" autocomplete="new-password" required>
-          <button id="setup-confirm-toggle" type="button" class="icon-button" title="显示或隐藏令牌"><svg><use href="#i-eye"/></svg></button>
-        </div>
-        <button class="button primary full" type="submit">设置并进入</button>
-        <p id="setup-error" class="form-error" role="alert"></p>
-      </form>
+    <div class="login-stack">
+      <header class="login-heading">
+        <h1 id="auth-title">NCMM</h1>
+        <p id="auth-subtitle">网易云音乐任务管理后台</p>
+      </header>
+      <div class="login-panel">
+        <form id="auth-form" class="auth-form" novalidate>
+          <div id="login-logo" class="login-logo" aria-label="NCMM"><span>N</span></div>
+          <div class="auth-fields">
+            <div class="auth-password-field">
+              <svg aria-hidden="true"><use href="#i-lock"/></svg>
+              <input id="password-input" type="password" maxlength="64" autocomplete="current-password" placeholder="管理员密码" aria-label="管理员密码" required autofocus>
+              <button id="login-submit" class="login-arrow" type="submit" aria-label="登录" title="登录">
+                <svg aria-hidden="true"><use href="#i-arrow-right"/></svg>
+                <span class="button-spinner" aria-hidden="true"></span>
+              </button>
+            </div>
+
+            <div id="password-strength" class="password-strength hidden" aria-live="polite">
+              <div class="strength-head"><span>密码强度</span><strong id="strength-label" class="strength-chip weak">弱</strong></div>
+              <div class="strength-track"><i id="strength-progress"></i></div>
+              <div id="strength-rules" class="strength-rules"></div>
+            </div>
+
+            <div id="setup-confirm-field" class="auth-password-field hidden">
+              <svg aria-hidden="true"><use href="#i-lock"/></svg>
+              <input id="setup-confirm-password" type="password" maxlength="64" autocomplete="new-password" placeholder="确认管理员密码" aria-label="确认管理员密码" required>
+            </div>
+
+            <button id="setup-submit" class="setup-submit hidden" type="submit">
+              <span>保存密码</span><span class="button-spinner" aria-hidden="true"></span>
+            </button>
+          </div>
+
+          <div id="auth-error" class="auth-alert hidden" role="alert">
+            <svg aria-hidden="true"><use href="#i-alert"/></svg><span id="auth-error-message"></span>
+          </div>
+
+          <div class="login-meta">
+            <a class="star-link" href="https://github.com/3899/ncmm" target="_blank" rel="noopener noreferrer">
+              <svg aria-hidden="true"><use href="#i-github"/></svg><span>点亮 Star</span><svg class="star-icon" aria-hidden="true"><use href="#i-star"/></svg>
+            </a>
+            <div id="forgot-password-wrap" class="forgot-password-wrap">
+              <button id="forgot-password" type="button">忘记密码</button>
+              <div class="recovery-popover" role="tooltip">
+                <p>忘记密码可登录部署主机执行命令操作</p>
+                <span>重置密码：</span><code>ncmm auth reset-password</code>
+                <span>清除密码：</span><code>ncmm auth clear --yes</code>
+              </div>
+            </div>
+          </div>
+        </form>
+      </div>
+      <footer class="login-footer">
+        <a href="https://github.com/3899/ncmm" target="_blank" rel="noopener noreferrer">Copyright © 2026 GitHub 3899</a>
+        <span>|</span><span id="auth-version">v1.2.0</span>
+      </footer>
     </div>
   </section>
 
@@ -174,10 +204,11 @@
 
         <section id="page-runs" class="page">
           <section class="settings-band">
-            <div><p class="eyebrow">LOG RETENTION</p><h3>日志保留</h3></div>
+            <div><p class="eyebrow">RUN SETTINGS</p><h3>运行设置</h3></div>
             <label>保留天数<input id="retention-days" type="number" min="1" max="365"></label>
             <label>最大占用（MB）<input id="max-log-size" type="number" min="16" max="10240"></label>
             <label>时区<input id="timezone-input" type="text"></label>
+            <label>最大并发<input id="max-parallel" type="number" min="1" max="8"></label>
             <button id="settings-save" class="button primary"><svg><use href="#i-save"/></svg>保存</button>
             <button id="logs-cleanup" class="button subtle"><svg><use href="#i-trash"/></svg>立即清理</button>
           </section>
@@ -187,13 +218,32 @@
 
         <section id="page-system" class="page">
           <section class="system-section">
-            <div class="section-head"><div><p class="eyebrow">SECURITY</p><h3>管理令牌</h3></div><span id="token-source" class="badge disabled">--</span></div>
-            <form id="token-form" class="system-form">
-              <label>新令牌<input id="new-token" type="password" minlength="8" maxlength="256" autocomplete="new-password" required></label>
-              <label>确认令牌<input id="confirm-token" type="password" minlength="8" maxlength="256" autocomplete="new-password" required></label>
-              <button id="token-save" class="button primary" type="submit"><svg><use href="#i-key"/></svg>修改令牌</button>
+            <div class="section-head"><div><p class="eyebrow">SECURITY</p><h3>管理员密码</h3></div><span id="auth-mode" class="badge enabled">Session</span></div>
+            <form id="password-form" class="system-form auth-password-form">
+              <label>新密码<input id="new-password" type="password" minlength="8" maxlength="64" autocomplete="new-password" required></label>
+              <label>确认新密码<input id="confirm-password" type="password" minlength="8" maxlength="64" autocomplete="new-password" required></label>
+              <button id="password-save" class="button primary" type="submit"><svg><use href="#i-key"/></svg>修改密码</button>
             </form>
-            <p id="token-note" class="field-note"></p>
+            <p id="password-note" class="field-note">修改后会撤销全部旧会话，并为当前浏览器签发新会话。</p>
+          </section>
+
+          <section class="system-section">
+            <div class="section-head"><div><p class="eyebrow">POLICY</p><h3>密码与会话策略</h3></div></div>
+            <form id="auth-settings-form" class="security-settings-form">
+              <label>密码最小长度<input id="password-min-length" type="number" min="1" max="64" required></label>
+              <label>会话有效期<select id="session-ttl"><option value="86400">1 天</option><option value="604800">7 天</option><option value="1209600">14 天</option><option value="2592000">30 天</option></select></label>
+              <label>空闲超时<select id="idle-timeout"><option value="1800">30 分钟</option><option value="3600">1 小时</option><option value="7200">2 小时</option><option value="10800">3 小时</option><option value="21600">6 小时</option><option value="0">关闭</option></select></label>
+              <label class="toggle-label">要求字母<input id="require-letters" type="checkbox"><span class="toggle"></span></label>
+              <label class="toggle-label">要求数字<input id="require-digits" type="checkbox"><span class="toggle"></span></label>
+              <label class="toggle-label">要求符号<input id="require-symbols" type="checkbox"><span class="toggle"></span></label>
+              <button id="auth-settings-save" class="button primary" type="submit"><svg><use href="#i-save"/></svg>保存策略</button>
+            </form>
+          </section>
+
+          <section class="system-section">
+            <div class="section-head"><div><p class="eyebrow">SESSIONS</p><h3>登录会话</h3></div><button id="sessions-revoke-others" class="button subtle">撤销其他会话</button></div>
+            <div id="sessions-list" class="compact-list empty-state">暂无登录会话</div>
+            <p id="session-auth-note" class="field-note"></p>
           </section>
 
           <section class="system-section">
@@ -229,7 +279,7 @@
       <p id="cron-next" class="field-note"></p>
       <div class="form-grid two">
         <label>命令<select id="schedule-command"><option value="task">task</option><option value="sign">sign</option><option value="playids">playids</option><option value="musician">musician</option><option value="musician-sign">musician-sign</option><option value="musician-vip">musician-vip</option><option value="note">note</option><option value="daily-song-share">daily-song-share</option><option value="vip-member-gift">vip-member-gift</option><option value="fansgroup">fansgroup</option></select></label>
-        <label>重叠策略<select id="schedule-overlap"><option value="skip">跳过重复运行</option><option value="allow">允许并行</option></select></label>
+        <label>重叠策略<select id="schedule-overlap"><option value="skip">跳过重复触发</option><option value="allow">重复触发进入队列</option></select></label>
       </div>
       <label>命令参数<input id="schedule-args" placeholder="--only-fast"></label>
       <div class="dialog-actions"><button type="button" class="button subtle dialog-close">取消</button><button id="schedule-submit" type="submit" class="button primary"><svg><use href="#i-save"/></svg>保存任务</button></div>

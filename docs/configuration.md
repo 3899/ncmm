@@ -367,3 +367,17 @@ notify:
   file: "notify.yaml" # 相对路径相对于 config.yaml 所在目录
 ```
 
+## 配置写入与并发
+
+从 `v1.2.0` 开始，程序通过 `config.yaml.lock` 协调 WebUI、任务子进程和独立 CLI 进程，并使用同目录临时文件原子替换 `config.yaml`。读取方只会看到完整旧配置或完整新配置；锁文件长期存在是正常现象，它不包含凭据，也不代表进程仍在运行。
+
+WebUI 还会在规范化后的 home 中维护 `webui.instance.lock`。它使用 Linux `flock` 或 Windows `LockFileEx` 保证一个 home 同时只有一个 WebUI 控制实例，并保存 PID、启动时间、监听地址、版本和 instance ID 供启动冲突诊断。该文件退出后不会删除，但 OS 锁会在正常或异常退出时自动释放；不要根据文件是否存在判断 WebUI 是否运行，也不要在实例运行期间手工覆盖它。
+
+管理员认证独立保存在 `webui-auth.json`，不使用业务 Badger 数据库。文件只包含 PBKDF2 密码 hash、SHA-256 Session Token hash、密码/会话策略和会话元数据，不包含明文密码或明文 Session Token；`webui-auth.json.lock` 用于跨进程事务协调。浏览器 Session Cookie 为 HttpOnly、SameSite=Strict，默认 7 天绝对有效期和 1 小时服务端空闲超时，可在 WebUI“系统”页调整；最多保留 128 个会话。认证文件损坏时 WebUI 会安全拒绝启动，不会退化为无密码模式；停止实例后可用 `ncmm auth reset-password` 直接替换，或用 `ncmm auth clear --yes` 清除并重新设置。
+
+v1.2.0 将 WebUI 认证视为全新状态，不读取或迁移旧版管理令牌。没有 `webui-auth.json` 时进入首次设置；此过程以及 `auth reset-password` / `auth clear` 仅操作认证文件，不会修改 `config.yaml`、Cookie、业务数据库、`webui.yaml` 调度规则或 `log/runs` 运行记录。
+
+WebUI 获取配置时会同时收到内容哈希 `revision`。保存配置必须提交该 revision：缺失时 API 返回 `428 Precondition Required`；配置已被其他页面、登录流程或 CLI 更新时返回 `409 Conflict`，此时应重新加载后再保存。每次 WebUI 保存仍会原子更新 `config.yaml.bak` 作为人工恢复副本。
+
+Cookie 导入和二维码登录由子进程完成登录验证与 Cookie 落盘，但 `accounts` 更新由 WebUI 父进程统一提交。若登录期间配置发生变化，Cookie 文件会保留，页面会明确提示配置提交冲突，不会覆盖较新的配置。
+

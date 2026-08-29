@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/3899/ncmm/internal/atomicfile"
 	"gopkg.in/yaml.v3"
 )
 
@@ -35,7 +36,8 @@ func defaultWebConfig() WebConfig {
 			RetentionDays:  defaultRetentionDays,
 			MaxTotalSizeMB: defaultMaxTotalSizeMB,
 		},
-		Jobs: []Schedule{},
+		Concurrency: ConcurrencyPolicy{MaxParallel: 1},
+		Jobs:        []Schedule{},
 	}
 }
 
@@ -70,6 +72,9 @@ func normalizeWebConfig(cfg *WebConfig) {
 	}
 	if cfg.Logs.MaxTotalSizeMB <= 0 {
 		cfg.Logs.MaxTotalSizeMB = defaultMaxTotalSizeMB
+	}
+	if cfg.Concurrency.MaxParallel < 1 || cfg.Concurrency.MaxParallel > 8 {
+		cfg.Concurrency.MaxParallel = 1
 	}
 	if cfg.Jobs == nil {
 		cfg.Jobs = []Schedule{}
@@ -106,7 +111,7 @@ func cloneWebConfig(cfg WebConfig) WebConfig {
 	return copyCfg
 }
 
-func (s *webConfigStore) updateSettings(timezone string, policy LogPolicy) (WebConfig, error) {
+func (s *webConfigStore) updateSettings(timezone string, policy LogPolicy, concurrency ConcurrencyPolicy) (WebConfig, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -119,8 +124,12 @@ func (s *webConfigStore) updateSettings(timezone string, policy LogPolicy) (WebC
 	if policy.MaxTotalSizeMB < 16 || policy.MaxTotalSizeMB > 10240 {
 		return WebConfig{}, fmt.Errorf("maxTotalSizeMB must be between 16 and 10240")
 	}
+	if concurrency.MaxParallel < 1 || concurrency.MaxParallel > 8 {
+		return WebConfig{}, fmt.Errorf("maxParallel must be between 1 and 8")
+	}
 	s.cfg.Timezone = timezone
 	s.cfg.Logs = policy
+	s.cfg.Concurrency = concurrency
 	if err := s.saveLocked(); err != nil {
 		return WebConfig{}, err
 	}
@@ -177,42 +186,7 @@ func (s *webConfigStore) saveLocked() error {
 }
 
 func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, ".ncmm-write-*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
-	if err := tmp.Chmod(mode); err != nil {
-		tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tmpName, path); err == nil {
-		return nil
-	}
-	backup := path + ".replace-backup"
-	_ = os.Remove(backup)
-	if err := os.Rename(path, backup); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		_ = os.Rename(backup, path)
-		return err
-	}
-	_ = os.Remove(backup)
-	return nil
+	return atomicfile.Write(path, data, mode)
 }
 
 func newID(prefix string) string {

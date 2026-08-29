@@ -42,4 +42,4 @@ WORKDIR /data
 EXPOSE 3899
 
 ENTRYPOINT ["/entrypoint.sh"]
-CMD ["web", "--scheduler", "--listen", "0.0.0.0:3899", "--allow-remote-setup"]
+CMD ["web", "--scheduler", "--listen", "0.0.0.0:3899"]

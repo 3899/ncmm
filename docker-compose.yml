@@ -13,8 +13,6 @@ services:
       - "host.docker.internal:host-gateway"
     environment:
       - TZ=Asia/Shanghai
-      # 可选：显式设置后会跳过 WebUI 首次设置页面。
-      # - NCMM_WEB_TOKEN=replace-with-a-long-random-token
 
       # CookieCloud 配置（服务运行在宿主机时使用 host.docker.internal）
       #- COOKIECLOUD_SERVER=http://host.docker.internal:8088
@@ -28,7 +26,7 @@ services:
 
 # ============================================================
 # WebUI: http://localhost:3899
-# 首次启动请从 docker logs ncmm 获取一次性设置码，再打开 WebUI 设置管理令牌。
+# 首次启动直接打开 WebUI 设置并确认管理员密码。
 # 官方镜像禁止容器内替换二进制，更新请在宿主机执行：
 #   docker compose pull ncmm
 #   docker compose up -d --force-recreate ncmm

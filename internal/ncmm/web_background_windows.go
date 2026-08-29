@@ -80,5 +80,5 @@ func backgroundReadyURL(listen string) (string, error) {
 	if host == "" || host == "0.0.0.0" || host == "::" {
 		host = "127.0.0.1"
 	}
-	return (&url.URL{Scheme: "http", Host: net.JoinHostPort(host, port), Path: "/api/v1/setup"}).String(), nil
+	return (&url.URL{Scheme: "http", Host: net.JoinHostPort(host, port), Path: "/api/v1/auth/status"}).String(), nil
 }

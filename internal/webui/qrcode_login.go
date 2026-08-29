@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/3899/ncmm/internal/loginresult"
 	"github.com/google/uuid"
 )
 
@@ -37,21 +38,23 @@ type qrcodeLoginView struct {
 }
 
 type qrcodeLoginSession struct {
-	id              string
-	status          string
-	message         string
-	filename        string
-	main            bool
-	dir             string
-	image           []byte
-	createdAt       time.Time
-	expiresAt       time.Time
-	finishedAt      time.Time
-	cancel          context.CancelFunc
-	cancelRequested bool
+	id               string
+	status           string
+	message          string
+	filename         string
+	main             bool
+	dir              string
+	image            []byte
+	createdAt        time.Time
+	expiresAt        time.Time
+	finishedAt       time.Time
+	cancel           context.CancelFunc
+	cancelRequested  bool
+	expectedRevision string
 }
 
 type qrcodeCommandFactory func(context.Context, string, ...string) *exec.Cmd
+type accountResultCommitter func(string, loginresult.Result) error
 
 type qrcodeLoginManager struct {
 	mu         sync.Mutex
@@ -61,18 +64,19 @@ type qrcodeLoginManager struct {
 	configPath string
 	home       string
 	command    qrcodeCommandFactory
+	commit     accountResultCommitter
 	sessions   map[string]*qrcodeLoginSession
 	activeID   string
 }
 
-func newQRCodeLoginManager(ctx context.Context, executable, configPath, home string) *qrcodeLoginManager {
+func newQRCodeLoginManager(ctx context.Context, executable, configPath, home string, commit accountResultCommitter) *qrcodeLoginManager {
 	return &qrcodeLoginManager{
 		ctx: ctx, executable: executable, configPath: configPath, home: home,
-		command: exec.CommandContext, sessions: make(map[string]*qrcodeLoginSession),
+		command: exec.CommandContext, commit: commit, sessions: make(map[string]*qrcodeLoginSession),
 	}
 }
 
-func (m *qrcodeLoginManager) start(filename string, main bool) (qrcodeLoginView, error) {
+func (m *qrcodeLoginManager) start(filename string, main bool, expectedRevision string) (qrcodeLoginView, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.pruneLocked(time.Now())
@@ -97,6 +101,8 @@ func (m *qrcodeLoginManager) start(filename string, main bool) (qrcodeLoginView,
 		"--timeout", qrcodeLoginTimeout.String(),
 		"--dir", dir,
 		"--output", filename,
+		"--no-config-write",
+		"--json-result",
 	}
 	if main {
 		args = append(args, "--main")
@@ -118,6 +124,7 @@ func (m *qrcodeLoginManager) start(filename string, main bool) (qrcodeLoginView,
 		id: uuid.NewString(), status: "starting", message: "正在生成二维码",
 		filename: filename, main: main, dir: dir, createdAt: now,
 		expiresAt: now.Add(qrcodeLoginTimeout), cancel: cancel,
+		expectedRevision: expectedRevision,
 	}
 	m.sessions[session.id] = session
 	m.activeID = session.id
@@ -164,6 +171,24 @@ func (m *qrcodeLoginManager) captureImage(session *qrcodeLoginSession) {
 }
 
 func (m *qrcodeLoginManager) finish(session *qrcodeLoginSession, ctx context.Context, output string, commandErr error) {
+	if commandErr == nil && ctx.Err() == nil {
+		result, err := loginresult.Parse(output)
+		if err == nil && result.Main != session.main {
+			err = fmt.Errorf("login process returned an unexpected account type")
+		}
+		if err == nil && !strings.EqualFold(filepath.Base(result.CookiePath), session.filename) {
+			err = fmt.Errorf("login process returned an unexpected Cookie path")
+		}
+		if err == nil && m.commit == nil {
+			err = fmt.Errorf("account config committer is unavailable")
+		}
+		if err == nil {
+			err = m.commit(session.expectedRevision, result)
+		}
+		if err != nil {
+			commandErr = fmt.Errorf("Cookie 已保存，但账号配置提交失败: %w", err)
+		}
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	now := time.Now()

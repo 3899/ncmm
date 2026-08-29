@@ -30,19 +30,15 @@ cd /d C:\path\to\ncmm
 ncmm.exe web --scheduler
 ```
 
-启动后访问 [http://127.0.0.1:3899](http://127.0.0.1:3899)。首次启动且未指定管理令牌时，ncmm 会在控制台输出一次性设置码；本机浏览器直连回环地址时会自动安全取得该设置码，用户只需设置并确认至少 8 位的管理令牌。设置成功后令牌写入运行目录下的 `webui.secret`，一次性设置码立即失效。
+启动后访问 [http://127.0.0.1:3899](http://127.0.0.1:3899)。首次启动且尚未配置管理员密码时，页面直接显示“设置管理员密码”，设置并确认后即可进入。密码只以 PBKDF2 加盐 hash 写入 `webui-auth.json`，浏览器通过 HttpOnly Session Cookie 登录。
 
-可以在命令行指定管理令牌：
-
-```powershell
-.\ncmm.exe web --scheduler --token "your-token"
-```
-
-需要允许局域网中的其他设备访问时，可以监听所有网卡。此时应设置强管理令牌，并在 Windows 防火墙中放行 TCP 端口 `3899`：
+需要允许局域网中的其他设备访问时，可以监听所有网卡，并在 Windows 防火墙中放行 TCP 端口 `3899`：
 
 ```powershell
-.\ncmm.exe web --listen 0.0.0.0:3899 --scheduler --token "your-strong-token"
+.\ncmm.exe web --listen 0.0.0.0:3899 --scheduler
 ```
+
+首次设置没有额外设置码。请先在受信任网络完成密码设置，再向不可信网络开放端口；公网访问应使用 HTTPS 反向代理并增加 `--secure-cookie`。
 
 ## 无窗口启动
 
@@ -56,7 +52,17 @@ ncmm.exe web --scheduler --background
 
 脚本会等待 WebUI 启动成功，然后自动使用默认浏览器打开 [http://127.0.0.1:3899](http://127.0.0.1:3899)。WebUI 默认只监听 `127.0.0.1:3899`。
 
-首次启动且目录中不存在 `webui.secret` 时，浏览器会显示首次设置页面。由于一键启动只允许本机回环访问，页面会自动取得本次进程的一次性设置码，用户无需从隐藏控制台读取；后续启动会显示正常登录页面，不再进入首次设置流程。
+首次启动且目录中的 `webui-auth.json` 尚未配置管理员密码时，浏览器会显示首次设置页面；后续启动显示密码登录页面。
+
+v1.2.0 不兼容或迁移 v1.1.x 的 WebUI 管理令牌。若升级后没有 `webui-auth.json`，直接重新设置管理员密码；原有 `config.yaml`、Cookie、数据库、调度规则和运行记录都会保留。
+
+忘记密码时先停止 WebUI，再在 PowerShell 中交互重置；输入不会回显，重置会撤销所有旧会话：
+
+```powershell
+.\ncmm.exe --home . auth reset-password
+```
+
+需要彻底回到首次设置状态时执行 `.\ncmm.exe --home . auth clear --yes`。该命令只清除 `webui-auth.json`，不会读取或删除旧认证文件，也不会修改任务数据。认证恢复不读取 `config.yaml`，因此主配置损坏时仍可使用。
 
 ## 停止运行
 

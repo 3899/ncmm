@@ -4,15 +4,20 @@
 package config
 
 import (
+	"context"
 	_ "embed"
 	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
+	"time"
 
 	"github.com/3899/ncmm/api"
+	"github.com/3899/ncmm/internal/atomicfile"
+	"github.com/3899/ncmm/internal/filelock"
 	"github.com/3899/ncmm/pkg/database"
 	"github.com/3899/ncmm/pkg/log"
 
@@ -605,7 +610,12 @@ type verStruct struct {
 
 // AutoUpgradeConfigIfNeeded 检查配置文件版本，并在版本不符时自动执行迁移和结构升级合并
 func AutoUpgradeConfigIfNeeded(cfgPath string) error {
+	lock, err := acquireConfigWriteLock(cfgPath)
+	if err != nil {
+		return err
+	}
 	data, err := os.ReadFile(cfgPath)
+	_ = lock.Close()
 	if err != nil {
 		return err
 	}
@@ -623,6 +633,11 @@ func AutoUpgradeConfigIfNeeded(cfgPath string) error {
 
 // AutoUpgradeConfig 读取旧配置文件，将其与嵌入的新配置模板进行 AST 级递归合并，保存最新结构与中文注释的同时保留用户值
 func AutoUpgradeConfig(cfgPath string) error {
+	lock, err := acquireConfigWriteLock(cfgPath)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
 	userData, err := os.ReadFile(cfgPath)
 	if err != nil {
 		return err
@@ -647,7 +662,7 @@ func AutoUpgradeConfig(cfgPath string) error {
 		return err
 	}
 
-	return os.WriteFile(cfgPath, output, 0644)
+	return atomicfile.Write(cfgPath, output, 0644)
 }
 
 func mergeYAMLNodes(dest, src *yaml.Node) {
@@ -693,6 +708,11 @@ func mergeYAMLNodes(dest, src *yaml.Node) {
 
 // MigrateConfigFile 自动将旧的 primary / enablePrimary 配置字段升级迁移为 main / enableMain
 func MigrateConfigFile(cfgPath string) error {
+	lock, err := acquireConfigWriteLock(cfgPath)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
 	data, err := os.ReadFile(cfgPath)
 	if err != nil {
 		return err
@@ -712,7 +732,7 @@ func MigrateConfigFile(cfgPath string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(cfgPath, output, 0644)
+	return atomicfile.Write(cfgPath, output, 0644)
 }
 
 func migrateNode(node *yaml.Node) bool {
@@ -810,6 +830,11 @@ func migrateNode(node *yaml.Node) bool {
 
 // UpdateAccountsInFile 更新配置文件中的 accounts 并为每个账号添加昵称注释，同时保持原有文件的注释和排版
 func UpdateAccountsInFile(cfgPath string, mainPath string, mainNickname string, secondaryPaths []string, secondaryNicknames []string) error {
+	lock, err := acquireConfigWriteLock(cfgPath)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
 	data, err := os.ReadFile(cfgPath)
 	if err != nil {
 		return err
@@ -936,5 +961,115 @@ func UpdateAccountsInFile(cfgPath string, mainPath string, mainNickname string, 
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(cfgPath, output, 0644)
+	return atomicfile.Write(cfgPath, output, 0644)
+}
+
+// UpdateAccountInFile merges one login result into the latest config while holding the cross-process write lock.
+func UpdateAccountInFile(cfgPath, accountPath, nickname string, main bool) error {
+	lock, err := acquireConfigWriteLock(cfgPath)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		return err
+	}
+	var document yaml.Node
+	if err := yaml.Unmarshal(data, &document); err != nil {
+		return err
+	}
+	if err := ApplyAccountUpdate(&document, accountPath, nickname, main); err != nil {
+		return err
+	}
+	output, err := yaml.Marshal(&document)
+	if err != nil {
+		return err
+	}
+	return atomicfile.Write(cfgPath, output, 0644)
+}
+
+// ApplyAccountUpdate changes only the target account entry and preserves unrelated YAML nodes and comments.
+func ApplyAccountUpdate(document *yaml.Node, accountPath, nickname string, main bool) error {
+	if document == nil || document.Kind != yaml.DocumentNode || len(document.Content) == 0 || document.Content[0].Kind != yaml.MappingNode {
+		return fmt.Errorf("config root must be a mapping")
+	}
+	root := document.Content[0]
+	accounts := mappingNodeValue(root, "accounts")
+	if accounts == nil {
+		accounts = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+		root.Content = append(root.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "accounts"}, accounts)
+	}
+	if accounts.Kind != yaml.MappingNode {
+		return fmt.Errorf("accounts must be a mapping")
+	}
+	if main {
+		value := ensureMappingNodeValue(accounts, "main", yaml.ScalarNode, "!!str")
+		value.Value = accountPath
+		setAccountNickname(value, nickname)
+		return nil
+	}
+	secondary := ensureMappingNodeValue(accounts, "secondary", yaml.SequenceNode, "!!seq")
+	for _, item := range secondary.Content {
+		if item.Kind == yaml.ScalarNode && sameAccountPath(item.Value, accountPath) {
+			setAccountNickname(item, nickname)
+			return nil
+		}
+	}
+	item := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: accountPath}
+	setAccountNickname(item, nickname)
+	secondary.Content = append(secondary.Content, item)
+	return nil
+}
+
+func mappingNodeValue(mapping *yaml.Node, key string) *yaml.Node {
+	if mapping == nil || mapping.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(mapping.Content); i += 2 {
+		if mapping.Content[i].Value == key {
+			return mapping.Content[i+1]
+		}
+	}
+	return nil
+}
+
+func ensureMappingNodeValue(mapping *yaml.Node, key string, kind yaml.Kind, tag string) *yaml.Node {
+	if value := mappingNodeValue(mapping, key); value != nil {
+		if value.Kind != kind {
+			value.Kind = kind
+			value.Tag = tag
+			value.Value = ""
+			value.Content = nil
+		}
+		return value
+	}
+	value := &yaml.Node{Kind: kind, Tag: tag}
+	mapping.Content = append(mapping.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}, value)
+	return value
+}
+
+func setAccountNickname(node *yaml.Node, nickname string) {
+	if nickname = strings.TrimSpace(nickname); nickname != "" {
+		node.LineComment = "# 昵称: " + nickname
+	}
+}
+
+func sameAccountPath(left, right string) bool {
+	left = filepath.Clean(left)
+	right = filepath.Clean(right)
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(left, right)
+	}
+	return left == right
+}
+
+func acquireConfigWriteLock(path string) (*filelock.Lock, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	lock, err := filelock.Acquire(ctx, path+".lock")
+	if err != nil {
+		return nil, fmt.Errorf("acquire config lock: %w", err)
+	}
+	return lock, nil
 }
