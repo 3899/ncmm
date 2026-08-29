@@ -47,6 +47,11 @@
         <p id="login-error" class="form-error" role="alert"></p>
       </form>
       <form id="setup-form" class="hidden">
+        <div id="bootstrap-code-field">
+          <label for="setup-code">一次性设置码</label>
+          <input id="setup-code" type="text" inputmode="text" maxlength="32" autocomplete="one-time-code" spellcheck="false" required>
+          <p class="form-hint">请查看 ncmm 启动控制台或容器日志。</p>
+        </div>
         <label for="setup-token">设置管理令牌</label>
         <div class="password-field">
           <input id="setup-token" type="password" minlength="8" maxlength="256" autocomplete="new-password" required autofocus>

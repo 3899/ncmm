@@ -6,7 +6,7 @@ services:
     container_name: ncmm
     restart: unless-stopped
     ports:
-      - "3899:3899"
+      - "127.0.0.1:3899:3899"
     volumes:
       - ./data:/data
     extra_hosts:
@@ -28,7 +28,7 @@ services:
 
 # ============================================================
 # WebUI: http://localhost:3899
-# 首次启动请打开 WebUI 设置管理令牌；仅应在可信网络中完成初始化。
+# 首次启动请从 docker logs ncmm 获取一次性设置码，再打开 WebUI 设置管理令牌。
 # 官方镜像禁止容器内替换二进制，更新请在宿主机执行：
 #   docker compose pull ncmm
 #   docker compose up -d --force-recreate ncmm

@@ -1,7 +1,17 @@
-.git
-.github
-dist
-data
-*.md
-LICENSE
-.goreleaser.yaml
+# Keep the Docker build context limited to files required by Dockerfile.
+**
+
+!go.mod
+!go.sum
+!main.go
+!VERSION
+!entrypoint.sh
+
+!api/
+!api/**
+!config/
+!config/**
+!internal/
+!internal/**
+!pkg/
+!pkg/**

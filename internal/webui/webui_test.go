@@ -1,11 +1,16 @@
 package webui
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -69,6 +74,7 @@ func TestManagementTokenUpdateSwitchesAuthorization(t *testing.T) {
 		if body != "" {
 			req.Header.Set("Content-Type", "application/json")
 		}
+		req.Host = "localhost:3899"
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, req)
 		return response
@@ -95,7 +101,7 @@ func TestManagementTokenUpdateSwitchesAuthorization(t *testing.T) {
 
 func TestInitialSetupConfiguresManagementToken(t *testing.T) {
 	home := t.TempDir()
-	server := &Server{opts: Options{Home: home}, setupRequired: true}
+	server := &Server{opts: Options{Home: home}, setupRequired: true, setupCode: "ABCD-EF01-2345-6789"}
 	handler := server.routes()
 
 	request := func(method, path, token, body string) *httptest.ResponseRecorder {
@@ -106,8 +112,9 @@ func TestInitialSetupConfiguresManagementToken(t *testing.T) {
 		}
 		if body != "" {
 			req.Header.Set("Content-Type", "application/json")
-			req.Header.Set("Origin", "http://example.com")
+			req.Header.Set("Origin", "http://localhost:3899")
 		}
+		req.Host = "localhost:3899"
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, req)
 		return response
@@ -119,11 +126,14 @@ func TestInitialSetupConfiguresManagementToken(t *testing.T) {
 	if got := request(http.MethodGet, "/api/v1/security", "", "").Code; got != http.StatusUnauthorized {
 		t.Fatalf("protected API before setup = %d; want %d", got, http.StatusUnauthorized)
 	}
-	if got := request(http.MethodPost, "/api/v1/setup", "", `{"token":"new-token-123","confirmation":"different-token"}`).Code; got != http.StatusBadRequest {
+	if got := request(http.MethodPost, "/api/v1/setup", "", `{"bootstrapCode":"ABCD-EF01-2345-6789","token":"new-token-123","confirmation":"different-token"}`).Code; got != http.StatusBadRequest {
 		t.Fatalf("mismatched setup = %d; want %d", got, http.StatusBadRequest)
 	}
+	if got := request(http.MethodPost, "/api/v1/setup", "", `{"token":"new-token-123","confirmation":"new-token-123"}`).Code; got != http.StatusForbidden {
+		t.Fatalf("setup without bootstrap code = %d; want %d", got, http.StatusForbidden)
+	}
 
-	response := request(http.MethodPost, "/api/v1/setup", "", `{"token":"new-token-123","confirmation":"new-token-123"}`)
+	response := request(http.MethodPost, "/api/v1/setup", "", `{"bootstrapCode":"abcd ef01 2345 6789","token":"new-token-123","confirmation":"new-token-123"}`)
 	if response.Code != http.StatusOK {
 		t.Fatalf("setup status = %d, body = %s", response.Code, response.Body.String())
 	}
@@ -137,20 +147,159 @@ func TestInitialSetupConfiguresManagementToken(t *testing.T) {
 	if got := request(http.MethodGet, "/api/v1/security", "new-token-123", "").Code; got != http.StatusOK {
 		t.Fatalf("new setup token status = %d; want %d", got, http.StatusOK)
 	}
-	if got := request(http.MethodPost, "/api/v1/setup", "", `{"token":"another-token","confirmation":"another-token"}`).Code; got != http.StatusConflict {
+	if got := request(http.MethodPost, "/api/v1/setup", "", `{"bootstrapCode":"ABCD-EF01-2345-6789","token":"another-token","confirmation":"another-token"}`).Code; got != http.StatusConflict {
 		t.Fatalf("repeated setup = %d; want %d", got, http.StatusConflict)
 	}
 }
 
 func TestInitialSetupRejectsCrossSiteRequests(t *testing.T) {
-	server := &Server{opts: Options{Home: t.TempDir()}, setupRequired: true}
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/setup", strings.NewReader(`{"token":"new-token-123","confirmation":"new-token-123"}`))
+	server := &Server{opts: Options{Home: t.TempDir()}, setupRequired: true, setupCode: "ABCD-EF01-2345-6789"}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/setup", strings.NewReader(`{"bootstrapCode":"ABCD-EF01-2345-6789","token":"new-token-123","confirmation":"new-token-123"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Sec-Fetch-Site", "cross-site")
+	req.Host = "localhost:3899"
 	response := httptest.NewRecorder()
 	server.routes().ServeHTTP(response, req)
 	if response.Code != http.StatusForbidden {
 		t.Fatalf("cross-site setup status = %d; want %d", response.Code, http.StatusForbidden)
+	}
+}
+
+func TestInitialSetupRejectsMismatchedOrigin(t *testing.T) {
+	server := &Server{opts: Options{Home: t.TempDir()}, setupRequired: true, setupCode: "ABCD-EF01-2345-6789"}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/setup", strings.NewReader(`{"bootstrapCode":"ABCD-EF01-2345-6789","token":"new-token-123","confirmation":"new-token-123"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "http://attacker.example:3899")
+	req.Host = "localhost:3899"
+	response := httptest.NewRecorder()
+	server.routes().ServeHTTP(response, req)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("mismatched Origin status = %d; want %d", response.Code, http.StatusForbidden)
+	}
+}
+
+func TestInitialSetupCodeOnlyRevealedToDirectLoopback(t *testing.T) {
+	server := &Server{opts: Options{Home: t.TempDir()}, setupRequired: true, setupCode: "ABCD-EF01-2345-6789"}
+	handler := server.routes()
+
+	request := func(remoteAddr string) map[string]any {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/setup", nil)
+		req.Host = "localhost:3899"
+		req.RemoteAddr = remoteAddr
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, req)
+		if response.Code != http.StatusOK {
+			t.Fatalf("setup status = %d, body = %s", response.Code, response.Body.String())
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+			t.Fatal(err)
+		}
+		return payload
+	}
+
+	if got := request("127.0.0.1:12345")["bootstrapCode"]; got != "ABCD-EF01-2345-6789" {
+		t.Fatalf("loopback bootstrap code = %#v", got)
+	}
+	if got := request("192.0.2.10:12345")["bootstrapCode"]; got != nil {
+		t.Fatalf("remote request received bootstrap code %#v", got)
+	}
+}
+
+func TestWebUIRejectsUnexpectedHost(t *testing.T) {
+	server := &Server{opts: Options{Home: t.TempDir()}, setupRequired: true, setupCode: "ABCD-EF01-2345-6789"}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/setup", nil)
+	req.Host = "attacker.example:3899"
+	response := httptest.NewRecorder()
+	server.routes().ServeHTTP(response, req)
+	if response.Code != http.StatusMisdirectedRequest {
+		t.Fatalf("unexpected Host status = %d; want %d", response.Code, http.StatusMisdirectedRequest)
+	}
+}
+
+func TestInitialSetupAllowsOnlyOneConcurrentWinner(t *testing.T) {
+	server := &Server{opts: Options{Home: t.TempDir()}, setupRequired: true, setupCode: "ABCD-EF01-2345-6789"}
+	handler := server.routes()
+	const attempts = 8
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	var succeeded atomic.Int32
+	var conflicted atomic.Int32
+	for i := 0; i < attempts; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/setup", strings.NewReader(`{"bootstrapCode":"ABCD-EF01-2345-6789","token":"new-token-123","confirmation":"new-token-123"}`))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Origin", "http://localhost:3899")
+			req.Host = "localhost:3899"
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, req)
+			switch response.Code {
+			case http.StatusOK:
+				succeeded.Add(1)
+			case http.StatusConflict:
+				conflicted.Add(1)
+			default:
+				t.Errorf("concurrent setup status = %d, body = %s", response.Code, response.Body.String())
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	if succeeded.Load() != 1 || conflicted.Load() != attempts-1 {
+		t.Fatalf("concurrent setup results: success=%d conflict=%d", succeeded.Load(), conflicted.Load())
+	}
+}
+
+func TestNewRejectsUnconfiguredRemoteListener(t *testing.T) {
+	_, err := New(context.Background(), Options{Home: t.TempDir(), Listen: "0.0.0.0:3899"})
+	if err == nil || !strings.Contains(err.Error(), "--allow-remote-setup") {
+		t.Fatalf("New() error = %v; want remote setup refusal", err)
+	}
+}
+
+func TestNewAllowsExplicitRemoteSetup(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var output strings.Builder
+	server, err := New(ctx, Options{
+		Home: t.TempDir(), Listen: "0.0.0.0:3899", AllowRemoteSetup: true,
+		Output: func(format string, args ...any) { _, _ = fmt.Fprintf(&output, format, args...) },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.scheduler.close()
+	defer server.qrcode.close()
+	if server.setupCode == "" || !strings.Contains(output.String(), "WARNING") || !strings.Contains(output.String(), server.setupCode) {
+		t.Fatalf("explicit remote setup was not initialized safely: output=%q code=%q", output.String(), server.setupCode)
+	}
+}
+
+func TestLoopbackListenDetection(t *testing.T) {
+	tests := []struct {
+		listen   string
+		loopback bool
+		wantErr  bool
+	}{
+		{listen: "127.0.0.1:3899", loopback: true},
+		{listen: "[::1]:3899", loopback: true},
+		{listen: "localhost:3899", loopback: true},
+		{listen: "0.0.0.0:3899"},
+		{listen: "[::]:3899"},
+		{listen: "192.0.2.1:3899"},
+		{listen: "not-an-address", wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.listen, func(t *testing.T) {
+			got, err := isLoopbackListen(test.listen)
+			if got != test.loopback || (err != nil) != test.wantErr {
+				t.Fatalf("isLoopbackListen(%q) = %v, %v", test.listen, got, err)
+			}
+		})
 	}
 }
 

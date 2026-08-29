@@ -31,6 +31,7 @@ type Server struct {
 	token             string
 	tokenFromExternal bool
 	setupRequired     bool
+	setupCode         string
 	config            *configStore
 	notify            *configStore
 	webConfig         *webConfigStore
@@ -56,8 +57,24 @@ func New(ctx context.Context, opts Options) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	setupCode := ""
 	if setupRequired {
-		opts.Output("[webui] management token is not configured; open the WebUI to complete initial setup\n")
+		loopback, listenErr := isLoopbackListen(opts.Listen)
+		if listenErr != nil {
+			return nil, listenErr
+		}
+		if !loopback && !opts.AllowRemoteSetup {
+			return nil, fmt.Errorf("initial setup on non-loopback address %q is disabled; configure --token/NCMM_WEB_TOKEN first or explicitly use --allow-remote-setup", opts.Listen)
+		}
+		setupCode, err = newBootstrapCode()
+		if err != nil {
+			return nil, err
+		}
+		if !loopback {
+			opts.Output("[webui] WARNING: remote initial setup is enabled on %s\n", opts.Listen)
+		}
+		opts.Output("[webui] initial setup code: %s\n", setupCode)
+		opts.Output("[webui] open the WebUI and use this one-time code to configure the management token\n")
 	}
 	notifyPath, err := resolveNotifyPath(opts.ConfigPath, opts.Home)
 	if err != nil {
@@ -81,7 +98,8 @@ func New(ctx context.Context, opts Options) (*Server, error) {
 	}
 	s := &Server{
 		opts: opts, token: token, tokenFromExternal: tokenFromExternal, setupRequired: setupRequired,
-		config: newConfigStore(opts.ConfigPath), notify: notifyStore,
+		setupCode: setupCode,
+		config:    newConfigStore(opts.ConfigPath), notify: notifyStore,
 		webConfig: webConfig, runner: runner, scheduler: scheduler,
 		qrcode: newQRCodeLoginManager(ctx, opts.Executable, opts.ConfigPath, opts.Home),
 	}
@@ -172,6 +190,14 @@ func (s *Server) routes() http.Handler {
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'")
+		listen := s.opts.Listen
+		if listen == "" {
+			listen = defaultListen
+		}
+		if !requestHostAllowed(listen, r.Host) {
+			writeError(w, http.StatusMisdirectedRequest, "request Host is not allowed for this WebUI listener")
+			return
+		}
 		publicSetupRequest := r.URL.Path == "/api/v1/setup" && (r.Method == http.MethodGet || r.Method == http.MethodPost)
 		if strings.HasPrefix(r.URL.Path, "/api/") && !publicSetupRequest && !s.authorized(r) {
 			writeError(w, http.StatusUnauthorized, "invalid management token")
@@ -194,11 +220,22 @@ func (s *Server) authorized(r *http.Request) bool {
 	return subtle.ConstantTimeCompare([]byte(provided), []byte(s.token)) == 1
 }
 
-func (s *Server) handleSetupGet(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleSetupGet(w http.ResponseWriter, r *http.Request) {
 	s.tokenMu.RLock()
 	required := s.setupRequired
+	setupCode := s.setupCode
 	s.tokenMu.RUnlock()
-	writeJSON(w, http.StatusOK, map[string]bool{"required": required})
+	response := map[string]any{"required": required, "bootstrapRequired": required}
+	listen := s.opts.Listen
+	if listen == "" {
+		listen = defaultListen
+	}
+	loopback, _ := isLoopbackListen(listen)
+	if required && loopback && isDirectLoopbackRequest(r.RemoteAddr) {
+		response["bootstrapCode"] = setupCode
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) handleSetupPost(w http.ResponseWriter, r *http.Request) {
@@ -220,8 +257,9 @@ func (s *Server) handleSetupPost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Token        string `json:"token"`
-		Confirmation string `json:"confirmation"`
+		Token         string `json:"token"`
+		Confirmation  string `json:"confirmation"`
+		BootstrapCode string `json:"bootstrapCode"`
 	}
 	if !decodeJSON(w, r, &req, 4<<10) {
 		return
@@ -242,6 +280,12 @@ func (s *Server) handleSetupPost(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "initial setup is already complete")
 		return
 	}
+	providedCode := normalizeBootstrapCode(req.BootstrapCode)
+	expectedCode := normalizeBootstrapCode(s.setupCode)
+	if providedCode == "" || len(providedCode) != len(expectedCode) || subtle.ConstantTimeCompare([]byte(providedCode), []byte(expectedCode)) != 1 {
+		writeError(w, http.StatusForbidden, "invalid initial setup code")
+		return
+	}
 	if err := os.MkdirAll(s.opts.Home, 0755); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -252,6 +296,7 @@ func (s *Server) handleSetupPost(w http.ResponseWriter, r *http.Request) {
 	}
 	s.token = token
 	s.setupRequired = false
+	s.setupCode = ""
 	writeJSON(w, http.StatusOK, map[string]bool{"configured": true})
 }
 

@@ -19,15 +19,18 @@ WebUI 默认不随本地单文件命令启动，需要显式运行：
 ```bash
 ncmm web
 ncmm web --scheduler
-ncmm web --listen 0.0.0.0:3899 --scheduler
+ncmm web --listen 0.0.0.0:3899 --scheduler --token "your-strong-token"
 ```
 
 - `--listen`：监听地址，默认 `127.0.0.1:3899`。
 - `--scheduler`：启用内置定时任务调度器。
 - `--token`：指定管理令牌，也可使用 `NCMM_WEB_TOKEN` 环境变量。
 - `--web-config`：指定 WebUI 设置文件，默认位于 `--home` 下的 `webui.yaml`。
+- `--allow-remote-setup`：显式允许在非回环监听地址上执行首次设置；默认关闭，仅应在无法预设令牌时临时使用。
 
-首次启动且未提供 `--token` / `NCMM_WEB_TOKEN`、`--home` 下也没有 `webui.secret` 时，WebUI 会显示首次设置页面，由用户设置并确认至少 8 位的管理令牌。设置完成后令牌写入 `--home/webui.secret`，后续启动进入正常登录页面。
+首次启动且未提供 `--token` / `NCMM_WEB_TOKEN`、`--home` 下也没有 `webui.secret` 时，ncmm 会生成只在本次进程有效的一次性设置码。直接通过 `127.0.0.1` / `localhost` 访问时，页面会自动取得该设置码，用户只需设置并确认至少 8 位的管理令牌；设置完成后令牌写入 `--home/webui.secret`，一次性设置码立即失效。
+
+未配置凭据时，`0.0.0.0`、`::` 和其他非回环地址默认拒绝启动。推荐先使用 `--token` 或 `NCMM_WEB_TOKEN` 配置令牌；确需远程完成初始化时，再显式增加 `--allow-remote-setup`，并从启动控制台获取一次性设置码。WebUI 同时校验请求 Host、Origin 和浏览器跨站来源信息。
 
 WebUI 的“系统”页可以修改管理令牌。新令牌会立即生效并写入 `--home/webui.secret`；如果启动时使用了 `--token` 或 `NCMM_WEB_TOKEN`，重启后仍以外部令牌为准。
 

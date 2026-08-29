@@ -1,5 +1,5 @@
 # 配置文件版本
-version: 1.1.14
+version: 1.2.0
 
 # 顶级多账号管理
 accounts:

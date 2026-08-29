@@ -72,6 +72,8 @@ textarea { resize: vertical; }
 .password-field input { padding-right: 46px; }
 .password-field .icon-button { position: absolute; right: 3px; top: 3px; }
 #setup-form .password-field + label { margin-top: 16px; }
+#bootstrap-code-field { margin-bottom: 16px; }
+.form-hint { margin: 6px 0 0; color: var(--muted); font-size: 12px; }
 .form-error { min-height: 20px; margin: 10px 0 0; color: var(--danger); font-size: 13px; }
 
 .app-shell { min-height: 100vh; display: grid; grid-template-columns: 230px minmax(0, 1fr); }

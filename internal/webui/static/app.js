@@ -137,14 +137,17 @@
     $('#token-input').focus();
   }
 
-  function showSetupView() {
+  function showSetupView(setup = {}) {
     sessionStorage.removeItem('ncmm-token');
     state.token = '';
     $('#auth-title').textContent = '首次设置';
     $('#login-form').classList.add('hidden');
     $('#setup-form').classList.remove('hidden');
     $('#login-view').classList.remove('hidden');
-    $('#setup-token').focus();
+    const code = setup.bootstrapCode || '';
+    $('#setup-code').value = code;
+    $('#bootstrap-code-field').classList.toggle('hidden', !!code);
+    (code ? $('#setup-token') : $('#setup-code')).focus();
   }
 
   function logout(showLogin = true) {
@@ -629,6 +632,7 @@
     $('#setup-confirm-toggle').addEventListener('click', () => { $('#setup-confirm').type = $('#setup-confirm').type === 'password' ? 'text' : 'password'; });
     $('#setup-form').addEventListener('submit', async event => {
       event.preventDefault();
+      const bootstrapCode = $('#setup-code').value.trim();
       const token = $('#setup-token').value.trim();
       const confirmation = $('#setup-confirm').value.trim();
       $('#setup-error').textContent = '';
@@ -639,7 +643,7 @@
       }
       $('#setup-confirm').setCustomValidity('');
       try {
-        await publicApi('/api/v1/setup', { method: 'POST', body: { token, confirmation } });
+        await publicApi('/api/v1/setup', { method: 'POST', body: { bootstrapCode, token, confirmation } });
         await login(token);
       } catch (error) {
         $('#setup-error').textContent = error.message;
@@ -851,7 +855,7 @@
     try {
       const setup = await publicApi('/api/v1/setup');
       if (setup.required) {
-        showSetupView();
+        showSetupView(setup);
         return;
       }
     } catch (error) {

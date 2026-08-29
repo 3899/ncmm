@@ -19,7 +19,7 @@ services:
     container_name: ncmm
     restart: unless-stopped
     ports:
-      - "3899:3899"
+      - "127.0.0.1:3899:3899"
     volumes:
       - ./data:/data
     extra_hosts:
@@ -50,9 +50,9 @@ docker logs ncmm
 
 ## WebUI
 
-打开 `http://localhost:3899`。未设置 `NCMM_WEB_TOKEN` 且 `/data/webui.secret` 不存在时，页面会要求设置并确认至少 8 位的管理令牌；设置成功后自动进入管理界面。后续启动使用该令牌登录。
+打开 `http://localhost:3899`。未设置 `NCMM_WEB_TOKEN` 且 `/data/webui.secret` 不存在时，先从 `docker logs ncmm` 查找 `[webui] initial setup code`，再在页面输入该一次性设置码，并设置、确认至少 8 位的管理令牌。设置成功后一次性设置码立即失效，管理令牌写入 `/data/webui.secret`，后续启动使用该令牌登录。
 
-首次设置完成前仅应在可信网络中暴露端口 `3899`。如果端口直接开放到公网，首个访问 WebUI 的用户可能抢先设置管理令牌。公网部署建议预先设置 `NCMM_WEB_TOKEN`，或先限制防火墙来源，完成首次设置后再开放访问。
+Compose 默认使用 `127.0.0.1:3899:3899`，只从宿主机本机发布端口。容器内部因网络转发需要监听 `0.0.0.0`，官方启动命令显式启用受一次性设置码保护的远程初始化。需要通过局域网、公网或反向代理访问时，推荐先设置 `NCMM_WEB_TOKEN`，再把端口绑定改为所需地址；不要把一次性设置码当作长期凭据。
 
 WebUI 支持：
 
@@ -119,7 +119,7 @@ docker compose run --rm ncmm --help
 ```bash
 docker run -d --name ncmm \
   --restart unless-stopped \
-  -p 3899:3899 \
+  -p 127.0.0.1:3899:3899 \
   -v ./data:/data \
   -e TZ=Asia/Shanghai \
   ghcr.io/3899/ncmm:latest

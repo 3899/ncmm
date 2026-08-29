@@ -15,11 +15,12 @@ import (
 )
 
 type webOptions struct {
-	listen     string
-	token      string
-	webConfig  string
-	scheduler  bool
-	background bool
+	listen           string
+	token            string
+	webConfig        string
+	scheduler        bool
+	background       bool
+	allowRemoteSetup bool
 }
 
 func newWebCommand(root *Root) *cobra.Command {
@@ -39,6 +40,7 @@ func newWebCommand(root *Root) *cobra.Command {
 	cmd.Flags().StringVar(&opts.webConfig, "web-config", "", "WebUI settings file path")
 	cmd.Flags().BoolVar(&opts.scheduler, "scheduler", false, "enable the built-in scheduler")
 	cmd.Flags().BoolVar(&opts.background, "background", false, "start the WebUI without a console window (Windows only)")
+	cmd.Flags().BoolVar(&opts.allowRemoteSetup, "allow-remote-setup", false, "allow initial setup while listening on a non-loopback address")
 	return cmd
 }
 
@@ -69,7 +71,7 @@ func runWeb(parent context.Context, root *Root, opts webOptions) error {
 	server, err := webui.New(ctx, webui.Options{
 		Listen: opts.listen, Token: opts.token, Home: home, ConfigPath: configPath,
 		WebConfig: opts.webConfig, Executable: executable, Version: root.AppVersion,
-		Scheduler: opts.scheduler, Output: root.cmd.Printf,
+		Scheduler: opts.scheduler, AllowRemoteSetup: opts.allowRemoteSetup, Output: root.cmd.Printf,
 	})
 	if err != nil {
 		return err

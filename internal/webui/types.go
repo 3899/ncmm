@@ -11,17 +11,18 @@ const (
 )
 
 type Options struct {
-	Listen     string
-	Token      string
-	Home       string
-	ConfigPath string
-	WebConfig  string
-	Executable string
-	Version    string
-	Commit     string
-	BuildTime  string
-	Scheduler  bool
-	Output     func(string, ...any)
+	Listen           string
+	Token            string
+	Home             string
+	ConfigPath       string
+	WebConfig        string
+	Executable       string
+	Version          string
+	Commit           string
+	BuildTime        string
+	Scheduler        bool
+	AllowRemoteSetup bool
+	Output           func(string, ...any)
 }
 
 type LogPolicy struct {

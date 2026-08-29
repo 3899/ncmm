@@ -7,7 +7,11 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN GOPROXY=https://goproxy.cn,direct go mod download
 
-COPY . .
+COPY main.go VERSION ./
+COPY api ./api
+COPY config ./config
+COPY internal ./internal
+COPY pkg ./pkg
 ARG VERSION
 RUN BUILD_VERSION="${VERSION:-$(cat VERSION)}" && \
     CGO_ENABLED=0 go build \
@@ -38,4 +42,4 @@ WORKDIR /data
 EXPOSE 3899
 
 ENTRYPOINT ["/entrypoint.sh"]
-CMD ["web", "--scheduler", "--listen", "0.0.0.0:3899"]
+CMD ["web", "--scheduler", "--listen", "0.0.0.0:3899", "--allow-remote-setup"]
