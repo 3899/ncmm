@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -224,7 +225,7 @@ func TestWebConfigStoreDefaultsAndUpdates(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := store.snapshot()
-	if cfg.Logs.RetentionDays != defaultRetentionDays || cfg.Timezone != defaultTimezone || cfg.Concurrency.MaxParallel != 1 {
+	if cfg.Version != defaultWebConfigVersion || cfg.Logs.RetentionDays != defaultRetentionDays || cfg.Timezone != defaultTimezone || cfg.Concurrency.MaxParallel != 1 {
 		t.Fatalf("unexpected defaults: %+v", cfg)
 	}
 	job, err := store.upsert(Schedule{Name: "Daily", Enabled: true, Cron: "30 8 * * *", Command: "task"})
@@ -243,6 +244,150 @@ func TestWebConfigStoreDefaultsAndUpdates(t *testing.T) {
 	}
 	if got := reloaded.snapshot(); got.Timezone != "UTC" || got.Logs.RetentionDays != 14 || got.Concurrency.MaxParallel != 2 || len(got.Jobs) != 1 {
 		t.Fatalf("unexpected reloaded config: %+v", got)
+	}
+}
+
+func TestWebConfigStoreMigratesV1SchedulerSafely(t *testing.T) {
+	legacy := []byte("version: 1\ntimezone: Asia/Shanghai\nlogs:\n  retentionDays: 7\n  maxTotalSizeMB: 256\nconcurrency:\n  maxParallel: 1\njobs:\n  - id: daily\n    name: Daily\n    enabled: true\n    cron: '30 8 * * *'\n    command: task\n")
+	tests := []struct {
+		name      string
+		migration *SchedulerMigration
+		want      bool
+	}{
+		{name: "safe disable", want: false},
+		{name: "explicitly disabled", migration: &SchedulerMigration{PreserveEnabled: false}, want: false},
+		{name: "legacy cli enabled", migration: &SchedulerMigration{PreserveEnabled: true}, want: true},
+		{name: "managed entrypoint enabled", migration: &SchedulerMigration{PreserveEnabled: true}, want: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "webui.yaml")
+			if err := os.WriteFile(path, legacy, 0600); err != nil {
+				t.Fatal(err)
+			}
+			store, err := newWebConfigStore(path, test.migration)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg := store.snapshot()
+			if cfg.Version != 2 || len(cfg.Jobs) != 1 || cfg.Jobs[0].Enabled != test.want {
+				t.Fatalf("unexpected migrated config: %+v", cfg)
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(data), "scheduler:") {
+				t.Fatalf("deprecated scheduler field was persisted:\n%s", data)
+			}
+			reloaded, err := newWebConfigStore(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := reloaded.snapshot(); got.Version != 2 || len(got.Jobs) != 1 || got.Jobs[0].Enabled != test.want {
+				t.Fatalf("migration was not persisted: %+v", got)
+			}
+		})
+	}
+}
+
+func TestWebConfigStoreMigratesDeprecatedV2SchedulerField(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "webui.yaml")
+	legacy := []byte("version: 2\nscheduler:\n  enabled: false\n  migrationSource: v1-safe-paused\ntimezone: Asia/Shanghai\nlogs:\n  retentionDays: 7\n  maxTotalSizeMB: 256\nconcurrency:\n  maxParallel: 1\njobs:\n  - id: daily\n    name: Daily\n    enabled: true\n    cron: '30 8 * * *'\n    command: task\n")
+	if err := os.WriteFile(path, legacy, 0600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := newWebConfigStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := store.snapshot()
+	if cfg.Version != 2 || len(cfg.Jobs) != 1 || cfg.Jobs[0].Enabled {
+		t.Fatalf("deprecated v2 config data changed: %+v", cfg)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "scheduler:") {
+		t.Fatalf("deprecated scheduler field was not removed:\n%s", data)
+	}
+}
+
+func TestWebConfigStorePreservesEnabledJobsWhenDeprecatedV2SchedulerWasEnabled(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "webui.yaml")
+	legacy := []byte("version: 2\nscheduler:\n  enabled: true\ntimezone: Asia/Shanghai\nlogs:\n  retentionDays: 7\n  maxTotalSizeMB: 256\nconcurrency:\n  maxParallel: 1\njobs:\n  - id: daily\n    name: Daily\n    enabled: true\n    cron: '30 8 * * *'\n    command: task\n")
+	if err := os.WriteFile(path, legacy, 0600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := newWebConfigStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg := store.snapshot(); len(cfg.Jobs) != 1 || !cfg.Jobs[0].Enabled {
+		t.Fatalf("enabled deprecated v2 config was not preserved: %+v", cfg)
+	}
+}
+
+func TestWebConfigStoreWriteFailureDoesNotChangeMemory(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "webui.yaml")
+	store, err := newWebConfigStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	existing, err := store.upsert(Schedule{Name: "Daily", Enabled: true, Cron: "30 8 * * *", Command: "task"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := store.snapshot()
+	wantFile, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeErr := errors.New("injected write failure")
+	store.write = func(string, []byte, os.FileMode) error { return writeErr }
+
+	operations := []struct {
+		name string
+		run  func() error
+	}{
+		{name: "settings", run: func() error {
+			_, err := store.updateSettings("UTC", LogPolicy{RetentionDays: 14, MaxTotalSizeMB: 128}, ConcurrencyPolicy{MaxParallel: 2})
+			return err
+		}},
+		{name: "update schedule", run: func() error {
+			existing.Name = "Changed"
+			_, err := store.upsert(existing)
+			return err
+		}},
+		{name: "insert schedule", run: func() error {
+			_, err := store.upsert(Schedule{Name: "Extra", Cron: "0 9 * * *", Command: "sign"})
+			return err
+		}},
+		{name: "delete schedule", run: func() error { return store.delete(existing.ID) }},
+	}
+	for _, operation := range operations {
+		t.Run(operation.name, func(t *testing.T) {
+			if err := operation.run(); !errors.Is(err, writeErr) {
+				t.Fatalf("operation error = %v; want injected failure", err)
+			}
+			if got := store.snapshot(); !reflect.DeepEqual(got, want) {
+				t.Fatalf("memory changed after failed write:\n got: %+v\nwant: %+v", got, want)
+			}
+			gotFile, err := os.ReadFile(path)
+			if err != nil || !reflect.DeepEqual(gotFile, wantFile) {
+				t.Fatalf("file changed after failed write: %q, %v", gotFile, err)
+			}
+		})
+	}
+
+	store.write = writeFileAtomic
+	updated, err := store.updateSettings("UTC", LogPolicy{RetentionDays: 14, MaxTotalSizeMB: 128}, ConcurrencyPolicy{MaxParallel: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Timezone != "UTC" || len(updated.Jobs) != 1 || updated.Jobs[0].Name != "Daily" {
+		t.Fatalf("successful update retained a failed mutation: %+v", updated)
 	}
 }
 
@@ -269,6 +414,30 @@ func TestConfigStorePreservesComments(t *testing.T) {
 	}
 	if _, err := os.Stat(path + ".bak"); err != nil {
 		t.Fatalf("backup missing: %v", err)
+	}
+}
+
+func TestConfigStoreReturnsRawInvalidYAMLForRepair(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "notify.yaml")
+	raw := "notify:\n  enabled: [invalid\n"
+	if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
+		t.Fatal(err)
+	}
+	store := newYAMLStore(path, validateNotifyFile)
+	document, err := store.get()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if document.Raw != raw || document.Revision == "" || document.ParseError == "" || document.Data != nil {
+		t.Fatalf("unexpected repair document: %+v", document)
+	}
+	fixed := "notify:\n  enabled: false\n"
+	repaired, err := store.saveRaw(document.Revision, fixed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repaired.ParseError != "" || repaired.Data == nil || repaired.Raw != fixed {
+		t.Fatalf("unexpected repaired document: %+v", repaired)
 	}
 }
 

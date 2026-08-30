@@ -48,7 +48,7 @@ type qrcodeLoginSession struct {
 	createdAt        time.Time
 	expiresAt        time.Time
 	finishedAt       time.Time
-	cancel           context.CancelFunc
+	process          *managedProcess
 	cancelRequested  bool
 	expectedRevision string
 }
@@ -64,15 +64,20 @@ type qrcodeLoginManager struct {
 	configPath string
 	home       string
 	command    qrcodeCommandFactory
+	supervisor *processSupervisor
 	commit     accountResultCommitter
 	sessions   map[string]*qrcodeLoginSession
 	activeID   string
 }
 
-func newQRCodeLoginManager(ctx context.Context, executable, configPath, home string, commit accountResultCommitter) *qrcodeLoginManager {
+func newQRCodeLoginManager(ctx context.Context, executable, configPath, home string, commit accountResultCommitter, supervisors ...*processSupervisor) *qrcodeLoginManager {
+	supervisor := newProcessSupervisor()
+	if len(supervisors) > 0 && supervisors[0] != nil {
+		supervisor = supervisors[0]
+	}
 	return &qrcodeLoginManager{
 		ctx: ctx, executable: executable, configPath: configPath, home: home,
-		command: exec.CommandContext, commit: commit, sessions: make(map[string]*qrcodeLoginSession),
+		command: exec.CommandContext, supervisor: supervisor, commit: commit, sessions: make(map[string]*qrcodeLoginSession),
 	}
 }
 
@@ -93,7 +98,6 @@ func (m *qrcodeLoginManager) start(filename string, main bool, expectedRevision 
 		return qrcodeLoginView{}, err
 	}
 
-	ctx, cancel := context.WithTimeout(m.ctx, qrcodeLoginTimeout+30*time.Second)
 	args := []string{
 		"--config", m.configPath,
 		"--home", m.home,
@@ -107,14 +111,13 @@ func (m *qrcodeLoginManager) start(filename string, main bool, expectedRevision 
 	if main {
 		args = append(args, "--main")
 	}
-	cmd := m.command(ctx, m.executable, args...)
-	cmd.Dir = m.home
-	cmd.Env = append(os.Environ(), "NCMM_WEB_CHILD=1")
-	var output bytes.Buffer
-	cmd.Stdout = &output
-	cmd.Stderr = &output
-	if err := cmd.Start(); err != nil {
-		cancel()
+	output := newTailBuffer(defaultProcessOutputLimit)
+	process, err := m.supervisor.Start(m.ctx, processSpec{
+		Kind: "qrcode-login", Command: m.executable, Args: args, Dir: m.home,
+		Env: append(os.Environ(), "NCMM_WEB_CHILD=1"), Stdout: output, Stderr: output,
+		Timeout: qrcodeLoginTimeout + 30*time.Second, CommandFactory: processCommandFactory(m.command),
+	})
+	if err != nil {
 		_ = os.RemoveAll(dir)
 		return qrcodeLoginView{}, fmt.Errorf("start qrcode login: %w", err)
 	}
@@ -123,20 +126,20 @@ func (m *qrcodeLoginManager) start(filename string, main bool, expectedRevision 
 	session := &qrcodeLoginSession{
 		id: uuid.NewString(), status: "starting", message: "正在生成二维码",
 		filename: filename, main: main, dir: dir, createdAt: now,
-		expiresAt: now.Add(qrcodeLoginTimeout), cancel: cancel,
+		expiresAt: now.Add(qrcodeLoginTimeout), process: process,
 		expectedRevision: expectedRevision,
 	}
 	m.sessions[session.id] = session
 	m.activeID = session.id
 	m.wg.Add(1)
-	go m.watch(session, ctx, cmd, &output)
+	go m.watch(session, process, output)
 	return qrcodeLoginViewLocked(session), nil
 }
 
-func (m *qrcodeLoginManager) watch(session *qrcodeLoginSession, ctx context.Context, cmd *exec.Cmd, output *bytes.Buffer) {
+func (m *qrcodeLoginManager) watch(session *qrcodeLoginSession, process *managedProcess, output *tailBuffer) {
 	defer m.wg.Done()
 	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
+	go func() { done <- process.Wait() }()
 	ticker := time.NewTicker(qrcodeImagePollDelay)
 	defer ticker.Stop()
 
@@ -144,7 +147,7 @@ func (m *qrcodeLoginManager) watch(session *qrcodeLoginSession, ctx context.Cont
 		select {
 		case err := <-done:
 			m.captureImage(session)
-			m.finish(session, ctx, strings.TrimSpace(output.String()), err)
+			m.finish(session, process.ContextError(), strings.TrimSpace(string(output.Bytes())), err)
 			_ = os.RemoveAll(session.dir)
 			return
 		case <-ticker.C:
@@ -170,8 +173,8 @@ func (m *qrcodeLoginManager) captureImage(session *qrcodeLoginSession) {
 	}
 }
 
-func (m *qrcodeLoginManager) finish(session *qrcodeLoginSession, ctx context.Context, output string, commandErr error) {
-	if commandErr == nil && ctx.Err() == nil {
+func (m *qrcodeLoginManager) finish(session *qrcodeLoginSession, contextErr error, output string, commandErr error) {
+	if commandErr == nil && contextErr == nil {
 		result, err := loginresult.Parse(output)
 		if err == nil && result.Main != session.main {
 			err = fmt.Errorf("login process returned an unexpected account type")
@@ -197,10 +200,10 @@ func (m *qrcodeLoginManager) finish(session *qrcodeLoginSession, ctx context.Con
 		m.activeID = ""
 	}
 	switch {
-	case session.cancelRequested || errors.Is(ctx.Err(), context.Canceled):
+	case session.cancelRequested || errors.Is(contextErr, context.Canceled):
 		session.status = "canceled"
 		session.message = "二维码登录已取消"
-	case errors.Is(ctx.Err(), context.DeadlineExceeded) || strings.Contains(output, "context deadline exceeded"):
+	case errors.Is(contextErr, context.DeadlineExceeded) || strings.Contains(output, "context deadline exceeded"):
 		session.status = "expired"
 		session.message = "二维码登录已超时，请重新生成"
 	case commandErr != nil:
@@ -210,7 +213,6 @@ func (m *qrcodeLoginManager) finish(session *qrcodeLoginSession, ctx context.Con
 		session.status = "succeeded"
 		session.message = fmt.Sprintf("登录成功，Cookie 已保存为 %s", session.filename)
 	}
-	session.cancel()
 }
 
 func (m *qrcodeLoginManager) get(id string) (qrcodeLoginView, bool) {
@@ -261,25 +263,25 @@ func (m *qrcodeLoginManager) cancelSession(id string) (qrcodeLoginView, bool) {
 	session.cancelRequested = true
 	session.status = "cancelling"
 	session.message = "正在取消二维码登录"
-	cancel := session.cancel
+	process := session.process
 	view := qrcodeLoginViewLocked(session)
 	m.mu.Unlock()
-	cancel()
+	process.Stop()
 	return view, true
 }
 
 func (m *qrcodeLoginManager) close() {
 	m.mu.Lock()
-	cancels := make([]context.CancelFunc, 0, len(m.sessions))
+	processes := make([]*managedProcess, 0, len(m.sessions))
 	for _, session := range m.sessions {
 		if !qrcodeLoginTerminal(session.status) {
 			session.cancelRequested = true
-			cancels = append(cancels, session.cancel)
+			processes = append(processes, session.process)
 		}
 	}
 	m.mu.Unlock()
-	for _, cancel := range cancels {
-		cancel()
+	for _, process := range processes {
+		process.Stop()
 	}
 	m.wg.Wait()
 }

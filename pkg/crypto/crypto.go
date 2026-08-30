@@ -265,7 +265,6 @@ func WeApiEncrypt(object interface{}) (map[string]string, error) {
 // WeApiDecrypt 解密 TODO: 由于拿不到私钥则不能解密.
 func WeApiDecrypt(params, encSecKey string) (map[string]string, error) {
 	panic("unrealized")
-	return nil, nil
 }
 
 // LinuxApiEncrypt 加密.

@@ -1,0 +1,58 @@
+name: Quality Checks
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Check WebUI JavaScript syntax
+        run: node --check internal/webui/static/app.js
+
+      - name: Install WebUI browser test runtime
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./...
+
+      - name: Test WebUI in Chromium
+        run: |
+          go build -ldflags "-X main.Version=1.2.0" -o "$RUNNER_TEMP/ncmm" .
+          WEBUI_HOME="$RUNNER_TEMP/webui-smoke"
+          mkdir -p "$WEBUI_HOME"
+          "$RUNNER_TEMP/ncmm" --home "$WEBUI_HOME" web --listen 127.0.0.1:39133 >"$RUNNER_TEMP/webui.log" 2>&1 &
+          WEBUI_PID=$!
+          trap 'kill "$WEBUI_PID" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 50); do
+            if curl --fail --silent http://127.0.0.1:39133/api/v1/instance >/dev/null; then
+              break
+            fi
+            sleep 0.2
+          done
+          curl --fail --silent http://127.0.0.1:39133/api/v1/instance >/dev/null
+          npm run test:webui -- http://127.0.0.1:39133 "$WEBUI_HOME"
+
+      - name: Race test high-risk services
+        run: go test -race ./internal/webui ./internal/ncmm

@@ -18,14 +18,18 @@ WebUI 默认不随本地单文件命令启动，需要显式运行：
 
 ```bash
 ncmm web
-ncmm web --scheduler
-ncmm web --listen 0.0.0.0:3899 --scheduler
+ncmm web --listen 0.0.0.0:3899
 ```
 
 - `--listen`：监听地址，默认 `127.0.0.1:3899`。
-- `--scheduler`：启用内置定时任务调度器。
 - `--web-config`：指定 WebUI 设置文件，默认位于 `--home` 下的 `webui.yaml`。
 - `--secure-cookie`：为 Session Cookie 增加 `Secure`，通过 HTTPS 反向代理访问时启用；也可设置 `NCMM_WEB_SECURE_COOKIE=true`。
+
+`ncmm web` 是完整管理服务，默认包含 WebUI 和内置调度器。调度器只注册 `enabled=true` 的单条规则，各任务按自己的 cron 触发；启动或重载调度器不会立即批量执行任务。禁用规则不会停止已经运行的实例，手动“立即运行”仍然可用。
+
+新安装的 `webui.yaml` 使用 schema v2，不包含 scheduler 总开关且不会自动创建任务。旧 v1 配置首次迁移时，如果旧启动命令没有明确启用调度器，则逐条禁用已有规则；旧命令显式使用 `--scheduler` 时保留原规则启用状态。隐藏的 `--scheduler=<bool>` 仅作为 v1.2.0 一次性迁移提示，迁移完成后不再影响 scheduler。
+
+青龙、系统 cron 和其他面板属于外部调度模式，应只定期执行 `ncmm task`，不要与常驻的 `ncmm web` 自动调度共享同一组任务。
 
 WebUI 的运行设置中可将最大并发调整为 1–8，默认值为 1。提高并发后，不同显式账号可并行执行；同一账号以及共享 Badger 数据库的命令仍会排队。定时规则的 `skip` 表示同一规则已有活动运行时记录一次 skipped，`allow` 表示允许重复触发进入队列，不表示绕过资源锁强制并行。
 

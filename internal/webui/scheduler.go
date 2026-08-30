@@ -20,23 +20,21 @@ var allowedCommands = map[string]bool{
 }
 
 type scheduler struct {
-	mu      sync.RWMutex
-	enabled bool
-	active  bool
-	ctx     context.Context
-	store   *webConfigStore
-	runner  *runManager
-	cron    *cron.Cron
-	parser  cron.Parser
-	jobs    map[string]Schedule
+	mu     sync.RWMutex
+	active bool
+	ctx    context.Context
+	store  *webConfigStore
+	runner *runManager
+	cron   *cron.Cron
+	parser cron.Parser
+	jobs   map[string]Schedule
 }
 
-func newScheduler(ctx context.Context, enabled bool, store *webConfigStore, runner *runManager) (*scheduler, error) {
+func newScheduler(ctx context.Context, store *webConfigStore, runner *runManager) (*scheduler, error) {
 	s := &scheduler{
-		enabled: enabled,
-		ctx:     ctx,
-		store:   store,
-		runner:  runner,
+		ctx:    ctx,
+		store:  store,
+		runner: runner,
 		parser: cron.NewParser(
 			cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor,
 		),
@@ -72,14 +70,14 @@ func (s *scheduler) reload() error {
 			return fmt.Errorf("schedule %q: %w", job.Name, err)
 		}
 		s.jobs[job.ID] = job
-		if s.enabled && job.Enabled {
+		if job.Enabled {
 			jobCopy := job
 			if _, err := s.cron.AddFunc(job.Cron, func() { _, _ = s.runner.start(s.ctx, jobCopy) }); err != nil {
 				return err
 			}
 		}
 	}
-	if s.enabled && s.active {
+	if s.active {
 		s.cron.Start()
 	}
 	return nil
@@ -92,7 +90,7 @@ func (s *scheduler) start() {
 		return
 	}
 	s.active = true
-	if s.enabled && s.cron != nil {
+	if s.cron != nil {
 		s.cron.Start()
 	}
 }
@@ -123,7 +121,11 @@ func (s *scheduler) list() []ScheduleView {
 	for _, job := range s.jobs {
 		running, queued := s.runner.jobActivity(job.ID)
 		view := ScheduleView{Schedule: job, Running: running, Queued: queued}
-		if schedule, err := s.parser.Parse(job.Cron); err == nil {
+		if job.Enabled {
+			schedule, err := s.parser.Parse(job.Cron)
+			if err != nil {
+				continue
+			}
 			next := now
 			for range 5 {
 				next = schedule.Next(next)
@@ -205,8 +207,4 @@ func (s *scheduler) isActive() bool {
 
 func (s *scheduler) timezone() string {
 	return s.store.snapshot().Timezone
-}
-
-func (s *scheduler) isEnabled() bool {
-	return s.enabled
 }

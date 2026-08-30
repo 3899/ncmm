@@ -7,21 +7,25 @@ const (
 	defaultRetentionDays    = 7
 	defaultMaxTotalSizeMB   = 256
 	defaultTimezone         = "Asia/Shanghai"
-	defaultWebConfigVersion = 1
+	defaultWebConfigVersion = 2
 )
 
 type Options struct {
-	Listen       string
-	Home         string
-	ConfigPath   string
-	WebConfig    string
-	Executable   string
-	Version      string
-	Commit       string
-	BuildTime    string
-	Scheduler    bool
-	SecureCookie bool
-	Output       func(string, ...any)
+	Listen             string
+	Home               string
+	ConfigPath         string
+	WebConfig          string
+	Executable         string
+	Version            string
+	Commit             string
+	BuildTime          string
+	SchedulerMigration *SchedulerMigration
+	SecureCookie       bool
+	Output             func(string, ...any)
+}
+
+type SchedulerMigration struct {
+	PreserveEnabled bool
 }
 
 type LogPolicy struct {

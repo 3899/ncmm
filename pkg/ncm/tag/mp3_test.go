@@ -6,6 +6,7 @@ package tag
 import (
 	"io"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/bogem/id3v2/v2"
@@ -27,7 +28,7 @@ func TestMp3_Save(t *testing.T) {
 			name: "EncodingUTF8",
 			args: args{
 				path:     "../testdata/not_supported_by_encoding.mp3",
-				dest:     "../testdata/not_supported_by_encoding_utf8.mp3",
+				dest:     "not_supported_by_encoding_utf8.mp3",
 				encoding: id3v2.EncodingUTF8,
 			},
 			wantErr: false,
@@ -36,7 +37,7 @@ func TestMp3_Save(t *testing.T) {
 			name: "EncodingISO",
 			args: args{
 				path:     "../testdata/not_supported_by_encoding.mp3",
-				dest:     "../testdata/not_supported_by_encoding_iso.mp3",
+				dest:     "not_supported_by_encoding_iso.mp3",
 				encoding: id3v2.EncodingISO,
 			},
 			wantErr: true,
@@ -44,6 +45,7 @@ func TestMp3_Save(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			destPath := filepath.Join(t.TempDir(), tt.args.dest)
 			src, err := os.Open(tt.args.path)
 			if err != nil {
 				t.Fatalf("os.Open() error = %v", err)
@@ -53,18 +55,17 @@ func TestMp3_Save(t *testing.T) {
 				src.Close()
 			})
 
-			dest, err := os.Create(tt.args.dest)
+			dest, err := os.Create(destPath)
 			assert.NoError(t, err)
-			t.Cleanup(func() {
-				dest.Close()
-				os.Remove(tt.args.dest)
-			})
 
 			if _, err = io.Copy(dest, src); err != nil {
 				t.Fatalf("io.Copy() error = %v", err)
 			}
+			if err := dest.Close(); err != nil {
+				t.Fatalf("dest.Close() error = %v", err)
+			}
 
-			m, err := NewMp3(tt.args.dest, tt.args.encoding)
+			m, err := NewMp3(destPath, tt.args.encoding)
 			if err != nil {
 				t.Fatalf("NewMp3() error = %v", err)
 				return

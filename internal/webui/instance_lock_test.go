@@ -70,7 +70,7 @@ func TestServerStartsSchedulerOnlyAfterListenerIsBound(t *testing.T) {
 	}
 	defer occupied.Close()
 
-	server := newLifecycleTestServer(t, context.Background(), home, occupied.Addr().String(), true)
+	server := newLifecycleTestServer(t, context.Background(), home, occupied.Addr().String())
 	if server.scheduler.isActive() {
 		t.Fatal("scheduler active before Server.Run")
 	}
@@ -87,7 +87,7 @@ func TestServerRunRejectsSecondInstanceForSameHome(t *testing.T) {
 	home := t.TempDir()
 	ctx, cancel := context.WithCancel(context.Background())
 	firstListen := availableListen(t)
-	first := newLifecycleTestServer(t, ctx, home, firstListen, true)
+	first := newLifecycleTestServer(t, ctx, home, firstListen)
 	firstResult := make(chan error, 1)
 	go func() { firstResult <- first.Run(ctx) }()
 
@@ -101,7 +101,7 @@ func TestServerRunRejectsSecondInstanceForSameHome(t *testing.T) {
 		t.Fatalf("scheduler was not activated after listener bind; metadata=%+v", metadata)
 	}
 
-	second := newLifecycleTestServer(t, context.Background(), home, availableListen(t), true)
+	second := newLifecycleTestServer(t, context.Background(), home, availableListen(t))
 	err := second.Run(context.Background())
 	if !errors.Is(err, errWebUIAlreadyRunning) {
 		cancel()
@@ -138,7 +138,7 @@ func TestServerRunRejectsSecondInstanceForSameHome(t *testing.T) {
 	}
 }
 
-func newLifecycleTestServer(t *testing.T, ctx context.Context, home, listen string, schedulerEnabled bool) *Server {
+func newLifecycleTestServer(t *testing.T, ctx context.Context, home, listen string) *Server {
 	t.Helper()
 	configPath := filepath.Join(home, "config.yaml")
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
@@ -151,7 +151,7 @@ func newLifecycleTestServer(t *testing.T, ctx context.Context, home, listen stri
 	server, err := New(ctx, Options{
 		Listen: listen, Home: home,
 		ConfigPath: configPath, WebConfig: filepath.Join(home, "webui.yaml"),
-		Executable: os.Args[0], Version: "1.2.0", Scheduler: schedulerEnabled,
+		Executable: os.Args[0], Version: "1.2.0",
 	})
 	if err != nil {
 		t.Fatal(err)

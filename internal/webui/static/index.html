@@ -156,6 +156,7 @@
               <button id="config-save" class="button primary"><svg><use href="#i-save"/></svg>保存配置</button>
             </div>
           </div>
+          <div id="config-parse-error" class="notice warning hidden" role="alert"></div>
           <div id="config-visual" class="config-layout">
             <nav id="config-sections" class="section-tabs" aria-label="配置分组"></nav>
             <div id="config-form" class="config-form"></div>
@@ -197,8 +198,10 @@
         </section>
 
         <section id="page-schedules" class="page">
-          <div id="scheduler-banner" class="notice warning hidden">调度器未启用。规则可以编辑，但不会自动执行。</div>
-          <div class="section-head"><div><p class="eyebrow">SCHEDULER</p><h3>定时任务</h3></div><button id="schedule-add" class="button primary"><svg><use href="#i-plus"/></svg>新建任务</button></div>
+          <div class="section-head schedule-head">
+            <div><p class="eyebrow">SCHEDULER</p><h3>定时任务</h3></div>
+            <button id="schedule-add" class="button primary"><svg><use href="#i-plus"/></svg>新建任务</button>
+          </div>
           <div class="table-wrap"><table><thead><tr><th>任务</th><th>Cron</th><th>命令</th><th>下次运行</th><th>状态</th><th class="actions-col">操作</th></tr></thead><tbody id="schedule-table"></tbody></table></div>
         </section>
 

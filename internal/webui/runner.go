@@ -28,8 +28,7 @@ var databaseCommands = map[string]bool{
 }
 
 type runningProcess struct {
-	cancel    context.CancelFunc
-	cmd       *exec.Cmd
+	process   *managedProcess
 	jobID     string
 	resources []string
 }
@@ -55,11 +54,12 @@ type runManager struct {
 	jobRuns     map[string]map[string]struct{}
 	resources   map[string]string
 	maxParallel int
+	supervisor  *processSupervisor
 	command     runCommandFactory
 	policy      LogPolicy
 }
 
-func newRunManager(executable, configPath, home string, policy LogPolicy, concurrency ConcurrencyPolicy) (*runManager, error) {
+func newRunManager(executable, configPath, home string, policy LogPolicy, concurrency ConcurrencyPolicy, supervisors ...*processSupervisor) (*runManager, error) {
 	logDir := filepath.Join(home, "log", "runs")
 	if err := os.MkdirAll(logDir, 0755); err != nil {
 		return nil, fmt.Errorf("create run log directory: %w", err)
@@ -67,6 +67,10 @@ func newRunManager(executable, configPath, home string, policy LogPolicy, concur
 	maxParallel := concurrency.MaxParallel
 	if maxParallel < 1 || maxParallel > 8 {
 		maxParallel = 1
+	}
+	supervisor := newProcessSupervisor()
+	if len(supervisors) > 0 && supervisors[0] != nil {
+		supervisor = supervisors[0]
 	}
 	m := &runManager{
 		executable:  executable,
@@ -79,6 +83,7 @@ func newRunManager(executable, configPath, home string, policy LogPolicy, concur
 		jobRuns:     make(map[string]map[string]struct{}),
 		resources:   make(map[string]string),
 		maxParallel: maxParallel,
+		supervisor:  supervisor,
 		command:     exec.CommandContext,
 		policy:      policy,
 	}
@@ -183,30 +188,26 @@ func (m *runManager) launchLocked(ctx context.Context, job Schedule, record RunR
 	}
 	args := []string{"--config", m.configPath, "--home", m.home, job.Command}
 	args = append(args, job.Args...)
-	runCtx, cancel := context.WithCancel(ctx)
-	cmd := m.command(runCtx, m.executable, args...)
-	cmd.Dir = m.home
-	cmd.Env = append(os.Environ(), "NCMM_WEB_CHILD=1")
-	cmd.Stdout = logFile
-	cmd.Stderr = logFile
 	record.Status = "running"
 	record.StartedAt = time.Now()
+	process, err := m.supervisor.Start(ctx, processSpec{
+		Kind: "task", Command: m.executable, Args: args, Dir: m.home,
+		Env: append(os.Environ(), "NCMM_WEB_CHILD=1"), Stdout: logFile, Stderr: logFile,
+		CommandFactory: processCommandFactory(m.command),
+	})
+	if err != nil {
+		_ = logFile.Close()
+		return m.failBeforeStartLocked(job.ID, record, err), err
+	}
 	m.runs[record.ID] = record
 	m.running[record.ID] = &runningProcess{
-		cancel: cancel, cmd: cmd, jobID: job.ID, resources: append([]string(nil), resources...),
+		process: process, jobID: job.ID, resources: append([]string(nil), resources...),
 	}
 	for _, resource := range resources {
 		m.resources[resource] = record.ID
 	}
 	m.writeMetaLocked(record)
-	if err := cmd.Start(); err != nil {
-		cancel()
-		_ = logFile.Close()
-		delete(m.running, record.ID)
-		m.releaseResourcesLocked(record.ID, resources)
-		return m.failBeforeStartLocked(job.ID, record, err), err
-	}
-	go m.wait(record.ID, job.ID, cmd, logFile)
+	go m.wait(record.ID, job.ID, process, logFile)
 	return record, nil
 }
 
@@ -224,8 +225,8 @@ func (m *runManager) failBeforeStartLocked(jobID string, record RunRecord, err e
 	return record
 }
 
-func (m *runManager) wait(runID, jobID string, cmd *exec.Cmd, logFile *os.File) {
-	err := cmd.Wait()
+func (m *runManager) wait(runID, jobID string, process *managedProcess, logFile *os.File) {
+	err := process.Wait()
 	_ = logFile.Close()
 
 	m.mu.Lock()
@@ -233,7 +234,16 @@ func (m *runManager) wait(runID, jobID string, cmd *exec.Cmd, logFile *os.File) 
 	finished := time.Now()
 	record.FinishedAt = &finished
 	exitCode := 0
-	if err != nil {
+	switch {
+	case process.StopRequested() || errors.Is(process.ContextError(), context.Canceled):
+		record.Status = "stopped"
+		record.Error = "任务已停止"
+		exitCode = -1
+	case errors.Is(process.ContextError(), context.DeadlineExceeded):
+		record.Status = "timed_out"
+		record.Error = context.DeadlineExceeded.Error()
+		exitCode = -1
+	case err != nil:
 		record.Status = "failed"
 		record.Error = err.Error()
 		var exitErr *exec.ExitError
@@ -242,19 +252,15 @@ func (m *runManager) wait(runID, jobID string, cmd *exec.Cmd, logFile *os.File) 
 		} else {
 			exitCode = -1
 		}
-	} else {
+	default:
 		record.Status = "success"
-	}
-	if cmd.ProcessState != nil && cmd.ProcessState.ExitCode() == -1 {
-		record.Status = "stopped"
-		exitCode = -1
 	}
 	record.ExitCode = &exitCode
 	m.runs[runID] = record
-	process := m.running[runID]
+	running := m.running[runID]
 	delete(m.running, runID)
-	if process != nil {
-		m.releaseResourcesLocked(runID, process.resources)
+	if running != nil {
+		m.releaseResourcesLocked(runID, running.resources)
 	}
 	m.removeJobRunLocked(jobID, runID)
 	m.writeMetaLocked(record)
@@ -267,9 +273,9 @@ func (m *runManager) stop(id string) error {
 	m.mu.Lock()
 	process := m.running[id]
 	if process != nil {
-		cancel := process.cancel
+		managed := process.process
 		m.mu.Unlock()
-		cancel()
+		managed.Stop()
 		return nil
 	}
 	pending := m.queued[id]

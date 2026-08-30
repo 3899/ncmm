@@ -26,6 +26,10 @@
     qrcodePoller: null,
     qrcodeImageURL: '',
     poller: null,
+    pollInFlight: false,
+    pollGeneration: 0,
+    lastOnlineAt: null,
+    consecutivePollFailures: 0,
   };
 
   const pageTitles = { dashboard: '概览', config: '配置', accounts: '账号', schedules: '定时任务', runs: '运行记录', system: '系统' };
@@ -177,13 +181,22 @@
   }
 
   async function enterApp(auth) {
-    state.authenticated = true;
     state.csrf = auth.csrfToken || state.csrf;
     state.auth = { ...(state.auth || {}), ...auth };
-    await loadAll();
+    try {
+      await loadCoreState();
+    } catch (error) {
+      state.authenticated = false;
+      showLoginView(state.auth);
+      showAuthError(`控制台初始化失败：${error.message}`);
+      return;
+    }
+    state.authenticated = true;
     $('#login-view').classList.add('hidden');
     $('#app-shell').classList.remove('hidden');
+    setServiceStatus('online');
     startPolling();
+    void loadOptionalState();
   }
 
   function clearAuthError() {
@@ -261,6 +274,8 @@
     clearInterval(state.poller);
     clearInterval(state.qrcodePoller);
     state.poller = null;
+    state.pollGeneration += 1;
+    state.pollInFlight = false;
     state.qrcodePoller = null;
     clearQRCodeImage();
     $('#app-shell').classList.add('hidden');
@@ -273,31 +288,46 @@
     clearSession(true);
   }
 
-  async function loadAll() {
-    const [status, config, notify, schedules, runs, settings, auth, authSettings, authSessions, update, qrcodeSession] = await Promise.all([
-      api('/api/v1/status'), api('/api/v1/config'), api('/api/v1/notify'), api('/api/v1/schedules'), api('/api/v1/runs'), api('/api/v1/settings'),
-      publicApi('/api/v1/auth/status'), api('/api/v1/auth/settings'), api('/api/v1/auth/sessions'), api('/api/v1/update'), api('/api/v1/accounts/qrcode'),
+  async function loadCoreState() {
+    const [status, config, schedules, runs, settings, auth] = await Promise.all([
+      api('/api/v1/status'), api('/api/v1/config'), api('/api/v1/schedules'), api('/api/v1/runs'), api('/api/v1/settings'),
+      publicApi('/api/v1/auth/status'),
     ]);
     state.status = status;
     state.config = config;
-    state.notify = notify;
     state.schedules = schedules;
     state.runs = runs;
     state.settings = settings;
     state.auth = auth;
-    state.authSettings = authSettings;
-    state.authSessions = authSessions;
     state.csrf = auth.csrfToken || state.csrf;
-    state.update = update;
-    state.qrcodeSession = qrcodeSession;
+    state.configDirty = false;
+    state.configDirtyMode = '';
+    renderAll();
+    setAccountMethod(state.accountMethod);
+  }
+
+  async function loadOptionalState() {
+    const requests = [
+      ['通知配置', '/api/v1/notify', value => { state.notify = value; }],
+      ['认证策略', '/api/v1/auth/settings', value => { state.authSettings = value; }],
+      ['登录会话', '/api/v1/auth/sessions', value => { state.authSessions = value; }],
+      ['版本信息', '/api/v1/update', value => { state.update = value; }],
+      ['二维码状态', '/api/v1/accounts/qrcode', value => { state.qrcodeSession = value; }],
+    ];
+    const results = await Promise.allSettled(requests.map(([, path]) => api(path)));
+    if (!state.authenticated) return;
+    results.forEach((result, index) => {
+      const [label, , apply] = requests[index];
+      if (result.status === 'fulfilled') apply(result.value);
+      else toast(`${label}加载失败：${result.reason.message}`, true);
+    });
+    const qrcodeSession = state.qrcodeSession;
     if (qrcodeSession) {
       state.accountMain = !!qrcodeSession.main;
       state.accountMethod = 'qrcode';
       $('#account-filename').value = qrcodeSession.filename;
       $$('.account-type button').forEach(button => button.classList.toggle('active', (button.dataset.main === 'true') === state.accountMain));
     }
-    state.configDirty = false;
-    state.configDirtyMode = '';
     renderAll();
     setAccountMethod(state.accountMethod);
     if (qrcodeSessionActive()) startQRCodePolling();
@@ -416,13 +446,12 @@
   function renderStatus() {
     const status = state.status || {};
     $('#version-label').textContent = status.version ? String(status.version).split('\n')[0] : 'NCMM';
-    $('#stat-scheduler').textContent = status.schedulerEnabled ? '运行中' : '未启用';
+    $('#stat-scheduler').textContent = status.schedulerActive ? '运行中' : '启动中';
     $('#stat-timezone').textContent = status.timezone || '--';
     $('#stat-schedules').textContent = status.schedules ?? '--';
     $('#stat-running').textContent = status.running ?? '--';
     $('#stat-storage').textContent = formatBytes(status.logs?.sizeBytes || 0);
     $('#stat-files').textContent = `${status.logs?.files || 0} 个文件`;
-    $('#scheduler-banner').classList.toggle('hidden', !!status.schedulerEnabled);
   }
 
   function renderDashboard() {
@@ -436,16 +465,32 @@
 
   function renderConfig() {
     const document = activeDocument();
-    if (!document?.data) return;
+    const parseError = $('#config-parse-error');
+    $('#config-dirty').classList.toggle('hidden', !state.configDirty);
+    $$('#config-target button').forEach(button => button.classList.toggle('active', button.dataset.target === state.configTarget));
+    if (!document) {
+      parseError.textContent = '该配置暂时无法加载，请稍后重试。';
+      parseError.classList.remove('hidden');
+      return;
+    }
+    $('#yaml-editor').value = document.raw || '';
+    parseError.textContent = document.parseError ? `YAML 解析失败，可在源码模式修复后保存：${document.parseError}` : '';
+    parseError.classList.toggle('hidden', !document.parseError);
+    if (document.parseError) state.configMode = 'yaml';
+    $$('#config-mode button').forEach(button => button.classList.toggle('active', button.dataset.mode === state.configMode));
+    $('#config-visual').classList.toggle('hidden', state.configMode !== 'visual');
+    $('#config-yaml').classList.toggle('hidden', state.configMode !== 'yaml');
+    if (!document.data) {
+      $('#config-sections').innerHTML = '';
+      $('#config-form').innerHTML = '';
+      return;
+    }
     const root = document.data;
     const keys = orderedEntries(root, []).map(([key]) => key);
     if (!state.configSection || !keys.includes(state.configSection)) state.configSection = keys[0] || '';
     $('#config-sections').innerHTML = keys.map(key => `<button data-section="${escapeHTML(key)}" class="${key === state.configSection ? 'active' : ''}">${escapeHTML(sectionLabels[key] || key)}</button>`).join('');
     const value = root[state.configSection];
     $('#config-form').innerHTML = renderConfigSection(state.configSection, value);
-    $('#yaml-editor').value = document.raw || '';
-    $('#config-dirty').classList.toggle('hidden', !state.configDirty);
-    $$('#config-target button').forEach(button => button.classList.toggle('active', button.dataset.target === state.configTarget));
   }
 
   function renderConfigSection(key, value) {
@@ -644,7 +689,7 @@
     $('#retention-days').value = state.settings.logs.retentionDays;
     $('#max-log-size').value = state.settings.logs.maxTotalSizeMB;
     $('#timezone-input').value = state.settings.timezone;
-	$('#max-parallel').value = state.settings.concurrency?.maxParallel || 1;
+    $('#max-parallel').value = state.settings.concurrency?.maxParallel || 1;
     $('#logs-summary').textContent = `${state.settings.stats.files} 个文件 · ${formatBytes(state.settings.stats.sizeBytes)}`;
   }
 
@@ -690,19 +735,50 @@
     notes.classList.toggle('hidden', !update.release_notes);
   }
 
-  async function refreshRunsAndStatus() {
-    if (!state.authenticated) return;
+  function setServiceStatus(status) {
+    const node = $('#service-status');
+    const labels = { online: '在线', reconnecting: '重连中', offline: '离线' };
+    node.dataset.state = status;
+    node.lastChild.textContent = labels[status] || status;
+    if (status === 'online') state.lastOnlineAt = new Date();
+    node.title = state.lastOnlineAt ? `最近在线：${state.lastOnlineAt.toLocaleTimeString('zh-CN', { hour12: false })}` : '';
+  }
+
+  async function refreshOperationalState() {
+    if (!state.authenticated || state.pollInFlight) return;
+    state.pollInFlight = true;
+    const generation = ++state.pollGeneration;
     try {
-      const [runs, status] = await Promise.all([api('/api/v1/runs'), api('/api/v1/status')]);
-      state.runs = runs; state.status = status;
-      renderRuns(); renderStatus(); renderDashboard();
+      const [runs, status, schedules] = await Promise.all([
+        api('/api/v1/runs'), api('/api/v1/status'), api('/api/v1/schedules'),
+      ]);
+      if (!state.authenticated || generation !== state.pollGeneration) return;
+      state.runs = runs; state.status = status; state.schedules = schedules;
+      renderRuns(); renderStatus(); renderSchedules(); renderDashboard();
       if ($('#log-dialog').open && $('#log-dialog').dataset.runId) await refreshOpenLog();
-    } catch { /* the auth handler owns session failures */ }
+      state.consecutivePollFailures = 0;
+      setServiceStatus('online');
+    } catch {
+      if (state.authenticated && generation === state.pollGeneration) {
+        state.consecutivePollFailures += 1;
+        setServiceStatus(state.consecutivePollFailures >= 3 ? 'offline' : 'reconnecting');
+      }
+    } finally {
+      if (generation === state.pollGeneration) state.pollInFlight = false;
+      scheduleNextPoll();
+    }
+  }
+
+  function scheduleNextPoll() {
+    clearTimeout(state.poller);
+    if (!state.authenticated) return;
+    state.poller = setTimeout(refreshOperationalState, document.hidden ? 30000 : 5000);
   }
 
   function startPolling() {
-    clearInterval(state.poller);
-    state.poller = setInterval(refreshRunsAndStatus, 5000);
+    state.pollGeneration += 1;
+    state.pollInFlight = false;
+    scheduleNextPoll();
   }
 
   function navigate(page) {
@@ -753,6 +829,12 @@
   }
 
   function bindEvents() {
+    document.addEventListener('visibilitychange', () => {
+      if (!state.authenticated) return;
+      clearTimeout(state.poller);
+      if (document.hidden) scheduleNextPoll();
+      else void refreshOperationalState();
+    });
     $('#auth-form').addEventListener('submit', async event => {
       event.preventDefault();
       clearAuthError();
@@ -953,7 +1035,7 @@
       const job = state.schedules.find(x => x.id === button.dataset.id); if (!job) return;
       try {
         if (button.dataset.action === 'edit') openScheduleDialog(job);
-        if (button.dataset.action === 'run') { await api(`/api/v1/schedules/${encodeURIComponent(job.id)}/run`, { method: 'POST' }); toast('任务已启动'); navigate('runs'); await refreshRunsAndStatus(); }
+        if (button.dataset.action === 'run') { await api(`/api/v1/schedules/${encodeURIComponent(job.id)}/run`, { method: 'POST' }); toast('任务已启动'); navigate('runs'); await refreshOperationalState(); }
         if (button.dataset.action === 'delete' && confirm(`删除定时任务“${job.name}”？`)) { await api(`/api/v1/schedules/${encodeURIComponent(job.id)}`, { method: 'DELETE' }); await refreshSchedules(); toast('定时任务已删除'); }
       } catch (error) { toast(error.message, true); }
     });
@@ -1039,7 +1121,7 @@
       try {
         state.settings = await api('/api/v1/settings', { method: 'PUT', body: {
           timezone: $('#timezone-input').value.trim(), logs: { retentionDays: Number($('#retention-days').value), maxTotalSizeMB: Number($('#max-log-size').value) },
-		  concurrency: { maxParallel: Number($('#max-parallel').value) },
+          concurrency: { maxParallel: Number($('#max-parallel').value) },
         }});
         renderSettings(); await refreshSchedules(); toast('日志保留设置已保存');
       } catch (error) { toast(error.message, true); }

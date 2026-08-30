@@ -3,10 +3,10 @@ package webui
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -79,18 +79,16 @@ func (s *Server) runUpdateCommand(parent context.Context, apply bool) (updateSta
 	if apply {
 		timeout = 4 * time.Minute
 	}
-	ctx, cancel := context.WithTimeout(parent, timeout)
-	defer cancel()
 	args := []string{"--config", s.opts.ConfigPath, "--home", s.opts.Home, "update", "--json"}
 	if apply {
 		args = append(args, "--apply")
 	}
-	cmd := exec.CommandContext(ctx, s.opts.Executable, args...)
-	cmd.Dir = s.opts.Home
-	cmd.Env = append(os.Environ(), "NCMM_WEB_CHILD=1")
-	output, err := cmd.CombinedOutput()
-	if ctx.Err() != nil {
-		return updateState{}, fmt.Errorf("更新操作超时: %w", ctx.Err())
+	output, err := s.processes.RunOutput(parent, processSpec{
+		Kind: "update", Command: s.opts.Executable, Args: args, Dir: s.opts.Home,
+		Env: append(os.Environ(), "NCMM_WEB_CHILD=1"), Timeout: timeout,
+	}, defaultProcessOutputLimit)
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(parent.Err(), context.DeadlineExceeded) {
+		return updateState{}, fmt.Errorf("更新操作超时: %w", context.DeadlineExceeded)
 	}
 	if err != nil {
 		message := strings.TrimSpace(string(output))

@@ -113,17 +113,9 @@ func TestParseBytes(t *testing.T) {
 }
 
 func TestMd5Hex(t *testing.T) {
-	// var filename = "../../testdata/music/record1.m4a"
-	var filename = "../../testdata/music/Maroon 5 - Animals.flac"
-	file, err := os.ReadFile(filename)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	md5, err := MD5Hex(file)
+	md5, err := MD5Hex([]byte("hello"))
 	assert.NoError(t, err)
-	t.Logf("md5:%s", md5)
-	assert.Equal(t, "afc48be2ca7c8afc38fbcb67ed7ff610", md5)
+	assert.Equal(t, "5d41402abc4b2a76b9719d911017c592", md5)
 }
 
 func TestSplitSlice(t *testing.T) {
@@ -429,6 +421,9 @@ func TestCheckPath(t *testing.T) {
 	})
 
 	tempFilePath := tempFile.Name()
+	if err := tempFile.Close(); err != nil {
+		t.Fatalf("Failed to close temp file: %v", err)
+	}
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		t.Fatalf("Failed to get home directory: %v", err)

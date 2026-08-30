@@ -5,6 +5,7 @@ package tag
 
 import (
 	"fmt"
+	"io"
 
 	"github.com/bogem/id3v2/v2"
 )
@@ -101,9 +102,13 @@ func (m *Mp3) SetLyrics(lyrics string) error {
 }
 
 func (m *Mp3) Save() error {
+	if _, err := m.tag.WriteTo(io.Discard); err != nil {
+		_ = m.tag.Close()
+		return fmt.Errorf("version:%v id3v2 encoding validation: %w", m.tag.Version(), err)
+	}
 	if err := m.tag.Save(); err != nil {
 		_ = m.tag.Close()
-		return fmt.Errorf("vesion:%v id3v2.Save: %w", m.tag.Version(), err)
+		return fmt.Errorf("version:%v id3v2.Save: %w", m.tag.Version(), err)
 	}
 	return m.tag.Close()
 }

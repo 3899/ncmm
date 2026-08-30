@@ -2,6 +2,7 @@
 setlocal
 cd /d "%~dp0"
 set "NCMM_EXE=%~dp0ncmm.exe"
+set "NCMM_WEB_PRESERVE_LEGACY_SCHEDULES=true"
 
 if not exist "%NCMM_EXE%" (
     echo [ERROR] ncmm.exe was not found in "%~dp0".
@@ -9,7 +10,7 @@ if not exist "%NCMM_EXE%" (
     exit /b 1
 )
 
-"%NCMM_EXE%" web --scheduler --background
+"%NCMM_EXE%" --home "%~dp0" web --background
 set "exit_code=%errorlevel%"
 
 if not "%exit_code%"=="0" (

@@ -1,0 +1,10 @@
+{
+  "name": "ncmm-webui-tests",
+  "private": true,
+  "scripts": {
+    "test:webui": "node tests/webui_smoke.js"
+  },
+  "devDependencies": {
+    "playwright": "1.62.1"
+  }
+}

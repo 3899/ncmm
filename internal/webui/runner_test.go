@@ -222,3 +222,47 @@ func TestRunManagerStopsQueuedRun(t *testing.T) {
 	releaseRun(t, gateFirst)
 	waitForRunStatus(t, manager, first.ID, "success")
 }
+
+func TestRunManagerRecordsExplicitStop(t *testing.T) {
+	manager := newControlledRunManager(t, 1)
+	gate := filepath.Join(manager.home, "never-release.done")
+	record, err := manager.start(context.Background(), controlledJob("job-stop", "skip", "account.json", gate))
+	if err != nil || record.Status != "running" {
+		t.Fatalf("start = %+v, %v", record, err)
+	}
+	if err := manager.stop(record.ID); err != nil {
+		t.Fatal(err)
+	}
+	stopped := waitForRunStatus(t, manager, record.ID, "stopped")
+	if stopped.ExitCode == nil || *stopped.ExitCode != -1 || !strings.Contains(stopped.Error, "已停止") {
+		t.Fatalf("unexpected stopped record: %+v", stopped)
+	}
+}
+
+func TestRunManagerRecordsStartFailure(t *testing.T) {
+	manager := newControlledRunManager(t, 1)
+	manager.command = func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+		return exec.CommandContext(ctx, filepath.Join(t.TempDir(), "missing-command"))
+	}
+	record, err := manager.start(context.Background(), controlledJob("job-fail", "skip", "account.json", "unused"))
+	if err == nil || record.Status != "failed" || record.ExitCode == nil || *record.ExitCode != -1 || !strings.Contains(record.Error, "start task process") {
+		t.Fatalf("start failure record = %+v, %v", record, err)
+	}
+	stored, ok := manager.get(record.ID)
+	if !ok || stored.Status != "failed" || manager.runningCount() != 0 {
+		t.Fatalf("stored start failure = %+v, running=%d", stored, manager.runningCount())
+	}
+}
+
+func TestRunManagerSupervisorShutdownStopsRunningTask(t *testing.T) {
+	manager := newControlledRunManager(t, 1)
+	record, err := manager.start(context.Background(), controlledJob("job-shutdown", "skip", "account.json", filepath.Join(manager.home, "never.done")))
+	if err != nil || record.Status != "running" {
+		t.Fatalf("start = %+v, %v", record, err)
+	}
+	manager.supervisor.Close(time.Second)
+	stopped := waitForRunStatus(t, manager, record.ID, "stopped")
+	if stopped.ExitCode == nil || *stopped.ExitCode != -1 || manager.runningCount() != 0 {
+		t.Fatalf("shutdown record = %+v, running=%d", stopped, manager.runningCount())
+	}
+}

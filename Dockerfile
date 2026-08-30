@@ -24,6 +24,7 @@ FROM alpine:3.20
 
 RUN apk add --no-cache ca-certificates tzdata
 ENV NCMM_DOCKER_OFFICIAL=1 \
+    NCMM_WEB_PRESERVE_LEGACY_SCHEDULES=true \
     NCMM_UPDATER_AUTO_UPDATE=false
 
 COPY --from=builder /ncmm /usr/local/bin/ncmm
@@ -42,4 +43,4 @@ WORKDIR /data
 EXPOSE 3899
 
 ENTRYPOINT ["/entrypoint.sh"]
-CMD ["web", "--scheduler", "--listen", "0.0.0.0:3899"]
+CMD ["web", "--listen", "0.0.0.0:3899"]

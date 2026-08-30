@@ -25,6 +25,36 @@ type instanceMetadata struct {
 	InstanceID string    `json:"instanceId"`
 }
 
+type InstanceInfo struct {
+	PID        int       `json:"pid"`
+	StartedAt  time.Time `json:"startedAt"`
+	Listen     string    `json:"listen"`
+	Version    string    `json:"version"`
+	InstanceID string    `json:"instanceId"`
+}
+
+func InspectInstance(home string) (InstanceInfo, bool, error) {
+	lock, err := acquireWebInstanceLock(home)
+	if err == nil {
+		if closeErr := lock.Close(); closeErr != nil {
+			return InstanceInfo{}, false, closeErr
+		}
+		return InstanceInfo{}, false, nil
+	}
+	var running *instanceRunningError
+	if !errors.As(err, &running) {
+		return InstanceInfo{}, false, err
+	}
+	metadata := running.Metadata
+	if running.ReadErr != nil {
+		return InstanceInfo{}, true, running.ReadErr
+	}
+	return InstanceInfo{
+		PID: metadata.PID, StartedAt: metadata.StartedAt, Listen: metadata.Listen,
+		Version: metadata.Version, InstanceID: metadata.InstanceID,
+	}, true, nil
+}
+
 type instanceRunningError struct {
 	Home     string
 	Metadata instanceMetadata

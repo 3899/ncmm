@@ -33,6 +33,7 @@ type configDocument struct {
 	Raw          string            `json:"raw"`
 	Data         any               `json:"data"`
 	Descriptions map[string]string `json:"descriptions,omitempty"`
+	ParseError   string            `json:"parseError,omitempty"`
 }
 
 type configStore struct {
@@ -89,20 +90,20 @@ func (s *configStore) getLocked() (configDocument, error) {
 	if err != nil {
 		return configDocument{}, err
 	}
+	document := configDocument{Revision: revision(data), Raw: string(data)}
 	var parsed any
 	if err := yaml.Unmarshal(data, &parsed); err != nil {
-		return configDocument{}, fmt.Errorf("parse config: %w", err)
+		document.ParseError = fmt.Errorf("parse config: %w", err).Error()
+		return document, nil
 	}
-	var document yaml.Node
-	if err := yaml.Unmarshal(data, &document); err != nil {
-		return configDocument{}, fmt.Errorf("parse config comments: %w", err)
+	var yamlDocument yaml.Node
+	if err := yaml.Unmarshal(data, &yamlDocument); err != nil {
+		document.ParseError = fmt.Errorf("parse config comments: %w", err).Error()
+		return document, nil
 	}
-	return configDocument{
-		Revision:     revision(data),
-		Raw:          string(data),
-		Data:         parsed,
-		Descriptions: collectYAMLDescriptions(&document),
-	}, nil
+	document.Data = parsed
+	document.Descriptions = collectYAMLDescriptions(&yamlDocument)
+	return document, nil
 }
 
 func (s *configStore) saveRaw(expectedRevision, raw string) (configDocument, error) {

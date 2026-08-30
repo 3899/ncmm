@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -36,6 +35,8 @@ type Server struct {
 	runner       *runManager
 	scheduler    *scheduler
 	qrcode       *qrcodeLoginManager
+	processes    *processSupervisor
+	instance     instanceMetadata
 	updateMu     sync.Mutex
 	http         *http.Server
 }
@@ -62,16 +63,17 @@ func New(ctx context.Context, opts Options) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("initialize notify store: %w", err)
 	}
-	webConfig, err := newWebConfigStore(opts.WebConfig)
+	webConfig, err := newWebConfigStore(opts.WebConfig, opts.SchedulerMigration)
 	if err != nil {
 		return nil, err
 	}
 	webSettings := webConfig.snapshot()
-	runner, err := newRunManager(opts.Executable, opts.ConfigPath, opts.Home, webSettings.Logs, webSettings.Concurrency)
+	processes := newProcessSupervisor()
+	runner, err := newRunManager(opts.Executable, opts.ConfigPath, opts.Home, webSettings.Logs, webSettings.Concurrency, processes)
 	if err != nil {
 		return nil, err
 	}
-	scheduler, err := newScheduler(ctx, opts.Scheduler, webConfig, runner)
+	scheduler, err := newScheduler(ctx, webConfig, runner)
 	if err != nil {
 		return nil, err
 	}
@@ -80,10 +82,11 @@ func New(ctx context.Context, opts Options) (*Server, error) {
 		opts: opts, authManager: authManager, loginLimiter: newLoginRateLimiter(),
 		config: configRepository, notify: notifyStore,
 		webConfig: webConfig, runner: runner, scheduler: scheduler,
+		processes: processes,
 		qrcode: newQRCodeLoginManager(ctx, opts.Executable, opts.ConfigPath, opts.Home, func(expectedRevision string, result loginresult.Result) error {
 			_, updateErr := configRepository.updateAccount(expectedRevision, result)
 			return updateErr
-		}),
+		}, processes),
 	}
 	s.http = &http.Server{
 		Addr:              opts.Listen,
@@ -98,6 +101,7 @@ func New(ctx context.Context, opts Options) (*Server, error) {
 
 func (s *Server) Run(ctx context.Context) error {
 	defer s.qrcode.close()
+	defer s.processes.Close(10 * time.Second)
 	instanceLock, err := acquireWebInstanceLock(s.opts.Home)
 	if err != nil {
 		return err
@@ -113,6 +117,7 @@ func (s *Server) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	s.instance = metadata
 	s.scheduler.start()
 	defer s.scheduler.close()
 	s.opts.Output("[webui] listening on http://%s (instance %s)\n", listen, metadata.InstanceID)
@@ -151,6 +156,7 @@ func (s *Server) cleanupLoop(ctx context.Context) {
 func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/auth/status", s.handleAuthStatus)
+	mux.HandleFunc("GET /api/v1/instance", s.handleInstanceGet)
 	mux.HandleFunc("POST /api/v1/auth/setup", s.handleAuthSetup)
 	mux.HandleFunc("POST /api/v1/auth/login", s.handleAuthLogin)
 	mux.HandleFunc("POST /api/v1/auth/logout", s.handleAuthLogout)
@@ -256,11 +262,20 @@ func publicAuthRequest(r *http.Request) bool {
 	switch r.URL.Path {
 	case "/api/v1/auth/status":
 		return r.Method == http.MethodGet
+	case "/api/v1/instance":
+		return r.Method == http.MethodGet
 	case "/api/v1/auth/setup", "/api/v1/auth/login", "/api/v1/auth/logout":
 		return r.Method == http.MethodPost
 	default:
 		return false
 	}
+}
+
+func (s *Server) handleInstanceGet(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{
+		"instanceId": s.instance.InstanceID,
+		"version":    s.opts.Version,
+	})
 }
 
 func isMutation(method string) bool {
@@ -283,8 +298,9 @@ func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
 	doc, _ := s.config.get()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"version": s.opts.Version, "commit": s.opts.Commit, "buildTime": s.opts.BuildTime,
-		"schedulerEnabled": s.scheduler.isEnabled(), "timezone": s.scheduler.timezone(),
-		"schedules": len(s.scheduler.list()), "running": s.runner.runningCount(),
+		"schedulerActive": s.scheduler.isActive(),
+		"timezone":        s.scheduler.timezone(),
+		"schedules":       len(s.scheduler.list()), "running": s.runner.runningCount(),
 		"queued": s.runner.queuedCount(),
 		"logs":   s.runner.stats(), "configRevision": doc.Revision,
 	})
@@ -393,7 +409,8 @@ func resolveNotifyPath(configPath, home string) (string, error) {
 func (s *Server) handleSettingsGet(w http.ResponseWriter, _ *http.Request) {
 	cfg := s.webConfig.snapshot()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"timezone": cfg.Timezone, "logs": cfg.Logs, "concurrency": cfg.Concurrency, "stats": s.runner.stats(),
+		"timezone": cfg.Timezone, "logs": cfg.Logs, "concurrency": cfg.Concurrency,
+		"stats": s.runner.stats(),
 	})
 }
 
@@ -574,12 +591,10 @@ func (s *Server) handleCookieImport(w http.ResponseWriter, r *http.Request) {
 	if req.Main {
 		args = append(args, "--main")
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, s.opts.Executable, args...)
-	cmd.Dir = s.opts.Home
-	cmd.Env = append(os.Environ(), "NCMM_WEB_CHILD=1")
-	output, err := cmd.CombinedOutput()
+	output, err := s.processes.RunOutput(r.Context(), processSpec{
+		Kind: "cookie-login", Command: s.opts.Executable, Args: args, Dir: s.opts.Home,
+		Env: append(os.Environ(), "NCMM_WEB_CHILD=1"), Timeout: 90 * time.Second,
+	}, defaultProcessOutputLimit)
 	if err != nil {
 		message := strings.TrimSpace(string(output))
 		if message == "" {

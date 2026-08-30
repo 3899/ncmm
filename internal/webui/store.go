@@ -15,14 +15,15 @@ import (
 )
 
 type webConfigStore struct {
-	mu   sync.RWMutex
-	path string
-	cfg  WebConfig
+	mu    sync.RWMutex
+	path  string
+	cfg   WebConfig
+	write func(string, []byte, os.FileMode) error
 }
 
-func newWebConfigStore(path string) (*webConfigStore, error) {
-	s := &webConfigStore{path: path}
-	if err := s.load(); err != nil {
+func newWebConfigStore(path string, migrations ...*SchedulerMigration) (*webConfigStore, error) {
+	s := &webConfigStore{path: path, write: writeFileAtomic}
+	if err := s.load(firstSchedulerMigration(migrations)); err != nil {
 		return nil, err
 	}
 	return s, nil
@@ -41,7 +42,7 @@ func defaultWebConfig() WebConfig {
 	}
 }
 
-func (s *webConfigStore) load() error {
+func (s *webConfigStore) load(migration *SchedulerMigration) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -53,10 +54,47 @@ func (s *webConfigStore) load() error {
 	if err != nil {
 		return fmt.Errorf("read web config: %w", err)
 	}
+	var persisted struct {
+		Version   int `yaml:"version"`
+		Scheduler *struct {
+			Enabled *bool `yaml:"enabled"`
+		} `yaml:"scheduler"`
+	}
+	if err := yaml.Unmarshal(data, &persisted); err != nil {
+		return fmt.Errorf("parse web config: %w", err)
+	}
 	if err := yaml.Unmarshal(data, &s.cfg); err != nil {
 		return fmt.Errorf("parse web config: %w", err)
 	}
+	needsSave := persisted.Version < defaultWebConfigVersion || persisted.Scheduler != nil
+	if persisted.Version < defaultWebConfigVersion {
+		s.cfg.Version = defaultWebConfigVersion
+		if migration == nil || !migration.PreserveEnabled {
+			for i := range s.cfg.Jobs {
+				s.cfg.Jobs[i].Enabled = false
+			}
+		}
+	} else if persisted.Scheduler != nil && persisted.Scheduler.Enabled != nil && !*persisted.Scheduler.Enabled {
+		for i := range s.cfg.Jobs {
+			s.cfg.Jobs[i].Enabled = false
+		}
+	}
 	normalizeWebConfig(&s.cfg)
+	if needsSave {
+		if err := s.saveLocked(); err != nil {
+			return fmt.Errorf("migrate web config: %w", err)
+		}
+	}
+	return nil
+}
+
+func firstSchedulerMigration(migrations []*SchedulerMigration) *SchedulerMigration {
+	for _, migration := range migrations {
+		if migration != nil {
+			copyMigration := *migration
+			return &copyMigration
+		}
+	}
 	return nil
 }
 
@@ -127,12 +165,14 @@ func (s *webConfigStore) updateSettings(timezone string, policy LogPolicy, concu
 	if concurrency.MaxParallel < 1 || concurrency.MaxParallel > 8 {
 		return WebConfig{}, fmt.Errorf("maxParallel must be between 1 and 8")
 	}
-	s.cfg.Timezone = timezone
-	s.cfg.Logs = policy
-	s.cfg.Concurrency = concurrency
-	if err := s.saveLocked(); err != nil {
+	next := cloneWebConfig(s.cfg)
+	next.Timezone = timezone
+	next.Logs = policy
+	next.Concurrency = concurrency
+	if err := s.saveConfigLocked(next); err != nil {
 		return WebConfig{}, err
 	}
+	s.cfg = next
 	return cloneWebConfig(s.cfg), nil
 }
 
@@ -146,43 +186,55 @@ func (s *webConfigStore) upsert(job Schedule) (Schedule, error) {
 	}
 	job.Source = "file"
 	job.ReadOnly = false
-	for i := range s.cfg.Jobs {
-		if s.cfg.Jobs[i].ID == job.ID {
-			s.cfg.Jobs[i] = job
-			if err := s.saveLocked(); err != nil {
+	next := cloneWebConfig(s.cfg)
+	for i := range next.Jobs {
+		if next.Jobs[i].ID == job.ID {
+			next.Jobs[i] = job
+			if err := s.saveConfigLocked(next); err != nil {
 				return Schedule{}, err
 			}
+			s.cfg = next
 			return job, nil
 		}
 	}
-	s.cfg.Jobs = append(s.cfg.Jobs, job)
-	if err := s.saveLocked(); err != nil {
+	next.Jobs = append(next.Jobs, job)
+	if err := s.saveConfigLocked(next); err != nil {
 		return Schedule{}, err
 	}
+	s.cfg = next
 	return job, nil
 }
 
 func (s *webConfigStore) delete(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for i := range s.cfg.Jobs {
-		if s.cfg.Jobs[i].ID == id {
-			s.cfg.Jobs = append(s.cfg.Jobs[:i], s.cfg.Jobs[i+1:]...)
-			return s.saveLocked()
+	next := cloneWebConfig(s.cfg)
+	for i := range next.Jobs {
+		if next.Jobs[i].ID == id {
+			next.Jobs = append(next.Jobs[:i], next.Jobs[i+1:]...)
+			if err := s.saveConfigLocked(next); err != nil {
+				return err
+			}
+			s.cfg = next
+			return nil
 		}
 	}
 	return os.ErrNotExist
 }
 
 func (s *webConfigStore) saveLocked() error {
-	data, err := yaml.Marshal(&s.cfg)
+	return s.saveConfigLocked(s.cfg)
+}
+
+func (s *webConfigStore) saveConfigLocked(cfg WebConfig) error {
+	data, err := yaml.Marshal(&cfg)
 	if err != nil {
 		return fmt.Errorf("encode web config: %w", err)
 	}
 	if err := os.MkdirAll(filepath.Dir(s.path), 0755); err != nil {
 		return fmt.Errorf("create web config directory: %w", err)
 	}
-	return writeFileAtomic(s.path, data, 0600)
+	return s.write(s.path, data, 0600)
 }
 
 func writeFileAtomic(path string, data []byte, mode os.FileMode) error {

@@ -1,19 +1,19 @@
 @echo off
 setlocal
+cd /d "%~dp0"
+set "NCMM_EXE=%~dp0ncmm.exe"
 
-tasklist /FI "IMAGENAME eq ncmm.exe" 2>NUL | find /I "ncmm.exe" >NUL
-if errorlevel 1 (
-    echo ncmm is not running.
-    timeout /t 2 /nobreak >NUL
-    exit /b 0
-)
-
-taskkill /F /T /IM ncmm.exe
-if errorlevel 1 (
-    echo [ERROR] Failed to stop ncmm.
+if not exist "%NCMM_EXE%" (
+    echo [ERROR] ncmm.exe was not found in "%~dp0".
     pause
     exit /b 1
 )
 
-echo ncmm stopped.
+"%NCMM_EXE%" --home "%~dp0" web stop
+if errorlevel 1 (
+    echo [ERROR] Failed to stop the WebUI for "%~dp0".
+    pause
+    exit /b 1
+)
+
 timeout /t 2 /nobreak >NUL
