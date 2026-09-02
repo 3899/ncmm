@@ -17,6 +17,7 @@ type Result struct {
 	Version     int    `json:"version"`
 	UID         int64  `json:"uid"`
 	Nickname    string `json:"nickname"`
+	AvatarURL   string `json:"avatarUrl,omitempty"`
 	CookiePath  string `json:"cookiePath"`
 	AccountPath string `json:"accountPath"`
 	Main        bool   `json:"main"`

@@ -19,8 +19,11 @@ const (
 	changedPassword = "Changed#456"
 )
 
-func TestPasswordHashUsesSimAdminASCIIRules(t *testing.T) {
+func TestPasswordHashUsesConfigurableSimAdminASCIIRules(t *testing.T) {
 	settings := DefaultSettings()
+	if settings.PasswordMinLength != 1 || settings.PasswordRequireLetters || settings.PasswordRequireDigits || settings.PasswordRequireSymbols {
+		t.Fatalf("unexpected default password policy: %+v", settings)
+	}
 	hash, err := HashPassword(testPassword, settings)
 	if err != nil {
 		t.Fatal(err)
@@ -37,12 +40,47 @@ func TestPasswordHashUsesSimAdminASCIIRules(t *testing.T) {
 		t.Fatalf("VerifyPassword(invalid) = %v, %v", valid, err)
 	}
 	for _, password := range []string{
-		"short", "onlyletters", "letters123", "12345678#",
-		"Admin 123#", "Admin中文123#", strings.Repeat("A", maxPasswordLength+1) + "1#",
+		"", "Admin 123#", "Admin中文123#", strings.Repeat("A", maxPasswordLength+1),
 	} {
 		if err := ValidatePassword(password, settings); err == nil {
 			t.Fatalf("ValidatePassword(%q) expected error", password)
 		}
+	}
+	strict := settings
+	strict.PasswordMinLength = 8
+	strict.PasswordRequireLetters = true
+	strict.PasswordRequireDigits = true
+	strict.PasswordRequireSymbols = true
+	for _, password := range []string{"short", "onlyletters", "letters123", "12345678#"} {
+		if err := ValidatePassword(password, strict); err == nil {
+			t.Fatalf("strict ValidatePassword(%q) expected error", password)
+		}
+	}
+}
+
+func TestManagerPasswordProtectionCanBeDisabledAndEnabled(t *testing.T) {
+	manager := newTestManager(t, filepath.Join(t.TempDir(), DefaultStoreName))
+	credentials, err := manager.Setup(context.Background(), "a", ClientInfo{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings := DefaultSettings()
+	if err := manager.UpdateSecurity(context.Background(), settings, false); err != nil {
+		t.Fatal(err)
+	}
+	status, err := manager.Status(context.Background(), "")
+	if err != nil || status.PasswordProtectionEnabled || !status.Authenticated {
+		t.Fatalf("disabled status = %+v, %v", status, err)
+	}
+	if _, err := manager.Authenticate(context.Background(), credentials.Token); !errors.Is(err, ErrInvalidSession) {
+		t.Fatalf("disabled protection did not revoke sessions: %v", err)
+	}
+	if err := manager.UpdateSecurity(context.Background(), settings, true); err != nil {
+		t.Fatal(err)
+	}
+	status, err = manager.Status(context.Background(), "")
+	if err != nil || !status.PasswordProtectionEnabled || status.Authenticated {
+		t.Fatalf("re-enabled status = %+v, %v", status, err)
 	}
 }
 
@@ -259,6 +297,38 @@ func TestOfflineRecoveryReplacesCorruptStore(t *testing.T) {
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("store remains after clear: %v", err)
+	}
+}
+
+func TestOfflineRecoveryPreservesValidSettings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), DefaultStoreName)
+	manager := newTestManager(t, path)
+	credentials, err := manager.Setup(context.Background(), testPassword, ClientInfo{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings := DefaultSettings()
+	settings.PasswordRequireSymbols = false
+	if err := manager.UpdateSettings(context.Background(), settings); err != nil {
+		t.Fatal(err)
+	}
+	const recoveredPassword = "abc12345"
+	if err := RecoverPassword(context.Background(), path, recoveredPassword); err != nil {
+		t.Fatal(err)
+	}
+	recovered := newTestManager(t, path)
+	if _, err := recovered.Login(context.Background(), recoveredPassword, ClientInfo{}); err != nil {
+		t.Fatal(err)
+	}
+	status, err := recovered.Status(context.Background(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Settings.PasswordRequireSymbols {
+		t.Fatal("recovery restored the default symbol requirement")
+	}
+	if _, err := recovered.Authenticate(context.Background(), credentials.Token); !errors.Is(err, ErrInvalidSession) {
+		t.Fatalf("old session error = %v", err)
 	}
 }
 

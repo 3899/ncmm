@@ -172,7 +172,7 @@ func (c *loginCookieCloudCmd) execute(_ctx context.Context, _ []string) error {
 	}
 	c.cmd.Printf("login success: uid=%d nickname=%s\n", user.Account.Id, user.Profile.Nickname)
 
-	err = c.root.saveLoginResult(ctx, user.Profile.Nickname, user.Account.Id, tempCookieFile, "", "")
+	err = c.root.saveLoginResult(ctx, user.Profile.Nickname, user.Profile.AvatarUrl, user.Account.Id, tempCookieFile, "", "")
 	if err != nil {
 		return err
 	}

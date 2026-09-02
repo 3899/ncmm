@@ -34,8 +34,10 @@ func defaultWebConfig() WebConfig {
 		Version:  defaultWebConfigVersion,
 		Timezone: defaultTimezone,
 		Logs: LogPolicy{
-			RetentionDays:  defaultRetentionDays,
-			MaxTotalSizeMB: defaultMaxTotalSizeMB,
+			RetentionEnabled: true,
+			RetentionDays:    defaultRetentionDays,
+			MaxSizeEnabled:   true,
+			MaxTotalSizeMB:   defaultMaxTotalSizeMB,
 		},
 		Concurrency: ConcurrencyPolicy{MaxParallel: 1},
 		Jobs:        []Schedule{},
@@ -68,13 +70,18 @@ func (s *webConfigStore) load(migration *SchedulerMigration) error {
 	}
 	needsSave := persisted.Version < defaultWebConfigVersion || persisted.Scheduler != nil
 	if persisted.Version < defaultWebConfigVersion {
+		if persisted.Version < 3 {
+			s.cfg.Logs.RetentionEnabled = true
+			s.cfg.Logs.MaxSizeEnabled = true
+		}
 		s.cfg.Version = defaultWebConfigVersion
-		if migration == nil || !migration.PreserveEnabled {
+		if persisted.Version < 2 && (migration == nil || !migration.PreserveEnabled) {
 			for i := range s.cfg.Jobs {
 				s.cfg.Jobs[i].Enabled = false
 			}
 		}
-	} else if persisted.Scheduler != nil && persisted.Scheduler.Enabled != nil && !*persisted.Scheduler.Enabled {
+	}
+	if persisted.Scheduler != nil && persisted.Scheduler.Enabled != nil && !*persisted.Scheduler.Enabled {
 		for i := range s.cfg.Jobs {
 			s.cfg.Jobs[i].Enabled = false
 		}
@@ -220,6 +227,38 @@ func (s *webConfigStore) delete(id string) error {
 		}
 	}
 	return os.ErrNotExist
+}
+
+func (s *webConfigStore) pin(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	next := cloneWebConfig(s.cfg)
+	index := -1
+	for i := range next.Jobs {
+		if next.Jobs[i].ID == id {
+			index = i
+			break
+		}
+	}
+	if index < 0 {
+		return os.ErrNotExist
+	}
+	if next.Jobs[index].Pinned {
+		next.Jobs[index].Pinned = false
+	} else {
+		pinned := next.Jobs[index]
+		pinned.Pinned = true
+		if index > 0 {
+			copy(next.Jobs[1:index+1], next.Jobs[:index])
+		}
+		next.Jobs[0] = pinned
+	}
+	if err := s.saveConfigLocked(next); err != nil {
+		return err
+	}
+	s.cfg = next
+	return nil
 }
 
 func (s *webConfigStore) saveLocked() error {

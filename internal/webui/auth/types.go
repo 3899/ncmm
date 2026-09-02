@@ -35,10 +35,10 @@ type Settings struct {
 
 func DefaultSettings() Settings {
 	return Settings{
-		PasswordMinLength:      8,
-		PasswordRequireLetters: true,
-		PasswordRequireDigits:  true,
-		PasswordRequireSymbols: true,
+		PasswordMinLength:      1,
+		PasswordRequireLetters: false,
+		PasswordRequireDigits:  false,
+		PasswordRequireSymbols: false,
 		SessionTTLSeconds:      int64((7 * 24 * time.Hour) / time.Second),
 		IdleTimeoutSeconds:     int64(time.Hour / time.Second),
 	}
@@ -84,9 +84,10 @@ type AuthenticatedSession struct {
 }
 
 type Status struct {
-	Configured    bool        `json:"configured"`
-	Authenticated bool        `json:"authenticated"`
-	CSRFToken     string      `json:"csrfToken,omitempty"`
-	Settings      Settings    `json:"settings"`
-	Session       SessionView `json:"session,omitempty"`
+	Configured                bool        `json:"configured"`
+	Authenticated             bool        `json:"authenticated"`
+	PasswordProtectionEnabled bool        `json:"passwordProtectionEnabled"`
+	CSRFToken                 string      `json:"csrfToken,omitempty"`
+	Settings                  Settings    `json:"settings"`
+	Session                   SessionView `json:"session,omitempty"`
 }

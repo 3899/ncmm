@@ -13,11 +13,12 @@ import (
 )
 
 type storeData struct {
-	Version      int                `json:"version"`
-	PasswordHash string             `json:"passwordHash,omitempty"`
-	Settings     Settings           `json:"settings"`
-	Sessions     map[string]Session `json:"sessions"`
-	UpdatedAt    time.Time          `json:"updatedAt"`
+	Version            int                `json:"version"`
+	PasswordHash       string             `json:"passwordHash,omitempty"`
+	ProtectionDisabled bool               `json:"protectionDisabled,omitempty"`
+	Settings           Settings           `json:"settings"`
+	Sessions           map[string]Session `json:"sessions"`
+	UpdatedAt          time.Time          `json:"updatedAt"`
 }
 
 type store struct {

@@ -331,12 +331,29 @@ func (c *SignIn) execute(ctx context.Context) error {
 }
 
 func (c *SignIn) RunSignForCookie(ctx context.Context, cookieFile string, isPrimary bool, allowedTasks map[string]bool) error {
+	earningsReport := &accountEarningsReport{Account: cookieFile}
+	return c.runSignForCookie(ctx, cookieFile, isPrimary, allowedTasks, earningsReport, true)
+}
+
+func (c *SignIn) runSignForCookie(
+	ctx context.Context,
+	cookieFile string,
+	isPrimary bool,
+	allowedTasks map[string]bool,
+	earningsReport *accountEarningsReport,
+	finalizeEarnings bool,
+) error {
 	if len(allowedTasks) == 0 {
 		allowedTasks = map[string]bool{
 			"VipTask": true, "Reserve": true, "ViewVipCenter": true, "LikeComment": true,
 			"FollowArtist": true, "LikeSong": true, "CollectSong": true, "PublishNote": true,
 			"ListenIndie": true, "PlayDailyRecommend": true, "ShareSong": true,
 		}
+	}
+	if earningsReport == nil {
+		earningsReport = &accountEarningsReport{Account: cookieFile}
+	} else if earningsReport.Account == "" {
+		earningsReport.Account = cookieFile
 	}
 
 	absPath, err := filepath.Abs(cookieFile)
@@ -363,23 +380,36 @@ func (c *SignIn) RunSignForCookie(ctx context.Context, cookieFile string, isPrim
 	// 尝试读取个人信息友好提示
 	var userId int64
 	var nickname string
+	var avatarURL string
 	if userInfo, uErr := request.GetUserInfo(ctx, &weapi.GetUserInfoReq{}); uErr == nil && userInfo.Code == 200 && userInfo.Profile != nil {
 		userId = userInfo.Account.Id
 		nickname = userInfo.Profile.Nickname
+		avatarURL = userInfo.Profile.AvatarUrl
+		// 网易云账号 Profile 的 userType=4 表示音乐人，复用现有请求，不额外查询身份接口。
+		if userInfo.Profile.UserType == 4 {
+			c.cmd.Println("  [账号身份] 音乐人")
+		}
 	}
 
 	vipPoint, err := request.VipGrowPoint(ctx, &weapi.VipGrowPointReq{})
+	vipStatusKnown := false
+	var vipStatus int64
 	if err == nil && vipPoint.Code == 200 {
+		vipStatusKnown = true
+		vipStatus = vipPoint.Data.UserLevel.LatestVipStatus
 		if userId == 0 {
 			userId = vipPoint.Data.UserLevel.UserId
 		}
 		if nickname != "" {
-			c.cmd.Printf("  [当前账号信息] Uid: %d | 昵称: %s | 等级: %s (Lv.%d)\n", userId, nickname, vipPoint.Data.UserLevel.LevelName, vipPoint.Data.UserLevel.Level)
+			if avatarURL != "" {
+				c.cmd.Printf("  [当前账号信息] Uid: %d | 昵称: %s | 等级: %s (Lv.%d) | 头像: %s\n", userId, nickname, vipPoint.Data.UserLevel.LevelName, vipPoint.Data.UserLevel.Level, avatarURL)
+			} else {
+				c.cmd.Printf("  [当前账号信息] Uid: %d | 昵称: %s | 等级: %s (Lv.%d)\n", userId, nickname, vipPoint.Data.UserLevel.LevelName, vipPoint.Data.UserLevel.Level)
+			}
 		} else {
 			c.cmd.Printf("  [当前账号信息] Uid: %d | 等级: %s (Lv.%d)\n", userId, vipPoint.Data.UserLevel.LevelName, vipPoint.Data.UserLevel.Level)
 		}
 	}
-
 	// 1. 执行云贝签到
 	c.cmd.Println("  --- 云贝任务 ---")
 	yunbeiResp, err := request.YunBeiSignIn(ctx, &weapi.YunBeiSignInReq{})
@@ -428,17 +458,32 @@ func (c *SignIn) RunSignForCookie(ctx context.Context, cookieFile string, isPrim
 			c.handleYunbeiTasks(ctx, cli, request, userId, cookieFile, allowedTasks)
 		}
 	}
+	if finalizeEarnings {
+		yunbeiEarnings := earningsReport.collectYunbei(func() yunbeiEarnings {
+			return c.fetchYunbeiEarnings(ctx, cli, request, userId)
+		})
+		c.printYunbeiEarnings(earningsReport, yunbeiEarnings)
+	}
 
 	// 2. 黑胶 VIP 会员任务
+	var finalGrowth *vipGrowthState
 	if allowedTasks["VipTask"] {
 		c.cmd.Println("  --- VIP 任务 ---")
 		if vipPoint != nil && vipPoint.Code == 200 {
 			if vipPoint.Data.UserLevel.LatestVipStatus != 1 {
 				c.cmd.Printf("  暂无会员权益 (VIP 状态: %v)\n", vipPoint.Data.UserLevel.LatestVipStatus)
 			} else {
-				c.handleVipTasks(ctx, cli, request, vipPoint.Data.UserLevel.Level)
+				finalGrowth = c.handleVipTasks(ctx, cli, request, vipPoint.Data.UserLevel.Level)
 			}
 		}
+		vipEarnings := earningsReport.collectVIP(func() vipEarnings {
+			return c.resolveVIPEarnings(ctx, cli, vipStatus, vipStatusKnown, finalGrowth)
+		})
+		c.printVIPEarnings(earningsReport, vipEarnings)
+	}
+
+	if finalizeEarnings {
+		c.printDailyEarnings(*earningsReport)
 	}
 
 	// 3. 刷新 token 维持会话

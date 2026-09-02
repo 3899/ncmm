@@ -20,7 +20,7 @@ builds:
     main: .
     binary: ncmm
     ldflags:
-      - -s -w -X "main.Version={{.Version}}" -X "main.Commit={{.FullCommit}}" -X "main.BuildTime={{.CommitDate}}"
+      - -s -w -X "main.Version={{.Version}}" -X "main.Commit={{.FullCommit}}" -X "main.Branch={{.Branch}}" -X "main.BuildTime={{.CommitDate}}"
     goos:
       - windows
     goarch:
@@ -33,7 +33,7 @@ builds:
     main: .
     binary: ncmm
     ldflags:
-      - -s -w -X "main.Version={{.Version}}" -X "main.Commit={{.FullCommit}}" -X "main.BuildTime={{.CommitDate}}"
+      - -s -w -X "main.Version={{.Version}}" -X "main.Commit={{.FullCommit}}" -X "main.Branch={{.Branch}}" -X "main.BuildTime={{.CommitDate}}"
     goos:
       - linux
     goarch:

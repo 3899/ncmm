@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"sort"
 	"strconv"
@@ -24,7 +25,7 @@ const maxQueuedRuns = 100
 
 var databaseCommands = map[string]bool{
 	"task": true, "playids": true, "musician": true,
-	"musician-vip": true, "vip-member-gift": true,
+	"musician-sign": true, "musician-vip": true, "vip-member-gift": true,
 }
 
 type runningProcess struct {
@@ -228,6 +229,7 @@ func (m *runManager) failBeforeStartLocked(jobID string, record RunRecord, err e
 func (m *runManager) wait(runID, jobID string, process *managedProcess, logFile *os.File) {
 	err := process.Wait()
 	_ = logFile.Close()
+	rewards, _ := parseRunRewards(m.runLogPath(runID))
 
 	m.mu.Lock()
 	record := m.runs[runID]
@@ -256,6 +258,7 @@ func (m *runManager) wait(runID, jobID string, process *managedProcess, logFile 
 		record.Status = "success"
 	}
 	record.ExitCode = &exitCode
+	record.Rewards = rewards
 	m.runs[runID] = record
 	running := m.running[runID]
 	delete(m.running, runID)
@@ -267,6 +270,12 @@ func (m *runManager) wait(runID, jobID string, process *managedProcess, logFile 
 	m.drainQueueLocked()
 	m.mu.Unlock()
 	_ = m.cleanup()
+}
+
+func (m *runManager) runLogPath(id string) string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.runs[id].LogFile
 }
 
 func (m *runManager) stop(id string) error {
@@ -545,11 +554,50 @@ func (m *runManager) readLog(id string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	data = hideStructuredRewardEvents(data)
 	const maxLogResponse = 2 << 20
 	if len(data) > maxLogResponse {
 		data = append([]byte("[showing last 2 MiB]\n"), data[len(data)-maxLogResponse:]...)
 	}
 	return data, nil
+}
+
+func (m *runManager) deleteRun(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	record, ok := m.runs[id]
+	if !ok {
+		return os.ErrNotExist
+	}
+	if _, running := m.running[id]; running {
+		return fmt.Errorf("running task cannot be deleted")
+	}
+	if _, queued := m.queued[id]; queued {
+		return fmt.Errorf("queued task cannot be deleted")
+	}
+	for _, path := range []string{record.LogFile, record.MetaFile} {
+		if path == "" {
+			continue
+		}
+		relative, err := filepath.Rel(m.logDir, path)
+		if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
+			return fmt.Errorf("run file is outside the managed log directory")
+		}
+	}
+	for _, path := range []string{record.LogFile, record.MetaFile} {
+		if path == "" {
+			continue
+		}
+		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("delete run file: %w", err)
+		}
+	}
+	delete(m.runs, id)
+	delete(m.jobRuns[record.JobID], id)
+	if len(m.jobRuns[record.JobID]) == 0 {
+		delete(m.jobRuns, record.JobID)
+	}
+	return nil
 }
 
 func (m *runManager) writeMetaLocked(record RunRecord) {
@@ -580,12 +628,20 @@ func (m *runManager) loadHistory() {
 		}
 		record.MetaFile = metaPath
 		record.LogFile = strings.TrimSuffix(metaPath, ".json") + ".log"
+		backfilledRewards := false
+		if rewards, rewardErr := parseRunRewards(record.LogFile); rewardErr == nil && len(rewards) > 0 && !reflect.DeepEqual(record.Rewards, rewards) {
+			record.Rewards = rewards
+			backfilledRewards = true
+		}
 		if record.Status == "running" || record.Status == "queued" {
 			record.Status = "interrupted"
 			finished := time.Now()
 			record.FinishedAt = &finished
 		}
 		m.runs[record.ID] = record
+		if backfilledRewards {
+			m.writeMetaLocked(record)
+		}
 	}
 }
 
@@ -618,7 +674,7 @@ func (m *runManager) cleanup() error {
 		if err != nil {
 			continue
 		}
-		if info.ModTime().Before(cutoff) && !m.pathIsActiveLocked(path) {
+		if m.policy.RetentionEnabled && info.ModTime().Before(cutoff) && !m.pathIsActiveLocked(path) {
 			_ = os.Remove(path)
 			continue
 		}
@@ -628,6 +684,9 @@ func (m *runManager) cleanup() error {
 	limit := m.policy.MaxTotalSizeMB * 1024 * 1024
 	sort.Slice(files, func(i, j int) bool { return files[i].modTime.Before(files[j].modTime) })
 	for _, file := range files {
+		if !m.policy.MaxSizeEnabled {
+			break
+		}
 		if total <= limit {
 			break
 		}
@@ -644,6 +703,84 @@ func (m *runManager) cleanup() error {
 		}
 	}
 	return nil
+}
+
+func (m *runManager) cleanupMatching(filter LogCleanupFilter) (LogCleanupResult, error) {
+	allowed := map[string]bool{
+		"success": true, "failed": true, "skipped": true, "stopped": true,
+		"interrupted": true, "timed_out": true,
+	}
+	statuses := make(map[string]bool, len(filter.Statuses))
+	for _, status := range filter.Statuses {
+		status = strings.TrimSpace(status)
+		if !allowed[status] {
+			return LogCleanupResult{}, fmt.Errorf("unsupported run status %q", status)
+		}
+		statuses[status] = true
+	}
+	if !filter.StartedAfter.IsZero() && !filter.StartedBefore.IsZero() && filter.StartedAfter.After(filter.StartedBefore) {
+		return LogCleanupResult{}, fmt.Errorf("startedAfter must not be later than startedBefore")
+	}
+	query := strings.ToLower(strings.TrimSpace(filter.JobName))
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var result LogCleanupResult
+	for id, record := range m.runs {
+		if record.Status == "running" || record.Status == "queued" {
+			result.Skipped++
+			continue
+		}
+		if len(statuses) > 0 && !statuses[record.Status] {
+			continue
+		}
+		started := record.StartedAt
+		if started.IsZero() {
+			started = record.TriggeredAt
+		}
+		if !filter.StartedAfter.IsZero() && started.Before(filter.StartedAfter) {
+			continue
+		}
+		if !filter.StartedBefore.IsZero() && started.After(filter.StartedBefore) {
+			continue
+		}
+		if query != "" && !strings.Contains(strings.ToLower(record.JobName+" "+record.Command), query) {
+			continue
+		}
+		paths := []string{record.LogFile, record.MetaFile}
+		valid := true
+		for _, path := range paths {
+			if path == "" {
+				continue
+			}
+			relative, err := filepath.Rel(m.logDir, path)
+			if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
+				valid = false
+				break
+			}
+		}
+		if !valid {
+			result.Skipped++
+			continue
+		}
+		for _, path := range paths {
+			if path == "" {
+				continue
+			}
+			if info, err := os.Stat(path); err == nil {
+				result.FreedBytes += info.Size()
+			}
+			if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				return result, fmt.Errorf("delete run file: %w", err)
+			}
+		}
+		delete(m.runs, id)
+		delete(m.jobRuns[record.JobID], id)
+		if len(m.jobRuns[record.JobID]) == 0 {
+			delete(m.jobRuns, record.JobID)
+		}
+		result.Deleted++
+	}
+	return result, nil
 }
 
 func (m *runManager) pathIsActiveLocked(path string) bool {

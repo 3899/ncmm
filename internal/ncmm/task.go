@@ -240,7 +240,16 @@ func isSessionInvalidError(err error) bool {
 
 // executeAction runs one task action. sessionInvalid is true when the cookie/session is dead
 // and remaining tasks for this account should be skipped.
-func (c *Task) executeAction(ctx context.Context, stdAction string, account Account, queue []string, activeTasks map[string]bool, signRunMap map[string]bool) (executed bool, sessionInvalid bool) {
+func (c *Task) executeAction(
+	ctx context.Context,
+	stdAction string,
+	account Account,
+	queue []string,
+	activeTasks map[string]bool,
+	signRunMap map[string]bool,
+	earningsReports map[string]*accountEarningsReport,
+	finalizeSignEarnings bool,
+) (executed bool, sessionInvalid bool) {
 	isSignSubtask := false
 	signSubtasks := []string{
 		"VipTask", "Reserve", "ViewVipCenter", "LikeComment", "FollowArtist",
@@ -267,7 +276,12 @@ func (c *Task) executeAction(ctx context.Context, stdAction string, account Acco
 			if len(allowedTasks) > 0 {
 				c.cmd.Printf("[task] >>> 账号 (%s) 开始执行 [日常签到] 子任务组 <<<\n", account.Filepath)
 				s := NewSign(c.root, c.l)
-				if err := s.RunSignForCookie(ctx, account.Filepath, account.IsMain, allowedTasks); err != nil {
+				report := earningsReports[account.Filepath]
+				if report == nil {
+					report = &accountEarningsReport{Account: account.Filepath}
+					earningsReports[account.Filepath] = report
+				}
+				if err := s.runSignForCookie(ctx, account.Filepath, account.IsMain, allowedTasks, report, finalizeSignEarnings); err != nil {
 					c.cmd.Printf("[task] ❌ 账号 (%s) [日常签到] 执行失败: %s\n", account.Filepath, err)
 					c.root.ReportFailure(account.Filepath, "sign", err)
 					sessionInvalid = isSessionInvalidError(err)
@@ -413,8 +427,29 @@ func (c *Task) executeAction(ctx context.Context, stdAction string, account Acco
 	return false, false
 }
 
+func (c *Task) queueHasActiveSignTasks(queue []string, activeTasks map[string]bool) bool {
+	for _, action := range queue {
+		switch c.standardizeActionKey(action) {
+		case "VipTask", "Reserve", "ViewVipCenter", "LikeComment", "FollowArtist",
+			"LikeSong", "CollectSong", "PublishNote", "ListenIndie", "PlayDailyRecommend":
+			if activeTasks["sign"] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // runQueue executes a task queue. invalidSessions is shared across fast/slow queues for the whole run.
-func (c *Task) runQueue(ctx context.Context, queue []string, accounts []Account, activeTasks map[string]bool, invalidSessions map[string]bool) bool {
+func (c *Task) runQueue(
+	ctx context.Context,
+	queue []string,
+	accounts []Account,
+	activeTasks map[string]bool,
+	invalidSessions map[string]bool,
+	earningsReports map[string]*accountEarningsReport,
+	finalizeSignEarnings bool,
+) bool {
 	if invalidSessions == nil {
 		invalidSessions = make(map[string]bool)
 	}
@@ -446,7 +481,7 @@ func (c *Task) runQueue(ctx context.Context, queue []string, accounts []Account,
 				continue
 			}
 
-			executed, sessionInvalid := c.executeAction(ctx, stdAction, account, queue, activeTasks, signRunMap)
+			executed, sessionInvalid := c.executeAction(ctx, stdAction, account, queue, activeTasks, signRunMap, earningsReports, finalizeSignEarnings)
 			if executed {
 				hasExecuted = true
 				queueExecuted = true
@@ -551,17 +586,20 @@ func (c *Task) execute(ctx context.Context) error {
 	slowQueue := cfg.Task.SlowTasks
 	// 整次 task 进程共享：同一账号 Cookie 失效后，快/慢任务组均不再继续执行该账号
 	invalidSessions := make(map[string]bool)
+	// 快慢任务组共享账号收益，避免同一账号重复查询，并等待最后一个签到任务组再汇总云贝。
+	earningsReports := make(map[string]*accountEarningsReport)
+	slowHasSignTasks := runSlow && c.queueHasActiveSignTasks(slowQueue, activeTasks)
 
 	if mode == "by-task-group" {
 		if runFast {
 			c.cmd.Println("[task] >>>>>> 开始执行 [快任务组] (跨账号串行) <<<<<<")
-			c.runQueue(ctx, fastQueue, accounts, activeTasks, invalidSessions)
+			c.runQueue(ctx, fastQueue, accounts, activeTasks, invalidSessions, earningsReports, !slowHasSignTasks)
 			c.cmd.Printf("[task] >>>>>> [快任务组] 执行完毕 <<<<<<\n\n")
 		}
 
 		if runSlow {
 			c.cmd.Println("[task] >>>>>> 开始执行 [慢任务组] (跨账号串行) <<<<<<")
-			c.runQueue(ctx, slowQueue, accounts, activeTasks, invalidSessions)
+			c.runQueue(ctx, slowQueue, accounts, activeTasks, invalidSessions, earningsReports, true)
 			c.cmd.Printf("[task] >>>>>> [慢任务组] 执行完毕 <<<<<<\n\n")
 		}
 	} else if mode == "by-account" {
@@ -570,13 +608,13 @@ func (c *Task) execute(ctx context.Context) error {
 			var hasExecuted bool
 			if runFast {
 				c.cmd.Println("  --- [快任务组] ---")
-				if c.runQueue(ctx, fastQueue, []Account{account}, activeTasks, invalidSessions) {
+				if c.runQueue(ctx, fastQueue, []Account{account}, activeTasks, invalidSessions, earningsReports, !slowHasSignTasks) {
 					hasExecuted = true
 				}
 			}
 			if runSlow {
 				c.cmd.Println("  --- [慢任务组] ---")
-				if c.runQueue(ctx, slowQueue, []Account{account}, activeTasks, invalidSessions) {
+				if c.runQueue(ctx, slowQueue, []Account{account}, activeTasks, invalidSessions, earningsReports, true) {
 					hasExecuted = true
 				}
 			}

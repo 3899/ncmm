@@ -134,7 +134,25 @@ func (s *scheduler) list() []ScheduleView {
 		}
 		result = append(result, view)
 	}
+	configuredOrder := make(map[string]int, len(cfg.Jobs))
+	for index, job := range cfg.Jobs {
+		configuredOrder[job.ID] = index
+	}
 	sort.Slice(result, func(i, j int) bool {
+		if result[i].Enabled != result[j].Enabled {
+			return result[i].Enabled
+		}
+		if result[i].Pinned != result[j].Pinned {
+			return result[i].Pinned
+		}
+		leftOrder, leftConfigured := configuredOrder[result[i].ID]
+		rightOrder, rightConfigured := configuredOrder[result[j].ID]
+		if leftConfigured != rightConfigured {
+			return leftConfigured
+		}
+		if leftConfigured && leftOrder != rightOrder {
+			return leftOrder < rightOrder
+		}
 		if result[i].ReadOnly != result[j].ReadOnly {
 			return !result[i].ReadOnly
 		}
@@ -177,6 +195,20 @@ func (s *scheduler) delete(id string) error {
 		return fmt.Errorf("environment schedules are read-only")
 	}
 	if err := s.store.delete(id); err != nil {
+		return err
+	}
+	return s.reload()
+}
+
+func (s *scheduler) pin(id string) error {
+	job, ok := s.get(id)
+	if !ok {
+		return os.ErrNotExist
+	}
+	if job.ReadOnly {
+		return fmt.Errorf("environment schedules are read-only")
+	}
+	if err := s.store.pin(id); err != nil {
 		return err
 	}
 	return s.reload()

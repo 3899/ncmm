@@ -23,9 +23,6 @@ func ValidateSettings(settings Settings) error {
 	if settings.PasswordMinLength < 1 || settings.PasswordMinLength > maxPasswordLength {
 		return fmt.Errorf("密码最小长度需为 1-%d 个字符", maxPasswordLength)
 	}
-	if !settings.PasswordRequireLetters && !settings.PasswordRequireDigits && !settings.PasswordRequireSymbols {
-		return fmt.Errorf("至少需要启用一种密码字符类型")
-	}
 	if settings.SessionTTLSeconds < int64(minSessionTTL/time.Second) || settings.SessionTTLSeconds > int64(maxSessionTTL/time.Second) {
 		return fmt.Errorf("session TTL must be between 15 minutes and 90 days")
 	}
@@ -44,16 +41,12 @@ func ValidatePassword(password string, settings Settings) error {
 	}
 	var hasLetter, hasDigit, hasSymbol bool
 	for _, char := range []byte(password) {
-		switch {
-		case settings.PasswordRequireLetters && isASCIILetter(char):
-			hasLetter = true
-		case settings.PasswordRequireDigits && isASCIIDigit(char):
-			hasDigit = true
-		case settings.PasswordRequireSymbols && isASCIISymbol(char):
-			hasSymbol = true
-		default:
-			return fmt.Errorf("密码只能包含%s，不能包含空格、中文或未启用的字符类型", enabledPasswordTypesText(settings))
+		if char < '!' || char > '~' {
+			return fmt.Errorf("密码只能包含可见 ASCII 字符，不能包含空格或中文")
 		}
+		hasLetter = hasLetter || isASCIILetter(char)
+		hasDigit = hasDigit || isASCIIDigit(char)
+		hasSymbol = hasSymbol || isASCIISymbol(char)
 	}
 	if settings.PasswordRequireLetters && !hasLetter {
 		return fmt.Errorf("密码需包含英文字母")

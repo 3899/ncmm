@@ -32,8 +32,10 @@ type vipSignState struct {
 type vipGrowthState struct {
 	GrowthPoint         int64
 	TodayScore          int64
+	TodayScoreKnown     bool
 	MonthTaskTotalScore int64
 	CurrentDay          string
+	LatestVipStatus     int64
 }
 
 type vipMonthPrizeState struct {
@@ -127,23 +129,63 @@ func getVipGrowthState(ctx context.Context, request *eapi.Api, deviceId string) 
 		return vipGrowthState{}, fmt.Errorf("code=%d msg=%s", reply.Code, reply.Message)
 	}
 
-	state := vipGrowthState{GrowthPoint: reply.Data.UserLevel.GrowthPoint}
-	if reply.Data.UserLevel.ExtJson == "" {
+	state := vipGrowthState{
+		GrowthPoint:     reply.Data.UserLevel.GrowthPoint,
+		LatestVipStatus: reply.Data.UserLevel.LatestVipStatus,
+	}
+	if todayScore, monthScore, currentDay, ok := parseVipGrowthExt(reply.Data.UserLevel.ExtJson); ok {
+		state.TodayScore = todayScore
+		state.TodayScoreKnown = true
+		state.MonthTaskTotalScore = monthScore
+		state.CurrentDay = currentDay
 		return state, nil
 	}
 
+	// extJson 是服务端内嵌字符串，缺失或损坏时才补查明细，正常路径不会增加请求。
+	details, err := request.VipGrowthDetails(ctx, &eapi.VipGrowthDetailsReq{
+		EApiReqCommon: types.EApiReqCommon{
+			DeviceId: deviceId,
+			OS:       "iOS",
+			VerifyId: 1,
+			Header:   struct{}{},
+			ER:       true,
+		},
+		Limit:  20,
+		Offset: 0,
+	})
+	if err == nil && details.Code == 200 {
+		state.TodayScore = vipGrowthOnDate(details.Data.Details, time.Now().In(neteaseLocation).Format("2006-01-02"))
+		state.TodayScoreKnown = true
+	}
+	return state, nil
+}
+
+func parseVipGrowthExt(raw string) (todayScore int64, monthScore int64, currentDay string, ok bool) {
+	if raw == "" {
+		return 0, 0, "", false
+	}
 	var ext struct {
-		TodayScore          int64  `json:"todayScore"`
+		TodayScore          *int64 `json:"todayScore"`
 		MonthTaskTotalScore int64  `json:"monthTaskTotalScore"`
 		CurrentDay          string `json:"currentDay"`
 	}
-	if err := json.Unmarshal([]byte(reply.Data.UserLevel.ExtJson), &ext); err != nil {
-		return state, nil
+	if err := json.Unmarshal([]byte(raw), &ext); err != nil || ext.TodayScore == nil {
+		return 0, 0, "", false
 	}
-	state.TodayScore = ext.TodayScore
-	state.MonthTaskTotalScore = ext.MonthTaskTotalScore
-	state.CurrentDay = ext.CurrentDay
-	return state, nil
+	return *ext.TodayScore, ext.MonthTaskTotalScore, ext.CurrentDay, true
+}
+
+func vipGrowthOnDate(details []eapi.VipGrowthDetail, date string) int64 {
+	var total int64
+	for _, detail := range details {
+		if detail.Time <= 0 {
+			continue
+		}
+		if time.UnixMilli(detail.Time).In(neteaseLocation).Format("2006-01-02") == date {
+			total += detail.GrowthPoint
+		}
+	}
+	return total
 }
 
 func getVipMonthPrizeState(ctx context.Context, request *eapi.Api, deviceId string) (vipMonthPrizeState, error) {
@@ -268,7 +310,7 @@ func (c *SignIn) executeSingleVipTask(ctx context.Context, cli *api.Client, requ
 	}
 }
 
-func (c *SignIn) handleVipTasks(ctx context.Context, cli *api.Client, request *weapi.Api, userLevel int64) {
+func (c *SignIn) handleVipTasks(ctx context.Context, cli *api.Client, request *weapi.Api, userLevel int64) *vipGrowthState {
 	enableVipTask := true
 	if c.root.Cfg.Sign != nil && c.root.Cfg.Sign.EnableVipTask != nil {
 		enableVipTask = *c.root.Cfg.Sign.EnableVipTask
@@ -289,7 +331,7 @@ func (c *SignIn) handleVipTasks(ctx context.Context, cli *api.Client, request *w
 				c.cmd.Println("  ✅ 黑胶成长值已一键领取成功")
 			}
 		}
-		return
+		return nil
 	}
 
 	eapiRequest := eapi.New(cli)
@@ -307,8 +349,12 @@ func (c *SignIn) handleVipTasks(ctx context.Context, cli *api.Client, request *w
 	var signedToday bool
 	beforeTodayScore := int64(-1)
 	if growth, err := getVipGrowthState(ctx, eapiRequest, deviceId); err == nil {
-		beforeTodayScore = growth.TodayScore
-		c.cmd.Printf("  👉 [执行前] 黑胶成长值现状: 今日已获得 %d，当前成长值 %d\n", growth.TodayScore, growth.GrowthPoint)
+		if growth.TodayScoreKnown {
+			beforeTodayScore = growth.TodayScore
+			c.cmd.Printf("  👉 [执行前] 黑胶成长值现状: 今日已获得 %d，当前成长值 %d\n", growth.TodayScore, growth.GrowthPoint)
+		} else {
+			c.cmd.Printf("  👉 [执行前] 黑胶成长值现状: 今日累计未知，当前成长值 %d\n", growth.GrowthPoint)
+		}
 	} else {
 		c.cmd.Printf("  ⚠️ 获取黑胶成长值现状失败: %v\n", err)
 	}
@@ -318,7 +364,7 @@ func (c *SignIn) handleVipTasks(ctx context.Context, cli *api.Client, request *w
 		taskList, err := eapiRequest.VipTaskList(ctx, newVipTaskListReq(deviceId))
 		if err != nil || taskList.Code != 200 {
 			c.cmd.Printf("  ❌ 获取黑胶 VIP 任务列表失败: %v\n", err)
-			return
+			return nil
 		}
 
 		allTasks := taskList.Data
@@ -493,8 +539,14 @@ func (c *SignIn) handleVipTasks(ctx context.Context, cli *api.Client, request *w
 
 	// 再次获取并展示今日乐签和成长值状态以作对比
 	c.cmd.Println("  👉 获取执行后黑胶 VIP 状态以作对比...")
+	var finalGrowthState *vipGrowthState
 	if finalGrowth, err := getVipGrowthState(ctx, eapiRequest, deviceId); err == nil {
-		c.cmd.Printf("  👉 [执行后] 黑胶成长值最终状态: 今日已获得 %d，当前成长值 %d\n", finalGrowth.TodayScore, finalGrowth.GrowthPoint)
+		if finalGrowth.TodayScoreKnown {
+			c.cmd.Printf("  👉 [执行后] 黑胶成长值最终状态: 今日已获得 %d，当前成长值 %d\n", finalGrowth.TodayScore, finalGrowth.GrowthPoint)
+		} else {
+			c.cmd.Printf("  👉 [执行后] 黑胶成长值最终状态: 今日累计未知，当前成长值 %d\n", finalGrowth.GrowthPoint)
+		}
+		finalGrowthState = &finalGrowth
 	} else {
 		c.cmd.Printf("  ⚠️ 获取黑胶成长值最终状态失败: %v\n", err)
 	}
@@ -521,6 +573,7 @@ func (c *SignIn) handleVipTasks(ctx context.Context, cli *api.Client, request *w
 		}
 		c.cmd.Println("  ✅ 统一取消红心完成")
 	}
+	return finalGrowthState
 }
 
 // doVipSongLike 专门操作热门 VIP 歌曲，不干扰个人收藏歌单

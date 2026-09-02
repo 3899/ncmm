@@ -19,11 +19,14 @@ import (
 
 	"github.com/3899/ncmm/internal/loginresult"
 	webauth "github.com/3899/ncmm/internal/webui/auth"
+	"github.com/3899/ncmm/pkg/notify"
 	"gopkg.in/yaml.v3"
 )
 
 //go:embed static/*
 var staticFiles embed.FS
+
+var ErrRestartRequested = errors.New("WebUI restart requested")
 
 type Server struct {
 	opts         Options
@@ -37,8 +40,10 @@ type Server struct {
 	qrcode       *qrcodeLoginManager
 	processes    *processSupervisor
 	instance     instanceMetadata
+	startedAt    time.Time
 	updateMu     sync.Mutex
 	http         *http.Server
+	restartCh    chan struct{}
 }
 
 func New(ctx context.Context, opts Options) (*Server, error) {
@@ -82,7 +87,8 @@ func New(ctx context.Context, opts Options) (*Server, error) {
 		opts: opts, authManager: authManager, loginLimiter: newLoginRateLimiter(),
 		config: configRepository, notify: notifyStore,
 		webConfig: webConfig, runner: runner, scheduler: scheduler,
-		processes: processes,
+		processes: processes, startedAt: time.Now(),
+		restartCh: make(chan struct{}, 1),
 		qrcode: newQRCodeLoginManager(ctx, opts.Executable, opts.ConfigPath, opts.Home, func(expectedRevision string, result loginresult.Result) error {
 			_, updateErr := configRepository.updateAccount(expectedRevision, result)
 			return updateErr
@@ -118,6 +124,7 @@ func (s *Server) Run(ctx context.Context) error {
 		return err
 	}
 	s.instance = metadata
+	s.startedAt = metadata.StartedAt
 	s.scheduler.start()
 	defer s.scheduler.close()
 	s.opts.Output("[webui] listening on http://%s (instance %s)\n", listen, metadata.InstanceID)
@@ -135,6 +142,13 @@ func (s *Server) Run(ctx context.Context) error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		return s.http.Shutdown(shutdownCtx)
+	case <-s.restartCh:
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := s.http.Shutdown(shutdownCtx); err != nil {
+			return err
+		}
+		return ErrRestartRequested
 	case err := <-errCh:
 		return err
 	}
@@ -170,21 +184,28 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/update", s.handleUpdateGet)
 	mux.HandleFunc("POST /api/v1/update/check", s.handleUpdateCheck)
 	mux.HandleFunc("POST /api/v1/update/apply", s.handleUpdateApply)
+	mux.HandleFunc("GET /api/v1/config/schema", s.handleConfigSchemaGet)
 	mux.HandleFunc("GET /api/v1/config", s.handleConfigGet)
 	mux.HandleFunc("PUT /api/v1/config", s.handleConfigPut)
 	mux.HandleFunc("GET /api/v1/notify", s.handleNotifyGet)
 	mux.HandleFunc("PUT /api/v1/notify", s.handleNotifyPut)
+	mux.HandleFunc("POST /api/v1/notify/{channel}/test", s.handleNotifyTest)
 	mux.HandleFunc("GET /api/v1/settings", s.handleSettingsGet)
 	mux.HandleFunc("PUT /api/v1/settings", s.handleSettingsPut)
 	mux.HandleFunc("GET /api/v1/schedules", s.handleSchedulesGet)
 	mux.HandleFunc("POST /api/v1/schedules", s.handleSchedulesPost)
 	mux.HandleFunc("PUT /api/v1/schedules/{id}", s.handleSchedulePut)
 	mux.HandleFunc("DELETE /api/v1/schedules/{id}", s.handleScheduleDelete)
+	mux.HandleFunc("POST /api/v1/schedules/{id}/pin", s.handleSchedulePin)
 	mux.HandleFunc("POST /api/v1/schedules/{id}/run", s.handleScheduleRun)
 	mux.HandleFunc("GET /api/v1/runs", s.handleRunsGet)
+	mux.HandleFunc("GET /api/v1/play-stats", s.handlePlayStatsGet)
 	mux.HandleFunc("GET /api/v1/runs/{id}/log", s.handleRunLog)
 	mux.HandleFunc("POST /api/v1/runs/{id}/stop", s.handleRunStop)
+	mux.HandleFunc("DELETE /api/v1/runs/{id}", s.handleRunDelete)
 	mux.HandleFunc("POST /api/v1/logs/cleanup", s.handleLogsCleanup)
+	mux.HandleFunc("POST /api/v1/logs/cleanup/advanced", s.handleLogsAdvancedCleanup)
+	mux.HandleFunc("POST /api/v1/system/restart", s.handleSystemRestart)
 	mux.HandleFunc("POST /api/v1/accounts/cookie", s.handleCookieImport)
 	mux.HandleFunc("GET /api/v1/accounts/qrcode", s.handleQRCodeLoginCurrent)
 	mux.HandleFunc("POST /api/v1/accounts/qrcode", s.handleQRCodeLoginStart)
@@ -194,13 +215,26 @@ func (s *Server) routes() http.Handler {
 
 	staticFS, _ := fs.Sub(staticFiles, "static")
 	fileServer := http.FileServer(http.FS(staticFS))
-	mux.Handle("/", fileServer)
+	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		if r.Method == http.MethodGet && frontendRoute(r.URL.Path) {
+			data, err := fs.ReadFile(staticFS, "index.html")
+			if err != nil {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write(data)
+			return
+		}
+		fileServer.ServeHTTP(w, r)
+	}))
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "no-referrer")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob: https://*.music.126.net; connect-src 'self'; frame-ancestors 'none'")
 		listen := s.opts.Listen
 		if listen == "" {
 			listen = defaultListen
@@ -214,7 +248,7 @@ func (s *Server) routes() http.Handler {
 				writeError(w, http.StatusForbidden, "cross-origin request is not allowed")
 				return
 			}
-			if !publicAuthRequest(r) {
+			if !publicAuthRequest(r) && s.authManager.ProtectionEnabled() {
 				authenticated, ok := s.authenticateRequest(r)
 				if !ok {
 					writeError(w, http.StatusUnauthorized, "authentication required")
@@ -229,6 +263,15 @@ func (s *Server) routes() http.Handler {
 		}
 		mux.ServeHTTP(w, r)
 	})
+}
+
+func frontendRoute(path string) bool {
+	switch path {
+	case "/", "/account", "/task", "/config", "/logs", "/system":
+		return true
+	default:
+		return false
+	}
 }
 
 type requestAuth struct {
@@ -294,16 +337,106 @@ func mutationSourceAllowed(r *http.Request) bool {
 	return err == nil && parsed.Scheme != "" && strings.EqualFold(parsed.Host, r.Host)
 }
 
-func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	doc, _ := s.config.get()
+	listenURL, webURL := s.webURLs(r)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"version": s.opts.Version, "commit": s.opts.Commit, "buildTime": s.opts.BuildTime,
+		"version": s.opts.Version, "commit": s.opts.Commit, "branch": s.opts.Branch, "buildTime": s.opts.BuildTime,
+		"startedAt":       s.startedAt,
 		"schedulerActive": s.scheduler.isActive(),
 		"timezone":        s.scheduler.timezone(),
 		"schedules":       len(s.scheduler.list()), "running": s.runner.runningCount(),
 		"queued": s.runner.queuedCount(),
 		"logs":   s.runner.stats(), "configRevision": doc.Revision,
+		"listenUrl": listenURL, "webUrl": webURL,
+		"paths": map[string]string{
+			"executable": absolutePath(s.opts.Executable),
+			"database":   s.databasePath(doc),
+			"config":     absolutePath(s.opts.ConfigPath),
+			"notify":     absolutePath(s.notify.path),
+		},
 	})
+}
+
+func (s *Server) webURLs(r *http.Request) (string, string) {
+	listen := s.opts.Listen
+	if s.instance.Listen != "" {
+		listen = s.instance.Listen
+	}
+	host, port, err := net.SplitHostPort(listen)
+	if err != nil {
+		host, port = "127.0.0.1", "3899"
+	}
+	if host == "" {
+		host = "0.0.0.0"
+	}
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	listenURL := scheme + "://" + net.JoinHostPort(host, port)
+	webHost := firstLANIPv4()
+	if webHost == "" {
+		webHost = host
+		if webHost == "0.0.0.0" || webHost == "::" {
+			webHost = "127.0.0.1"
+		}
+	}
+	return listenURL, scheme + "://" + net.JoinHostPort(webHost, port)
+}
+
+func firstLANIPv4() string {
+	interfaces, _ := net.Interfaces()
+	var fallback string
+	for _, networkInterface := range interfaces {
+		if networkInterface.Flags&net.FlagUp == 0 || networkInterface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addresses, _ := networkInterface.Addrs()
+		for _, address := range addresses {
+			ip, _, err := net.ParseCIDR(address.String())
+			if err != nil || ip.To4() == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
+				continue
+			}
+			if ip.IsPrivate() {
+				return ip.String()
+			}
+			if fallback == "" {
+				fallback = ip.String()
+			}
+		}
+	}
+	return fallback
+}
+
+func absolutePath(path string) string {
+	if path == "" {
+		return ""
+	}
+	if absolute, err := filepath.Abs(path); err == nil {
+		return filepath.Clean(absolute)
+	}
+	return filepath.Clean(path)
+}
+
+func (s *Server) databasePath(document configDocument) string {
+	root, ok := document.Data.(map[string]any)
+	if !ok {
+		return ""
+	}
+	database, ok := root["database"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	path, _ := database["path"].(string)
+	path = strings.ReplaceAll(strings.TrimSpace(path), "${HOME}", s.opts.Home)
+	if path == "" {
+		return ""
+	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(filepath.Dir(s.opts.ConfigPath), path)
+	}
+	return absolutePath(path)
 }
 
 func (s *Server) handleConfigGet(w http.ResponseWriter, _ *http.Request) {
@@ -312,7 +445,11 @@ func (s *Server) handleConfigGet(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, doc)
+	writeJSON(w, http.StatusOK, withYAMLSections(doc))
+}
+
+func (s *Server) handleConfigSchemaGet(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, configurationSchema())
 }
 
 func (s *Server) handleConfigPut(w http.ResponseWriter, r *http.Request) {
@@ -320,6 +457,7 @@ func (s *Server) handleConfigPut(w http.ResponseWriter, r *http.Request) {
 		Revision string  `json:"revision"`
 		Raw      *string `json:"raw"`
 		Data     any     `json:"data"`
+		Section  string  `json:"section"`
 	}
 	if !decodeJSON(w, r, &req, 4<<20) {
 		return
@@ -327,7 +465,11 @@ func (s *Server) handleConfigPut(w http.ResponseWriter, r *http.Request) {
 	var doc configDocument
 	var err error
 	if req.Raw != nil {
-		doc, err = s.config.saveRaw(req.Revision, *req.Raw)
+		if req.Section != "" {
+			doc, err = s.config.saveSectionRaw(req.Revision, req.Section, *req.Raw)
+		} else {
+			doc, err = s.config.saveRaw(req.Revision, *req.Raw)
+		}
 	} else if req.Data != nil {
 		doc, err = s.config.saveData(req.Revision, req.Data)
 	} else {
@@ -337,7 +479,7 @@ func (s *Server) handleConfigPut(w http.ResponseWriter, r *http.Request) {
 		writeError(w, configWriteStatus(err), err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, doc)
+	writeJSON(w, http.StatusOK, withYAMLSections(doc))
 }
 
 func (s *Server) handleNotifyGet(w http.ResponseWriter, _ *http.Request) {
@@ -346,7 +488,7 @@ func (s *Server) handleNotifyGet(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, doc)
+	writeJSON(w, http.StatusOK, withYAMLSections(doc))
 }
 
 func (s *Server) handleNotifyPut(w http.ResponseWriter, r *http.Request) {
@@ -354,6 +496,7 @@ func (s *Server) handleNotifyPut(w http.ResponseWriter, r *http.Request) {
 		Revision string  `json:"revision"`
 		Raw      *string `json:"raw"`
 		Data     any     `json:"data"`
+		Section  string  `json:"section"`
 	}
 	if !decodeJSON(w, r, &req, 2<<20) {
 		return
@@ -361,7 +504,15 @@ func (s *Server) handleNotifyPut(w http.ResponseWriter, r *http.Request) {
 	var doc configDocument
 	var err error
 	if req.Raw != nil {
-		doc, err = s.notify.saveRaw(req.Revision, *req.Raw)
+		if req.Section != "" {
+			if !validNotifyChannel(req.Section) {
+				writeError(w, http.StatusBadRequest, "unknown notify channel")
+				return
+			}
+			doc, err = s.notify.saveSectionRaw(req.Revision, req.Section, *req.Raw)
+		} else {
+			doc, err = s.notify.saveRaw(req.Revision, *req.Raw)
+		}
 	} else if req.Data != nil {
 		doc, err = s.notify.saveData(req.Revision, req.Data)
 	} else {
@@ -371,7 +522,88 @@ func (s *Server) handleNotifyPut(w http.ResponseWriter, r *http.Request) {
 		writeError(w, configWriteStatus(err), err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, doc)
+	writeJSON(w, http.StatusOK, withYAMLSections(doc))
+}
+
+func (s *Server) handleNotifyTest(w http.ResponseWriter, r *http.Request) {
+	channel := r.PathValue("channel")
+	name, ok := notifyChannelNames[channel]
+	if !ok {
+		writeError(w, http.StatusNotFound, "unknown notify channel")
+		return
+	}
+	cfg, _, err := notify.LoadChannels(s.notify.path)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	selected, err := selectNotifyChannel(cfg, channel)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	dispatcher := notify.NewDispatcher(selected, 10*time.Second)
+	if dispatcher.Len() != 1 {
+		writeError(w, http.StatusBadRequest, "当前通道配置不完整")
+		return
+	}
+	message := notify.Message{
+		Title:   name + " 信使打卡成功✅",
+		Content: "服务支持：NCMM 开源项目\n简介：网易云音乐一站式任务管理系统\nGitHub：https://github.com/3899/ncmm",
+		Level:   "info",
+	}
+	if err := dispatcher.SendAll(r.Context(), message); err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sent": true, "channel": channel, "name": name})
+}
+
+var notifyChannelNames = map[string]string{
+	"webhook": "Webhook", "bark": "Bark", "serverchan": "Server 酱",
+	"telegram": "Telegram", "dingtalk": "钉钉", "coolpush": "CoolPush",
+	"pushplus": "PushPlus", "wecom_key": "企业微信群", "wecom_app": "企业微信应用",
+}
+
+func validNotifyChannel(channel string) bool {
+	_, ok := notifyChannelNames[channel]
+	return ok
+}
+
+func selectNotifyChannel(cfg *notify.ChannelsConfig, channel string) (*notify.ChannelsConfig, error) {
+	selected := &notify.ChannelsConfig{}
+	switch channel {
+	case "webhook":
+		selected.Webhook = cfg.Webhook
+		selected.Webhook.Enabled = true
+	case "bark":
+		selected.Bark = cfg.Bark
+		selected.Bark.Enabled = true
+	case "serverchan":
+		selected.ServerChan = cfg.ServerChan
+		selected.ServerChan.Enabled = true
+	case "telegram":
+		selected.Telegram = cfg.Telegram
+		selected.Telegram.Enabled = true
+	case "dingtalk":
+		selected.DingTalk = cfg.DingTalk
+		selected.DingTalk.Enabled = true
+	case "coolpush":
+		selected.CoolPush = cfg.CoolPush
+		selected.CoolPush.Enabled = true
+	case "pushplus":
+		selected.PushPlus = cfg.PushPlus
+		selected.PushPlus.Enabled = true
+	case "wecom_key":
+		selected.WeComKey = cfg.WeComKey
+		selected.WeComKey.Enabled = true
+	case "wecom_app":
+		selected.WeComApp = cfg.WeComApp
+		selected.WeComApp.Enabled = true
+	default:
+		return nil, fmt.Errorf("unknown notify channel %q", channel)
+	}
+	return selected, nil
 }
 
 func resolveNotifyPath(configPath, home string) (string, error) {
@@ -486,6 +718,18 @@ func (s *Server) handleScheduleDelete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (s *Server) handleSchedulePin(w http.ResponseWriter, r *http.Request) {
+	if err := s.scheduler.pin(r.PathValue("id")); err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, os.ErrNotExist) {
+			status = http.StatusNotFound
+		}
+		writeError(w, status, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) handleScheduleRun(w http.ResponseWriter, r *http.Request) {
 	record, err := s.scheduler.runNow(r.PathValue("id"))
 	if err != nil {
@@ -522,12 +766,48 @@ func (s *Server) handleRunStop(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, map[string]bool{"stopping": true})
 }
 
+func (s *Server) handleRunDelete(w http.ResponseWriter, r *http.Request) {
+	if err := s.runner.deleteRun(r.PathValue("id")); err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, os.ErrNotExist) {
+			status = http.StatusNotFound
+		}
+		writeError(w, status, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) handleLogsCleanup(w http.ResponseWriter, _ *http.Request) {
 	if err := s.runner.cleanup(); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, s.runner.stats())
+}
+
+func (s *Server) handleLogsAdvancedCleanup(w http.ResponseWriter, r *http.Request) {
+	var filter LogCleanupFilter
+	if !decodeJSON(w, r, &filter, 32<<10) {
+		return
+	}
+	result, err := s.runner.cleanupMatching(filter)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handleSystemRestart(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusAccepted, map[string]bool{"restarting": true})
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		select {
+		case s.restartCh <- struct{}{}:
+		default:
+		}
+	}()
 }
 
 func (s *Server) handleCookieImport(w http.ResponseWriter, r *http.Request) {

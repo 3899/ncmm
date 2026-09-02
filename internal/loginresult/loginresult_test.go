@@ -7,7 +7,7 @@ import (
 )
 
 func TestWriteAndParse(t *testing.T) {
-	want := Result{UID: 123, Nickname: "tester", CookiePath: "C:\\data\\fan.json", AccountPath: "${HOME}/fan.json", Main: false}
+	want := Result{UID: 123, Nickname: "tester", AvatarURL: "https://p1.music.126.net/avatar.jpg", CookiePath: "C:\\data\\fan.json", AccountPath: "${HOME}/fan.json", Main: false}
 	var output bytes.Buffer
 	output.WriteString("ordinary command output\n")
 	if err := Write(&output, want); err != nil {
@@ -17,7 +17,7 @@ func TestWriteAndParse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.UID != want.UID || got.Nickname != want.Nickname || got.CookiePath != want.CookiePath || got.AccountPath != want.AccountPath || got.Main != want.Main {
+	if got.UID != want.UID || got.Nickname != want.Nickname || got.AvatarURL != want.AvatarURL || got.CookiePath != want.CookiePath || got.AccountPath != want.AccountPath || got.Main != want.Main {
 		t.Fatalf("Parse() = %+v; want %+v", got, want)
 	}
 }

@@ -363,6 +363,9 @@ func (c *Musician) runMusicianForCookie(ctx context.Context, cookieFile string, 
 	// 第二阶段：音乐人 VIP 任务
 	c.doVipPhase(ctx, mctx, cookieFile)
 
+	// 统计接口每天 09:00 后最多请求一次；历史缺口才调用趋势接口回补。
+	c.syncAndPrintPlayStats(ctx, mctx, cookieFile)
+
 	return nil
 }
 
@@ -436,6 +439,7 @@ func (c *Musician) RunSignForCookie(ctx context.Context, cookieFile string) erro
 	defer mctx.close(ctx)
 
 	c.doSignPhase(ctx, mctx, cookieFile)
+	c.syncAndPrintPlayStats(ctx, mctx, cookieFile)
 	return nil
 }
 
@@ -509,6 +513,7 @@ func (c *Musician) RunVipForCookie(ctx context.Context, cookieFile string) error
 	defer mctx.close(ctx)
 
 	c.doVipPhase(ctx, mctx, cookieFile)
+	c.syncAndPrintPlayStats(ctx, mctx, cookieFile)
 	return nil
 }
 

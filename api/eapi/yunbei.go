@@ -128,8 +128,6 @@ func (a *Api) YunbeiDistributionCreate(ctx context.Context, req *YunbeiDistribut
 	return &reply, nil
 }
 
-
-
 type YunbeiReserveInfoReq struct {
 }
 
@@ -216,6 +214,51 @@ func (a *Api) YunbeiReserveRewardReceive(ctx context.Context, req *YunbeiReserve
 	return &reply, nil
 }
 
+type YunbeiReceiptReq struct {
+	types.EApiReqCommon
+	Limit  int64 `json:"limit"`
+	Offset int64 `json:"offset"`
+	Total  bool  `json:"total"`
+	UserId int64 `json:"userId"`
+}
+
+type YunbeiReceiptResp struct {
+	Code    int                 `json:"code"`
+	Count   int64               `json:"count"`
+	Data    []YunbeiReceiptData `json:"data"`
+	Message string              `json:"message"`
+}
+
+type YunbeiReceiptData struct {
+	Date          string      `json:"date"`
+	Fixed         string      `json:"fixed"`
+	Id            int64       `json:"id"`
+	OrderId       interface{} `json:"orderId"`
+	PointCost     int64       `json:"pointCost"`
+	SpecialStatus interface{} `json:"specialStatus"`
+	Type          int64       `json:"type"`
+	Variable      string      `json:"variable"`
+}
+
+// YunbeiReceipt 获取云贝收入流水。收入与支出是两个独立接口，本接口只返回收入。
+func (a *Api) YunbeiReceipt(ctx context.Context, req *YunbeiReceiptReq) (*YunbeiReceiptResp, error) {
+	var (
+		url   = "https://interface3.music.163.com/eapi/new/yunbei/point/receipt"
+		reply YunbeiReceiptResp
+		opts  = api.NewOptions()
+	)
+	if req.Limit <= 0 {
+		req.Limit = 50
+	}
+	opts.CryptoMode = api.CryptoModeEAPI
+	resp, err := a.client.Request(ctx, url, req, &reply, opts)
+	if err != nil {
+		return nil, fmt.Errorf("Request: %w", err)
+	}
+	_ = resp
+	return &reply, nil
+}
+
 type YunBeiTaskTodoReq struct{}
 
 type YunBeiTaskTodoResp struct {
@@ -249,4 +292,3 @@ func (a *Api) YunBeiTaskTodo(ctx context.Context, req *YunBeiTaskTodoReq) (*YunB
 	_ = resp
 	return &reply, nil
 }
-

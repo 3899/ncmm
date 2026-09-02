@@ -60,7 +60,7 @@ func (c *Login) Command() *cobra.Command {
 }
 
 // saveLoginResult 处理登录 Cookie 的保存，根据主/辅账号智能推导输出文件名，并回写带有昵称注释的账号配置到 config.yaml
-func (c *Login) saveLoginResult(ctx context.Context, nickname string, uid int64, tempCookieFile string, customOutput string, rawInputName string) error {
+func (c *Login) saveLoginResult(ctx context.Context, nickname, avatarURL string, uid int64, tempCookieFile string, customOutput string, rawInputName string) error {
 	var targetDir string
 	if c.root.Cfg != nil && c.root.Cfg.Network != nil && c.root.Cfg.Network.Cookie.Filepath != "" {
 		targetDir = filepath.Dir(c.root.Cfg.Network.Cookie.Filepath)
@@ -128,7 +128,7 @@ func (c *Login) saveLoginResult(ctx context.Context, nickname string, uid int64,
 	// 规范化显示路径为包含 ${HOME} 的相对路径形式（若位于 Home 目录下）
 	finalPathDisplay := formatHomePath(finalPath)
 	result := loginresult.Result{
-		UID: uid, Nickname: nickname, CookiePath: finalPath,
+		UID: uid, Nickname: nickname, AvatarURL: avatarURL, CookiePath: finalPath,
 		AccountPath: finalPathDisplay, Main: c.isMain,
 	}
 	writeResult := func() error {

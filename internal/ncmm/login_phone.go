@@ -161,7 +161,7 @@ func (c *loginPhoneCmd) execute(ctx context.Context, args []string) error {
 	}
 	c.cmd.Printf("login success: uid=%d nickname=%s\n", user.Account.Id, user.Profile.Nickname)
 
-	err = c.root.saveLoginResult(ctx, user.Profile.Nickname, user.Account.Id, tempCookieFile, "", cellphone)
+	err = c.root.saveLoginResult(ctx, user.Profile.Nickname, user.Profile.AvatarUrl, user.Account.Id, tempCookieFile, "", cellphone)
 	if err != nil {
 		return err
 	}

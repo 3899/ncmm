@@ -1,70 +1,214 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" class="auth-pending">
+
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" href="data:,">
   <meta name="color-scheme" content="light dark">
-  <title>NCMM Control</title>
-  <link rel="stylesheet" href="/app.css">
+  <title>NCMM - 网易云音乐任务系统</title>
+  <link rel="stylesheet" href="/app.css?v=3.1">
+  <link rel="stylesheet" href="/workspace.css?v=3.1">
 </head>
+
 <body>
   <svg class="icon-sprite" aria-hidden="true">
-    <symbol id="i-dashboard" viewBox="0 0 24 24"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></symbol>
-    <symbol id="i-settings" viewBox="0 0 24 24"><path d="M12.2 2h-.4a2 2 0 0 0-2 2v.2a2 2 0 0 1-1 1.7l-.4.2a2 2 0 0 1-2 0l-.2-.1a2 2 0 0 0-2.7.7l-.2.4a2 2 0 0 0 .7 2.7l.2.1a2 2 0 0 1 1 1.7v.5a2 2 0 0 1-1 1.7l-.2.1a2 2 0 0 0-.7 2.7l.2.4a2 2 0 0 0 2.7.7l.2-.1a2 2 0 0 1 2 0l.4.2a2 2 0 0 1 1 1.7v.2a2 2 0 0 0 2 2h.4a2 2 0 0 0 2-2v-.2a2 2 0 0 1 1-1.7l.4-.2a2 2 0 0 1 2 0l.2.1a2 2 0 0 0 2.7-.7l.2-.4a2 2 0 0 0-.7-2.7l-.2-.1a2 2 0 0 1-1-1.7v-.5a2 2 0 0 1 1-1.7l.2-.1a2 2 0 0 0 .7-2.7l-.2-.4a2 2 0 0 0-2.7-.7l-.2.1a2 2 0 0 1-2 0l-.4-.2a2 2 0 0 1-1-1.7V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></symbol>
-    <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 0 0-16 0"/></symbol>
-    <symbol id="i-calendar" viewBox="0 0 24 24"><path d="M8 2v4m8-4v4M3 10h18"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="m9 16 2 2 4-4"/></symbol>
-    <symbol id="i-log" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8m-8 4h8"/></symbol>
-    <symbol id="i-save" viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></symbol>
-    <symbol id="i-play" viewBox="0 0 24 24"><path d="m6 3 14 9-14 9z"/></symbol>
-    <symbol id="i-stop" viewBox="0 0 24 24"><rect width="14" height="14" x="5" y="5" rx="1"/></symbol>
-    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
-    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2m2 0-1 15H7L6 6m4 5v6m4-6v6"/></symbol>
-    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 6v6h-6M4 18v-6h6"/><path d="M18.5 9a7 7 0 0 0-12-2.5L4 9m16 6-2.5 2.5A7 7 0 0 1 5.5 15"/></symbol>
-    <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
-    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/></symbol>
-    <symbol id="i-exit" viewBox="0 0 24 24"><path d="M10 17l5-5-5-5m5 5H3m12-9h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/></symbol>
-    <symbol id="i-edit" viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4z"/></symbol>
-    <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
-    <symbol id="i-github" viewBox="0 0 24 24"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3.5 0 7-1.7 7-7.5a5.8 5.8 0 0 0-1.5-4A5.4 5.4 0 0 0 19.4 1S18.2.6 15 2.7a13.4 13.4 0 0 0-6 0C5.8.6 4.6 1 4.6 1a5.4 5.4 0 0 0-.1 2A5.8 5.8 0 0 0 3 7c0 5.8 3.5 7.5 7 7.5a4.8 4.8 0 0 0-1 3.5v4"/><path d="M9 18c-3.5 1.6-4-1.5-5.5-2M21 16c-1.5.5-2 3.6-5.5 2"/></symbol>
-    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-8 9-4.5-1.5-8-4-8-9V5l8-3 8 3z"/><path d="m9 12 2 2 4-4"/></symbol>
-    <symbol id="i-key" viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6M15 6l3 3M18 3l3 3"/></symbol>
-    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M5 21h14"/></symbol>
-    <symbol id="i-qr" viewBox="0 0 24 24"><rect width="5" height="5" x="3" y="3" rx="1"/><rect width="5" height="5" x="16" y="3" rx="1"/><rect width="5" height="5" x="3" y="16" rx="1"/><path d="M16 16h2v2h-2zm4 0v4h-4m4-9v2m-9-2h2v2h-2z"/></symbol>
-    <symbol id="i-lock" viewBox="0 0 24 24"><rect width="16" height="11" x="4" y="11" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></symbol>
-    <symbol id="i-arrow-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
-    <symbol id="i-star" viewBox="0 0 24 24"><path d="m12 2.8 2.8 5.7 6.3.9-4.5 4.4 1.1 6.2-5.7-3-5.7 3 1.1-6.2-4.5-4.4 6.3-.9z"/></symbol>
-    <symbol id="i-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v5m0 3h.01"/></symbol>
+    <symbol id="i-dashboard" viewBox="0 0 24 24">
+      <rect width="7" height="9" x="3" y="3" rx="1" />
+      <rect width="7" height="5" x="14" y="3" rx="1" />
+      <rect width="7" height="9" x="14" y="12" rx="1" />
+      <rect width="7" height="5" x="3" y="16" rx="1" />
+    </symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24">
+      <path
+        d="M12.2 2h-.4a2 2 0 0 0-2 2v.2a2 2 0 0 1-1 1.7l-.4.2a2 2 0 0 1-2 0l-.2-.1a2 2 0 0 0-2.7.7l-.2.4a2 2 0 0 0 .7 2.7l.2.1a2 2 0 0 1 1 1.7v.5a2 2 0 0 1-1 1.7l-.2.1a2 2 0 0 0-.7 2.7l.2.4a2 2 0 0 0 2.7.7l.2-.1a2 2 0 0 1 2 0l.4.2a2 2 0 0 1 1 1.7v.2a2 2 0 0 0 2 2h.4a2 2 0 0 0 2-2v-.2a2 2 0 0 1 1-1.7l.4-.2a2 2 0 0 1 2 0l.2.1a2 2 0 0 0 2.7-.7l.2-.4a2 2 0 0 0-.7-2.7l-.2-.1a2 2 0 0 1-1-1.7v-.5a2 2 0 0 1 1-1.7l.2-.1a2 2 0 0 0 .7-2.7l-.2-.4a2 2 0 0 0-2.7-.7l-.2.1a2 2 0 0 1-2 0l-.4-.2a2 2 0 0 1-1-1.7V4a2 2 0 0 0-2-2z" />
+      <circle cx="12" cy="12" r="3" />
+    </symbol>
+    <symbol id="i-user" viewBox="0 0 24 24">
+      <circle cx="12" cy="8" r="5" />
+      <path d="M20 21a8 8 0 0 0-16 0" />
+    </symbol>
+    <symbol id="i-users" viewBox="0 0 24 24">
+      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+      <circle cx="9" cy="7" r="4" />
+      <path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
+    </symbol>
+    <symbol id="i-calendar" viewBox="0 0 24 24">
+      <path d="M8 2v4m8-4v4M3 10h18" />
+      <rect width="18" height="18" x="3" y="4" rx="2" />
+      <path d="m9 16 2 2 4-4" />
+    </symbol>
+    <symbol id="i-log" viewBox="0 0 24 24">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <path d="M14 2v6h6M8 13h8m-8 4h8" />
+    </symbol>
+    <symbol id="i-save" viewBox="0 0 24 24">
+      <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+      <path d="M17 21v-8H7v8M7 3v5h8" />
+    </symbol>
+    <symbol id="i-play" viewBox="0 0 24 24">
+      <path d="m6 3 14 9-14 9z" />
+    </symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24">
+      <rect width="14" height="14" x="5" y="5" rx="1" />
+    </symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24">
+      <path d="M12 5v14M5 12h14" />
+    </symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24">
+      <path d="M3 6h18M8 6V4h8v2m2 0-1 15H7L6 6m4 5v6m4-6v6" />
+    </symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24">
+      <path d="M20 6v6h-6M4 18v-6h6" />
+      <path d="M18.5 9a7 7 0 0 0-12-2.5L4 9m16 6-2.5 2.5A7 7 0 0 1 5.5 15" />
+    </symbol>
+    <symbol id="i-sync" viewBox="0 0 24 24">
+      <path d="M20 11a8 8 0 1 0-2.34 5.66" />
+      <path d="M20 4v7h-7" />
+    </symbol>
+    <symbol id="i-more-vertical" viewBox="0 0 24 24">
+      <circle cx="12" cy="5" r="1" />
+      <circle cx="12" cy="12" r="1" />
+      <circle cx="12" cy="19" r="1" />
+    </symbol>
+    <symbol id="i-pin" viewBox="0 0 24 24">
+      <path d="M12 17v5" />
+      <path d="M5 17h14" />
+      <path d="m7 3 1 8-3 3h14l-3-3 1-8z" />
+    </symbol>
+    <symbol id="i-menu" viewBox="0 0 24 24">
+      <path d="M4 6h16M4 12h16M4 18h16" />
+    </symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24">
+      <path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z" />
+    </symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="4" />
+      <path
+        d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42" />
+    </symbol>
+    <symbol id="i-exit" viewBox="0 0 24 24">
+      <path d="M10 17l5-5-5-5m5 5H3m12-9h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" />
+    </symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24">
+      <path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4z" />
+    </symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24">
+      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" />
+      <circle cx="12" cy="12" r="3" />
+    </symbol>
+    <symbol id="i-github" viewBox="0 0 24 24">
+      <path fill="currentColor" stroke="none"
+        d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z" />
+    </symbol>
+    <symbol id="i-update-check" viewBox="0 0 24 24">
+      <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+      <path d="M3 3v5h5" />
+      <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
+      <path d="M16 21h5v-5" />
+    </symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24">
+      <path d="M20 13c0 5-3.5 7.5-8 9-4.5-1.5-8-4-8-9V5l8-3 8 3z" />
+      <path d="m9 12 2 2 4-4" />
+    </symbol>
+    <symbol id="i-monitor" viewBox="0 0 24 24">
+      <rect width="20" height="14" x="2" y="3" rx="2" />
+      <path d="M8 21h8m-4-4v4" />
+    </symbol>
+    <symbol id="i-storage" viewBox="0 0 24 24">
+      <rect width="20" height="8" x="2" y="2" rx="2" />
+      <rect width="20" height="8" x="2" y="14" rx="2" />
+      <path d="M6 6h.01M6 18h.01" />
+    </symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24">
+      <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 0 1-3.46 0" />
+    </symbol>
+    <symbol id="i-key" viewBox="0 0 24 24">
+      <circle cx="7.5" cy="15.5" r="5.5" />
+      <path d="m21 2-9.6 9.6M15 6l3 3M18 3l3 3" />
+    </symbol>
+    <symbol id="i-download" viewBox="0 0 24 24">
+      <path d="M12 3v12m-5-5 5 5 5-5M5 21h14" />
+    </symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24">
+      <rect width="14" height="14" x="8" y="8" rx="2" />
+      <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
+    </symbol>
+    <symbol id="i-restart" viewBox="0 0 24 24">
+      <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+      <path d="M3 3v5h5" />
+    </symbol>
+    <symbol id="i-robot" viewBox="0 0 24 24">
+      <rect width="18" height="13" x="3" y="8" rx="2" />
+      <path d="M12 4v4M8 13h.01M16 13h.01M8 17h8" />
+    </symbol>
+    <symbol id="i-minus" viewBox="0 0 24 24">
+      <path d="M5 12h14" />
+    </symbol>
+    <symbol id="i-qr" viewBox="0 0 24 24">
+      <rect width="5" height="5" x="3" y="3" rx="1" />
+      <rect width="5" height="5" x="16" y="3" rx="1" />
+      <rect width="5" height="5" x="3" y="16" rx="1" />
+      <path d="M16 16h2v2h-2zm4 0v4h-4m4-9v2m-9-2h2v2h-2z" />
+    </symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24">
+      <rect width="16" height="11" x="4" y="11" rx="2" />
+      <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+    </symbol>
+    <symbol id="i-arrow-right" viewBox="0 0 24 24">
+      <path d="m9 18 6-6-6-6" />
+    </symbol>
+    <symbol id="i-star" viewBox="0 0 24 24">
+      <path d="m12 2.8 2.8 5.7 6.3.9-4.5 4.4 1.1 6.2-5.7-3-5.7 3 1.1-6.2-4.5-4.4 6.3-.9z" />
+    </symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 8v5m0 3h.01" />
+    </symbol>
   </svg>
 
   <section id="login-view" class="login-view">
     <div class="login-stack">
       <header class="login-heading">
         <h1 id="auth-title">NCMM</h1>
-        <p id="auth-subtitle">网易云音乐任务管理后台</p>
+        <p id="auth-subtitle">网易云音乐一站式任务管理系统</p>
       </header>
       <div class="login-panel">
         <form id="auth-form" class="auth-form" novalidate>
-          <div id="login-logo" class="login-logo" aria-label="NCMM"><span>N</span></div>
+          <div id="login-logo" class="login-logo" aria-label="NCMM">
+            <svg aria-hidden="true" viewBox="0 0 24 24">
+              <circle cx="12" cy="12" r="10" />
+              <polygon points="10 8 16 12 10 16 10 8" />
+            </svg>
+          </div>
           <div class="auth-fields">
             <div class="auth-password-field">
-              <svg aria-hidden="true"><use href="#i-lock"/></svg>
-              <input id="password-input" type="password" maxlength="64" autocomplete="current-password" placeholder="管理员密码" aria-label="管理员密码" required autofocus>
+              <svg aria-hidden="true">
+                <use href="#i-lock" />
+              </svg>
+              <input id="password-input" type="password" maxlength="64" autocomplete="current-password"
+                placeholder="管理员密码" aria-label="管理员密码" required autofocus>
               <button id="login-submit" class="login-arrow" type="submit" aria-label="登录" title="登录">
-                <svg aria-hidden="true"><use href="#i-arrow-right"/></svg>
+                <svg aria-hidden="true">
+                  <use href="#i-arrow-right" />
+                </svg>
                 <span class="button-spinner" aria-hidden="true"></span>
               </button>
             </div>
 
             <div id="password-strength" class="password-strength hidden" aria-live="polite">
-              <div class="strength-head"><span>密码强度</span><strong id="strength-label" class="strength-chip weak">弱</strong></div>
+              <div class="strength-head"><span>密码强度</span><strong id="strength-label"
+                  class="strength-chip weak">弱</strong></div>
               <div class="strength-track"><i id="strength-progress"></i></div>
               <div id="strength-rules" class="strength-rules"></div>
             </div>
 
             <div id="setup-confirm-field" class="auth-password-field hidden">
-              <svg aria-hidden="true"><use href="#i-lock"/></svg>
-              <input id="setup-confirm-password" type="password" maxlength="64" autocomplete="new-password" placeholder="确认管理员密码" aria-label="确认管理员密码" required>
+              <svg aria-hidden="true">
+                <use href="#i-lock" />
+              </svg>
+              <input id="setup-confirm-password" type="password" maxlength="64" autocomplete="new-password"
+                placeholder="确认管理员密码" aria-label="确认管理员密码" required>
             </div>
 
             <button id="setup-submit" class="setup-submit hidden" type="submit">
@@ -73,12 +217,18 @@
           </div>
 
           <div id="auth-error" class="auth-alert hidden" role="alert">
-            <svg aria-hidden="true"><use href="#i-alert"/></svg><span id="auth-error-message"></span>
+            <svg aria-hidden="true">
+              <use href="#i-alert" />
+            </svg><span id="auth-error-message"></span>
           </div>
 
           <div class="login-meta">
             <a class="star-link" href="https://github.com/3899/ncmm" target="_blank" rel="noopener noreferrer">
-              <svg aria-hidden="true"><use href="#i-github"/></svg><span>点亮 Star</span><svg class="star-icon" aria-hidden="true"><use href="#i-star"/></svg>
+              <svg aria-hidden="true">
+                <use href="#i-github" />
+              </svg><span>点亮 Star</span><svg class="star-icon" aria-hidden="true">
+                <use href="#i-star" />
+              </svg>
             </a>
             <div id="forgot-password-wrap" class="forgot-password-wrap">
               <button id="forgot-password" type="button">忘记密码</button>
@@ -92,7 +242,8 @@
         </form>
       </div>
       <footer class="login-footer">
-        <a href="https://github.com/3899/ncmm" target="_blank" rel="noopener noreferrer">Copyright © 2026 GitHub 3899</a>
+        <a href="https://github.com/3899/ncmm" target="_blank" rel="noopener noreferrer">Copyright © 2026 GitHub
+          3899</a>
         <span>|</span><span id="auth-version">v1.2.0</span>
       </footer>
     </div>
@@ -100,170 +251,660 @@
 
   <div id="app-shell" class="app-shell hidden">
     <aside id="sidebar" class="sidebar">
-      <div class="sidebar-brand"><span class="brand-mark small">N</span><span>NCMM</span></div>
-      <nav aria-label="主导航">
-        <button class="nav-item active" data-page="dashboard"><svg><use href="#i-dashboard"/></svg><span>概览</span></button>
-        <button class="nav-item" data-page="config"><svg><use href="#i-settings"/></svg><span>配置</span></button>
-        <button class="nav-item" data-page="accounts"><svg><use href="#i-user"/></svg><span>账号</span></button>
-        <button class="nav-item" data-page="schedules"><svg><use href="#i-calendar"/></svg><span>定时任务</span></button>
-        <button class="nav-item" data-page="runs"><svg><use href="#i-log"/></svg><span>运行记录</span></button>
-        <button class="nav-item" data-page="system"><svg><use href="#i-shield"/></svg><span>系统</span></button>
+      <div class="brand">
+        <span class="brand-logo">
+          <svg aria-hidden="true" viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="10" />
+            <polygon points="10 8 16 12 10 16 10 8" />
+          </svg>
+        </span>
+        <span class="brand-text-wrap">
+          <h1 class="brand-title">NCMM</h1><small class="brand-subtitle">网易云音乐任务系统</small>
+        </span>
+      </div>
+      <nav class="nav-list" aria-label="主导航">
+        <button class="nav-item active" data-page="dashboard"><span class="nav-item-left"><svg>
+              <use href="#i-dashboard" />
+            </svg><span>仪表盘</span></span></button>
+        <button class="nav-item" data-page="accounts"><span class="nav-item-left"><svg>
+              <use href="#i-user" />
+            </svg><span>账号中心</span></span><span id="account-nav-count"
+            class="nav-badge account-count-badge">0</span></button>
+        <button class="nav-item" data-page="schedules"><span class="nav-item-left"><svg>
+              <use href="#i-calendar" />
+            </svg><span>定时任务</span></span></button>
+        <button class="nav-item" data-page="config"><span class="nav-item-left"><svg>
+              <use href="#i-settings" />
+            </svg><span>策略配置</span></span></button>
+        <button class="nav-item" data-page="runs"><span class="nav-item-left"><svg>
+              <use href="#i-log" />
+            </svg><span>运行日志</span></span></button>
+        <button class="nav-item" data-page="system"><span class="nav-item-left"><svg>
+              <use href="#i-shield" />
+            </svg><span>系统设置</span></span></button>
       </nav>
-      <div class="sidebar-foot">
-        <a class="repo-link" href="https://github.com/3899/ncmm" target="_blank" rel="noreferrer" title="打开 GitHub 仓库"><svg><use href="#i-github"/></svg><span>3899/ncmm</span></a>
-        <span id="version-label">NCMM</span>
+      <div class="sidebar-footer">
+        <a class="sidebar-github-link" href="https://github.com/3899/ncmm" target="_blank" rel="noreferrer"
+          title="GitHub: 3899/ncmm"><svg viewBox="0 0 24 24" aria-hidden="true">
+            <use href="#i-github" />
+          </svg><span>3899/ncmm</span></a>
+        <div id="version-label" class="sidebar-meta-text">NCMM</div>
+        <div id="build-label" class="sidebar-meta-text"></div>
+        <div class="sidebar-meta-text">Copyright © 2026 @3899</div>
       </div>
     </aside>
 
-    <div class="workspace">
+    <div class="workspace main-workspace">
       <header class="topbar">
-        <button id="menu-button" class="icon-button mobile-only" title="打开导航"><svg><use href="#i-menu"/></svg></button>
-        <div><p class="eyebrow">NCMM WEBUI</p><h2 id="page-title">概览</h2></div>
+        <div class="topbar-left">
+          <button id="menu-button" class="btn-hamburger" title="展开/收起导航栏"><svg>
+              <use href="#i-menu" />
+            </svg></button>
+          <div class="topbar-title-wrap">
+            <h2 id="page-title" class="topbar-main-title">仪表盘</h2>
+          </div>
+        </div>
         <div class="topbar-actions">
-          <span id="service-status" class="service-status"><i></i>在线</span>
-          <button id="theme-button" class="icon-button" title="切换主题"><svg><use href="#i-moon"/></svg></button>
-          <button id="logout-button" class="icon-button" title="退出"><svg><use href="#i-exit"/></svg></button>
+          <button id="refresh-button" class="btn btn-glass btn-icon" title="刷新状态"><svg>
+              <use href="#i-sync" />
+            </svg></button>
+          <button id="theme-button" class="btn btn-glass btn-icon" title="切换主题"><svg>
+              <use id="theme-icon-use" href="#i-moon" />
+            </svg></button>
+          <button id="logout-button" class="btn btn-glass btn-icon" title="退出登录"><svg>
+              <use href="#i-exit" />
+            </svg></button>
         </div>
       </header>
 
-      <main>
-        <section id="page-dashboard" class="page active">
-          <div class="stat-grid">
-            <article class="stat-card"><span>调度状态</span><strong id="stat-scheduler">--</strong><small id="stat-timezone">--</small></article>
-            <article class="stat-card"><span>定时任务</span><strong id="stat-schedules">--</strong><small>已载入规则</small></article>
-            <article class="stat-card"><span>正在运行</span><strong id="stat-running">--</strong><small>活动进程</small></article>
-            <article class="stat-card"><span>日志占用</span><strong id="stat-storage">--</strong><small id="stat-files">--</small></article>
-          </div>
-          <section class="content-section">
-            <div class="section-head"><div><p class="eyebrow">UPCOMING</p><h3>近期执行</h3></div><button class="button subtle" data-go="schedules">查看全部</button></div>
-            <div id="upcoming-list" class="compact-list empty-state">暂无定时任务</div>
-          </section>
-          <section class="content-section">
-            <div class="section-head"><div><p class="eyebrow">RECENT</p><h3>最近运行</h3></div><button class="button subtle" data-go="runs">查看全部</button></div>
-            <div id="recent-runs" class="compact-list empty-state">暂无运行记录</div>
-          </section>
-        </section>
-
-        <section id="page-config" class="page">
-          <div class="page-toolbar">
-            <div class="config-toolbar-groups">
-              <div class="segmented" id="config-target"><button class="active" data-target="config">config.yaml</button><button data-target="notify">notify.yaml</button></div>
-              <div class="segmented" id="config-mode"><button class="active" data-mode="visual">可视化</button><button data-mode="yaml">YAML</button></div>
-            </div>
-            <div class="toolbar-actions">
-              <span id="config-dirty" class="dirty-indicator hidden">有未保存修改</span>
-              <button id="config-reload" class="icon-button" title="重新加载"><svg><use href="#i-refresh"/></svg></button>
-              <button id="config-save" class="button primary"><svg><use href="#i-save"/></svg>保存配置</button>
-            </div>
-          </div>
-          <div id="config-parse-error" class="notice warning hidden" role="alert"></div>
-          <div id="config-visual" class="config-layout">
-            <nav id="config-sections" class="section-tabs" aria-label="配置分组"></nav>
-            <div id="config-form" class="config-form"></div>
-          </div>
-          <div id="config-yaml" class="yaml-wrap hidden"><textarea id="yaml-editor" spellcheck="false" aria-label="YAML 配置源码"></textarea></div>
-        </section>
-
-        <section id="page-accounts" class="page">
-          <div class="section-head">
-            <div><p class="eyebrow">ACCOUNT LOGIN</p><h3>登录账号</h3></div>
-            <div id="account-login-method" class="segmented"><button type="button" class="active" data-login-method="cookie">Cookie</button><button type="button" data-login-method="qrcode">二维码</button></div>
-          </div>
-          <form id="account-form" class="form-surface">
-            <div class="form-grid two">
-              <label>账号类型<div class="segmented account-type"><button type="button" class="active" data-main="true">主账号</button><button type="button" data-main="false">辅助账号</button></div></label>
-              <label>输出文件名<input id="account-filename" type="text" value="cookie.json" maxlength="128" autocomplete="off" required></label>
-            </div>
-            <div id="cookie-login-fields" class="method-fields">
-              <label>Cookie 格式<select id="cookie-format"><option value="auto">自动识别</option><option value="header">Header</option><option value="json">JSON</option><option value="netscape">Netscape</option></select></label>
-              <label>Cookie 内容<textarea id="cookie-content" class="cookie-input" autocomplete="off" spellcheck="false" required></textarea></label>
-            </div>
-            <div id="qrcode-login-fields" class="qrcode-login hidden" aria-live="polite">
-              <div class="qrcode-image-wrap">
-                <svg id="qrcode-placeholder" aria-hidden="true"><use href="#i-qr"/></svg>
-                <img id="qrcode-image" class="hidden" alt="网易云音乐登录二维码">
+      <main class="page-body">
+        <section id="page-dashboard" class="page tab-page active">
+          <section class="dashboard-telemetry-bar">
+            <div class="telemetry-left">
+              <span class="turntable-player-wrap" aria-hidden="true"><img src="/cd-light.svg" alt=""></span>
+              <div class="engine-copy">
+                <div class="engine-title"><span id="service-status" class="pulse-dot-wrap"><i
+                      class="pulse-dot-outer"></i><i class="pulse-dot-inner"></i><span
+                      class="hidden">在线</span></span><strong>任务引擎守护中</strong></div>
               </div>
-              <div class="qrcode-status">
-                <span id="qrcode-badge" class="badge disabled">未生成</span>
-                <strong id="qrcode-message">等待生成二维码</strong>
-                <span id="qrcode-filename" class="muted">cookie.json</span>
+              <div class="telemetry-info-grid">
+                <div class="telemetry-pill"><span>丨 运行时间:</span><span id="dashboard-uptime"
+                    class="telemetry-val">--</span></div>
               </div>
             </div>
-            <div class="form-actions">
-              <button id="qrcode-cancel" class="button subtle hidden" type="button"><svg><use href="#i-stop"/></svg>取消登录</button>
-              <button id="account-submit" class="button primary" type="submit"><svg><use id="account-submit-icon" href="#i-user"/></svg><span id="account-submit-label">验证并导入</span></button>
+            <div class="telemetry-info-grid">
+              <div class="telemetry-pill"><span>下次任务:</span><span id="dashboard-next-run"
+                  class="telemetry-val next-run-value">暂无计划</span></div>
             </div>
-          </form>
-          <div id="cookie-result" class="result-panel hidden" role="status"></div>
-        </section>
+          </section>
 
-        <section id="page-schedules" class="page">
-          <div class="section-head schedule-head">
-            <div><p class="eyebrow">SCHEDULER</p><h3>定时任务</h3></div>
-            <button id="schedule-add" class="button primary"><svg><use href="#i-plus"/></svg>新建任务</button>
+          <div class="stats-grid">
+            <article class="card stat-card">
+              <div class="stat-card-top"><span>今日计划播放量</span><span class="badge-pill success">等待同步</span></div>
+              <div id="stat-play-progress" class="stat-value">-- / --</div>
+              <div class="stat-footer">今日已播放 / 今日随机目标</div>
+            </article>
+            <article class="card stat-card">
+              <div class="stat-card-top"><span>今日运行</span><span id="stat-today-total" class="badge-pill success">共 0
+                  次</span></div>
+              <div id="stat-today-runs" class="stat-value">--</div>
+              <div class="stat-footer">仅统计已结束的运行记录</div>
+            </article>
+            <article class="card stat-card">
+              <div class="stat-card-top"><span>账号可用性</span><span id="stat-account-issues"
+                  class="badge-pill primary">等待同步</span></div>
+              <div id="stat-account-health" class="stat-value">--</div>
+              <div class="stat-footer">基于任务中的账号有效状态</div>
+            </article>
+            <article class="card stat-card">
+              <div class="stat-card-top"><span>已配置账号</span><span class="badge-pill cyan">正常读取</span></div>
+              <div id="stat-accounts" class="stat-value">--</div>
+              <div id="stat-account-detail" class="stat-footer">等待配置读取</div>
+            </article>
           </div>
-          <div class="table-wrap"><table><thead><tr><th>任务</th><th>Cron</th><th>命令</th><th>下次运行</th><th>状态</th><th class="actions-col">操作</th></tr></thead><tbody id="schedule-table"></tbody></table></div>
+
+          <div class="dashboard-primary-grid">
+            <section class="card dashboard-chart-panel">
+              <div class="card-header">
+                <div class="dashboard-chart-heading">
+                  <h3 class="card-title"><svg>
+                      <use href="#i-dashboard" />
+                    </svg><span id="dashboard-metric-title">最近 7 日有效播放量</span></h3>
+                  <select id="dashboard-account-select" class="dashboard-account-select" aria-label="选择图表账号"></select>
+                </div>
+                <div id="dashboard-metric" class="metric-tabs"><button class="active"
+                    data-metric="plays">有效播放</button><button data-metric="growth">成长值</button><button
+                    data-metric="yunbei">云贝</button></div>
+              </div>
+              <div id="dashboard-chart" class="metric-empty">
+                <svg aria-hidden="true">
+                  <use href="#i-dashboard" />
+                </svg>
+                <strong>等待任务同步指标</strong>
+              </div>
+            </section>
+            <section class="card">
+              <div class="card-header">
+                <div>
+                  <h3 class="card-title"><svg>
+                      <use href="#i-star" />
+                    </svg>今日账号收益明细</h3>
+                </div><span id="reward-sync-badge" class="badge-pill primary">等待同步</span>
+              </div>
+              <div id="account-rewards-list" class="reward-list empty-state">暂无结构化收益数据</div>
+            </section>
+          </div>
+
+          <div class="dashboard-secondary-grid">
+            <section class="card">
+              <div class="card-header">
+                <h3 class="card-title"><svg>
+                    <use href="#i-calendar" />
+                  </svg>最近定时任务</h3><button class="btn btn-glass btn-sm" data-go="schedules">查看全部 ➜</button>
+              </div>
+              <div class="dashboard-schedule-table-wrap">
+                <table class="dashboard-schedule-table">
+                  <thead>
+                    <tr>
+                      <th>任务名称</th>
+                      <th>指令</th>
+                      <th>CRON 规则</th>
+                      <th>下次触发</th>
+                      <th>状态</th>
+                    </tr>
+                  </thead>
+                  <tbody id="upcoming-list">
+                    <tr>
+                      <td colspan="5" class="empty-state">暂无定时任务</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+            <section class="card">
+              <div class="card-header">
+                <h3 class="card-title"><svg>
+                    <use href="#i-log" />
+                  </svg>最近运行</h3><button class="btn btn-glass btn-sm" data-go="runs">查看全部 ➜</button>
+              </div>
+              <div id="recent-runs" class="compact-list empty-state">暂无运行记录</div>
+            </section>
+          </div>
+          <div class="hidden" aria-hidden="true"><span id="stat-storage">--</span><span id="stat-files">--</span><span
+              id="stat-running">--</span><span id="stat-schedules">--</span><span id="stat-scheduler">--</span><span
+              id="stat-timezone">--</span></div>
         </section>
 
-        <section id="page-runs" class="page">
-          <section class="settings-band">
-            <div><p class="eyebrow">RUN SETTINGS</p><h3>运行设置</h3></div>
-            <label>保留天数<input id="retention-days" type="number" min="1" max="365"></label>
-            <label>最大占用（MB）<input id="max-log-size" type="number" min="16" max="10240"></label>
-            <label>时区<input id="timezone-input" type="text"></label>
-            <label>最大并发<input id="max-parallel" type="number" min="1" max="8"></label>
-            <button id="settings-save" class="button primary"><svg><use href="#i-save"/></svg>保存</button>
-            <button id="logs-cleanup" class="button subtle"><svg><use href="#i-trash"/></svg>立即清理</button>
-          </section>
-          <div class="section-head"><div><p class="eyebrow">RUN HISTORY</p><h3>运行记录</h3></div><span id="logs-summary" class="muted"></span></div>
-          <div class="table-wrap"><table><thead><tr><th>任务</th><th>命令</th><th>开始时间</th><th>耗时</th><th>结果</th><th class="actions-col">操作</th></tr></thead><tbody id="runs-table"></tbody></table></div>
+        <section id="page-config" class="page tab-page">
+          <!-- Sub Tabs: 规则配置 vs 推送配置 (标准下划线页签导航) -->
+          <div class="sim-tabs-bar" id="config-target">
+            <button class="sim-tab-item active" data-target="config">
+              <svg>
+                <use href="#i-log" />
+              </svg>
+              <span>规则配置</span>
+              <span class="sim-tab-badge" id="badge-count-config">15</span>
+            </button>
+            <button class="sim-tab-item" data-target="notify">
+              <svg>
+                <use href="#i-bell" />
+              </svg>
+              <span>推送配置</span>
+            </button>
+          </div>
+
+          <!-- 仅规则配置显示的常用预设栏 -->
+          <div class="fullwidth-presets-bar" id="config-presets-bar">
+            <div class="presets-bar-left">
+              <span class="preset-main-label">常用预设</span>
+              <div class="smart-preset-chips" id="preset-chips-list">
+                <button type="button" class="preset-chip-btn active" data-preset="novice"
+                  title="全自动日常打卡 + 30%防风控刷歌 + 自动领会员">✨ 常用预设 (推荐)</button>
+                <button type="button" class="preset-chip-btn" data-preset="musician" title="开启全量刷歌与 VIP 进阶长耗时任务">🔥
+                  音乐人冲刺</button>
+                <button type="button" class="preset-chip-btn" data-preset="stealth" title="拉大播放间隔、45%高防风控混听、轻量低频刷歌">🛡
+                  高防风控安全</button>
+                <button type="button" class="preset-chip-btn" data-preset="sign_only" title="仅秒级打卡（签到、乐迷团、领云豆），3秒快速结束">⚡
+                  极速纯签到</button>
+              </div>
+            </div>
+            <div class="presets-bar-right" id="config-preset-actions">
+              <div class="save-hub-group" id="config-save-actions">
+                <div class="dirty-status-badge hidden" id="config-dirty">
+                  <span class="pulse-dot"></span>
+                  <span id="config-dirty-text">0项未保存</span>
+                </div>
+                <button id="config-reload" class="btn btn-glass btn-sm" title="从磁盘重新读取或放弃当前修改">
+                  <svg>
+                    <use id="config-reload-icon" href="#i-refresh" />
+                  </svg>
+                  <span id="config-reload-text">重新加载</span>
+                </button>
+                <button id="config-save" class="btn btn-save-clean btn-sm">
+                  <svg>
+                    <use href="#i-save" />
+                  </svg>
+                  <span id="config-save-text">保存配置</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Master Rules Card Box -->
+          <div class="sim-rules-card">
+            <!-- Left Categories Sidebar -->
+            <aside class="sim-rules-sidebar">
+              <div class="sim-rules-sidebar-header">
+                <span id="config-sidebar-title" class="sim-rules-sidebar-title">配置模块</span>
+                <span id="config-section-count" class="badge-pill primary">15 项</span>
+              </div>
+              <nav id="config-sections" class="sim-category-list" aria-label="配置分组"></nav>
+            </aside>
+
+            <!-- Right Content Workspace -->
+            <section class="sim-rules-content">
+              <!-- Header Bar: 模块信息、搜索与视图切换 -->
+              <header class="sim-rules-header">
+                <h3 id="config-current-title" class="rules-header-title">
+                  <svg>
+                    <use href="#i-settings" />
+                  </svg>
+                  <span>配置详情</span>
+                </h3>
+                <div class="rules-header-actions">
+                  <div id="config-search-wrap" class="schedule-search-box">
+                    <span class="schedule-search-icon">🔍</span>
+                    <input id="config-search" class="schedule-search-input" type="search" placeholder="搜索配置项或功能说明..."
+                      autocomplete="off">
+                  </div>
+                  <button id="notify-test" class="btn btn-glass btn-sm hidden">
+                    <svg>
+                      <use href="#i-bell" />
+                    </svg>
+                    <span>发送测试</span>
+                  </button>
+                  <div class="config-view-actions">
+                    <!-- 渲染视图切换 -->
+                    <div class="mui-toggle-group" id="config-mode">
+                      <button class="mui-toggle-btn active" data-mode="visual">▣ 可视化</button>
+                      <button class="mui-toggle-btn" data-mode="yaml">‹› YAML</button>
+                    </div>
+                  </div>
+                </div>
+              </header>
+              <div id="config-parse-error" class="notice warning hidden" role="alert"></div>
+              <div id="config-visual" class="sim-rules-body">
+                <div id="config-form" class="config-form"></div>
+              </div>
+              <div id="config-yaml" class="yaml-wrap hidden">
+                <div class="yaml-editor-container">
+                  <div class="yaml-header"><span id="yaml-file-label">config.yaml</span><span
+                      id="yaml-validation">格式有效</span></div>
+                  <div class="yaml-body">
+                    <pre id="yaml-line-numbers" class="line-numbers" aria-hidden="true">1</pre>
+                    <div class="yaml-editor-stack">
+                      <pre id="yaml-highlight" class="yaml-highlight" aria-hidden="true"></pre>
+                      <textarea id="yaml-editor" class="yaml-code-area" spellcheck="false"
+                        aria-label="YAML 配置源码"></textarea>
+                    </div>
+                  </div>
+                  <div class="yaml-statusbar"><span>UTF-8</span><span>YAML</span><span id="yaml-cursor">Ln 1, Col
+                      1</span></div>
+                </div>
+              </div>
+            </section>
+          </div>
         </section>
 
-        <section id="page-system" class="page">
-          <section class="system-section">
-            <div class="section-head"><div><p class="eyebrow">SECURITY</p><h3>管理员密码</h3></div><span id="auth-mode" class="badge enabled">Session</span></div>
-            <form id="password-form" class="system-form auth-password-form">
-              <label>新密码<input id="new-password" type="password" minlength="8" maxlength="64" autocomplete="new-password" required></label>
-              <label>确认新密码<input id="confirm-password" type="password" minlength="8" maxlength="64" autocomplete="new-password" required></label>
-              <button id="password-save" class="button primary" type="submit"><svg><use href="#i-key"/></svg>修改密码</button>
-            </form>
-            <p id="password-note" class="field-note">修改后会撤销全部旧会话，并为当前浏览器签发新会话。</p>
-          </section>
+        <section id="page-accounts" class="page tab-page">
+          <div id="accounts-layout" class="accounts-layout-grid">
+            <section class="card accounts-list-panel">
+              <div class="card-header">
+                <h3 class="card-title accounts-title"><svg>
+                    <use href="#i-users" />
+                  </svg><span id="account-list-title">账号列表</span></h3>
+                <button id="account-add" class="btn btn-primary btn-sm"><svg>
+                    <use href="#i-plus" />
+                  </svg>添加账号</button>
+              </div>
+              <div class="account-table-wrap">
+                <table class="cyber-table">
+                  <thead>
+                    <tr>
+                      <th>账号昵称</th>
+                      <th>Cookie</th>
+                      <th>角色</th>
+                      <th>账号身份</th>
+                      <th>云贝 (今日/总数)</th>
+                      <th>VIP成长值 (今日/总数)</th>
+                      <th>今日打卡</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody id="accounts-table"></tbody>
+                </table>
+              </div>
+            </section>
 
-          <section class="system-section">
-            <div class="section-head"><div><p class="eyebrow">POLICY</p><h3>密码与会话策略</h3></div></div>
-            <form id="auth-settings-form" class="security-settings-form">
-              <label>密码最小长度<input id="password-min-length" type="number" min="1" max="64" required></label>
-              <label>会话有效期<select id="session-ttl"><option value="86400">1 天</option><option value="604800">7 天</option><option value="1209600">14 天</option><option value="2592000">30 天</option></select></label>
-              <label>空闲超时<select id="idle-timeout"><option value="1800">30 分钟</option><option value="3600">1 小时</option><option value="7200">2 小时</option><option value="10800">3 小时</option><option value="21600">6 小时</option><option value="0">关闭</option></select></label>
-              <label class="toggle-label">要求字母<input id="require-letters" type="checkbox"><span class="toggle"></span></label>
-              <label class="toggle-label">要求数字<input id="require-digits" type="checkbox"><span class="toggle"></span></label>
-              <label class="toggle-label">要求符号<input id="require-symbols" type="checkbox"><span class="toggle"></span></label>
-              <button id="auth-settings-save" class="button primary" type="submit"><svg><use href="#i-save"/></svg>保存策略</button>
-            </form>
-          </section>
+            <section id="account-panel" class="card account-add-panel hidden">
+              <div class="card-header">
+                <h3 class="card-title"><svg>
+                    <use href="#i-user" />
+                  </svg><span id="account-panel-title">登录 / 添加账号</span></h3>
+                <button id="account-close" class="btn btn-glass btn-icon compact-icon" title="关闭">×</button>
+              </div>
+              <div id="account-login-method" class="mui-toggle-group full"><button type="button"
+                  class="mui-toggle-btn active" data-login-method="cookie">Cookie 导入</button><button type="button"
+                  class="mui-toggle-btn" data-login-method="qrcode">二维码扫码</button></div>
+              <form id="account-form" class="account-form">
+                <div id="account-target-fields" class="form-grid two">
+                  <label class="form-group"><span class="form-label">账号类型</span><span
+                      class="mui-toggle-group account-type"><button type="button" class="mui-toggle-btn"
+                        data-main="true">主账号</button><button type="button" class="mui-toggle-btn active"
+                        data-main="false">辅助账号</button></span></label>
+                  <label class="form-group"><span class="form-label">保存目标文件</span><input id="account-filename"
+                      class="form-input" type="text" value="fan1.json" maxlength="128" autocomplete="off"
+                      required></label>
+                </div>
+                <div id="cookie-login-fields" class="method-fields">
+                  <label class="form-group"><span class="form-label">Cookie 格式</span><select id="cookie-format"
+                      class="form-select">
+                      <option value="auto">自动识别</option>
+                      <option value="header">Header</option>
+                      <option value="json">JSON</option>
+                      <option value="netscape">Netscape</option>
+                    </select></label>
+                  <label class="form-group"><span class="form-label">Cookie 内容</span><textarea id="cookie-content"
+                      class="form-textarea cookie-input" autocomplete="off" spellcheck="false"
+                      required></textarea></label>
+                </div>
+                <div id="qrcode-login-fields" class="qrcode-login hidden" aria-live="polite">
+                  <div class="qrcode-image-wrap">
+                    <svg id="qrcode-placeholder" aria-hidden="true">
+                      <use href="#i-qr" />
+                    </svg>
+                    <img id="qrcode-image" class="hidden" alt="网易云音乐登录二维码">
+                  </div>
+                  <div class="qrcode-status">
+                    <span id="qrcode-badge" class="badge disabled">未生成</span>
+                    <strong id="qrcode-message">等待生成二维码</strong>
+                    <span id="qrcode-filename" class="muted">cookie.json</span>
+                  </div>
+                </div>
+                <div class="form-actions">
+                  <button id="qrcode-cancel" class="btn btn-glass hidden" type="button"><svg>
+                      <use href="#i-stop" />
+                    </svg>取消登录</button>
+                  <button id="account-submit" class="btn btn-primary" type="submit"><svg>
+                      <use id="account-submit-icon" href="#i-user" />
+                    </svg><span id="account-submit-label">验证并导入</span></button>
+                </div>
+              </form>
+              <div id="cookie-result" class="result-panel hidden" role="status"></div>
+            </section>
+          </div>
+        </section>
 
-          <section class="system-section">
-            <div class="section-head"><div><p class="eyebrow">SESSIONS</p><h3>登录会话</h3></div><button id="sessions-revoke-others" class="button subtle">撤销其他会话</button></div>
-            <div id="sessions-list" class="compact-list empty-state">暂无登录会话</div>
-            <p id="session-auth-note" class="field-note"></p>
-          </section>
+        <section id="page-schedules" class="page tab-page">
+          <div class="schedule-toolbar">
+            <button id="schedule-add" class="btn btn-primary"><svg>
+                <use href="#i-plus" />
+              </svg>新建任务</button>
+            <div class="schedule-search-box"><span class="schedule-search-icon">🔍</span><input id="schedule-search"
+                class="schedule-search-input" type="text" placeholder="搜索任务名称/命令"></div>
+          </div>
+          <div class="schedule-table-card">
+            <table class="schedule-grid-table schedules-table">
+              <thead>
+                <tr>
+                  <th>任务名称</th>
+                  <th>命令</th>
+                  <th>定时规则</th>
+                  <th>状态</th>
+                  <th>最后运行</th>
+                  <th>下次运行</th>
+                  <th>上次结果</th>
+                  <th>耗时</th>
+                  <th class="actions-column">操作</th>
+                </tr>
+              </thead>
+              <tbody id="schedule-table"></tbody>
+            </table>
+          </div>
+        </section>
 
-          <section class="system-section">
-            <div class="section-head"><div><p class="eyebrow">UPDATE</p><h3>版本更新</h3></div><span id="update-badge" class="badge disabled">未检查</span></div>
-            <div class="update-summary">
-              <div><span>当前版本</span><strong id="update-current">--</strong></div>
-              <div><span>最新版本</span><strong id="update-latest">--</strong></div>
-              <div><span>上次检查</span><strong id="update-checked">--</strong></div>
-              <div><span>运行环境</span><strong id="update-platform">--</strong></div>
+        <section id="page-runs" class="page tab-page">
+          <div class="run-filter-toolbar">
+            <div class="run-filter-left">
+              <div id="run-filter" class="run-filter-tabs"><button class="run-tab-btn active"
+                  data-run-filter="all">全部记录</button><button class="run-tab-btn"
+                  data-run-filter="success">成功</button><button class="run-tab-btn"
+                  data-run-filter="failed">失败</button><button class="run-tab-btn" data-run-filter="running">运行中</button>
+              </div>
+              <div class="schedule-search-box"><span class="schedule-search-icon">🔍</span><input id="run-search"
+                  class="run-search-input" type="text" placeholder="搜索任务名称..."></div>
             </div>
-            <div class="system-actions">
-              <button id="update-check" class="button subtle"><svg><use href="#i-refresh"/></svg>检查更新</button>
-              <button id="update-apply" class="button primary" disabled><svg><use href="#i-download"/></svg>立即更新</button>
+          </div>
+          <div class="schedule-table-card">
+            <table class="schedule-grid-table run-table">
+              <thead>
+                <tr>
+                  <th>任务名称</th>
+                  <th>状态</th>
+                  <th>耗时</th>
+                  <th>执行时间</th>
+                  <th class="actions-column run-actions-column">操作</th>
+                </tr>
+              </thead>
+              <tbody id="runs-table"></tbody>
+            </table>
+          </div>
+          <div class="run-table-footer">
+            <p id="logs-summary" class="run-summary">0 个文件 · 0 B</p>
+            <span class="footer-divider" aria-hidden="true"></span>
+            <button id="logs-auto-open" class="btn btn-text btn-sm"><svg>
+                <use href="#i-robot" />
+              </svg><span id="retention-label">自动清理:开启</span></button>
+            <button id="logs-advanced-open" class="btn btn-text danger btn-sm"><svg>
+                <use href="#i-trash" />
+              </svg>高级清理</button>
+          </div>
+          <div class="hidden" aria-hidden="true"><input id="timezone-input"><input id="max-parallel" type="number">
+          </div>
+        </section>
+
+        <section id="page-system" class="page tab-page">
+          <div id="system-tabs" class="sim-tabs-bar"><button class="sim-tab-item active"
+              data-system-tab="overview"><svg>
+                <use href="#i-monitor" />
+              </svg>概览</button><button class="sim-tab-item" data-system-tab="security"><svg>
+                <use href="#i-shield" />
+              </svg>安全</button></div>
+          <div id="system-tab-overview">
+            <div class="system-overview-grid">
+              <section class="card product-card">
+                <span class="brand-logo product-logo"><svg viewBox="0 0 24 24">
+                    <circle cx="12" cy="12" r="10" />
+                    <polygon points="10 8 16 12 10 16 10 8" />
+                  </svg></span>
+                <h3>NCMM</h3>
+                <p>网易云音乐一站式任务管理系统</p>
+                <div class="product-badges"><span id="update-current" class="badge-pill primary">--</span><span
+                    id="system-commit" class="badge-pill success">Commit: --</span><span id="system-build"
+                    class="badge-pill cyan">--</span></div>
+                <div class="system-actions">
+                  <button id="update-check" class="btn btn-glass btn-sm"><svg>
+                      <use href="#i-update-check" />
+                    </svg><span id="update-check-label">检查更新</span></button>
+                  <button id="system-restart" class="btn btn-glass btn-sm"><svg>
+                      <use href="#i-restart" />
+                    </svg>重启 ncmm</button>
+                  <a class="btn btn-glass btn-sm github-btn" href="https://github.com/3899/ncmm" target="_blank"
+                    rel="noreferrer"><svg>
+                      <use href="#i-github" />
+                    </svg>ncmm</a>
+                </div>
+                <div id="update-panel" class="update-status-panel hidden">
+                  <div class="update-status-head"><strong id="update-status-title">更新状态</strong><span
+                      id="update-status-badge" class="badge-pill gray">未检查</span></div>
+                  <p id="update-message">尚未检查更新</p>
+                  <div class="update-version-meta"><span>当前版本 <strong
+                        id="update-current-detail">--</strong></span><span>最新版本
+                      <strong id="update-latest">--</strong></span><span>运行平台 <strong
+                        id="update-platform">--</strong></span></div>
+                  <pre id="release-notes" class="release-notes hidden"></pre>
+                </div>
+              </section>
+              <section class="card service-card">
+                <div class="card-header">
+                  <h3 class="card-title">运行概况</h3><span class="badge-pill success">服务在线</span>
+                </div>
+                <div class="service-metrics">
+                  <div><span>服务状态</span><strong class="success-text">运行中</strong></div>
+                  <div><span>调度器</span><strong id="system-scheduler">运行中</strong></div>
+                  <div><span>定时规则</span><strong id="system-schedules">--</strong></div>
+                  <div><span>运行 / 排队</span><strong id="system-running">--</strong></div>
+                </div>
+                <div class="service-addresses">
+                  <div><span>监听地址</span><strong id="system-listen-url">--</strong></div>
+                  <div><span>WebUI 地址</span><span class="copy-value"><strong id="system-web-url">--</strong><button
+                        id="copy-web-url" class="icon-button" title="复制 WebUI 地址"><svg>
+                          <use href="#i-copy" />
+                        </svg></button></span></div>
+                </div>
+              </section>
             </div>
-            <p id="update-message" class="field-note"></p>
-            <pre id="release-notes" class="release-notes hidden"></pre>
-          </section>
+            <section class="card storage-card">
+              <div class="card-header">
+                <h3 class="card-title storage-title"><svg>
+                    <use href="#i-storage" />
+                  </svg>存储信息</h3>
+              </div>
+              <div class="storage-location-grid">
+                <div><span>二进制</span><strong id="system-path-executable">--</strong></div>
+                <div><span>数据库</span><strong id="system-path-database">--</strong></div>
+                <div><span>主配置文件</span><strong id="system-path-config">--</strong></div>
+                <div><span>通知配置文件</span><strong id="system-path-notify">--</strong></div>
+                <div><span>日志占用空间</span><strong id="system-log-size">--</strong></div>
+              </div>
+            </section>
+          </div>
+
+          <div id="system-tab-security" class="sim-security-container hidden">
+            <section class="card">
+              <div class="sim-card-header">
+                <div class="sim-card-header-left"><svg>
+                    <use href="#i-shield" />
+                  </svg>
+                  <h3 class="sim-card-header-title">账户安全</h3>
+                </div><span id="auth-mode" class="badge-pill success">已启用</span>
+              </div>
+              <p class="sim-card-subtitle">控制 Web 管理界面的访问权限，启用密码保护可防止未经授权的修改。</p>
+              <div class="sim-security-toggle-box">
+                <div><strong>启用密码保护</strong>
+                  <p>启用后，进入系统需验证管理员密码。</p>
+                </div>
+                <label class="switch"><input id="password-protection" type="checkbox" checked><span
+                    class="slider"></span></label>
+              </div>
+              <div id="password-protection-warning" class="notice warning hidden">关闭密码保护后，所有 Web 页面和业务 API 将跳过管理员密码校验。
+              </div>
+              <div class="security-divider"></div>
+              <div class="security-password-heading"><svg>
+                  <use href="#i-key" />
+                </svg><strong>修改管理员密码</strong></div>
+              <form id="password-form" class="security-password-grid">
+                <div class="form-group">
+                  <label class="form-label" for="new-password">新密码</label>
+                  <input id="new-password" class="form-input" type="password" minlength="1" maxlength="64"
+                    autocomplete="new-password" required>
+                  <small id="password-policy-help" class="field-note">密码长度至少 1 个字符</small>
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="confirm-password">确认新密码</label>
+                  <input id="confirm-password" class="form-input" type="password" minlength="1" maxlength="64"
+                    autocomplete="new-password" required>
+                </div>
+                <div class="form-group form-actions-group">
+                  <button id="password-save" class="btn btn-primary" type="submit"><svg>
+                      <use href="#i-key" />
+                    </svg>更新密码</button>
+                </div>
+              </form>
+            </section>
+
+            <form id="auth-settings-form" class="security-policy-form">
+              <div class="security-policy-grid">
+                <section class="card security-policy-card">
+                  <div class="sim-card-header">
+                    <div class="sim-card-header-left"><svg>
+                        <use href="#i-shield" />
+                      </svg>
+                      <h3 class="sim-card-header-title">密码策略</h3>
+                    </div>
+                  </div>
+                  <p class="sim-card-subtitle">设定系统接受的管理员密码强度要求，后续首次设置或修改密码时生效。</p>
+                  <div class="security-min-row">
+                    <div><strong>最小长度</strong>
+                      <p>限制密码的最低字符数</p>
+                    </div>
+                    <div class="sim-security-stepper"><button id="password-min-decrease" class="sim-stepper-btn"
+                        type="button" aria-label="减少密码最小长度"><svg>
+                          <use href="#i-minus" />
+                        </svg></button><input id="password-min-length" class="sim-stepper-input" type="number" min="1"
+                        max="64" value="1" required><button id="password-min-increase" class="sim-stepper-btn"
+                        type="button" aria-label="增加密码最小长度"><svg>
+                          <use href="#i-plus" />
+                        </svg></button></div>
+                  </div>
+                  <div class="security-divider"></div>
+                  <div class="security-requirements">
+                    <label><span><strong>包含英文字母</strong><small>（a-z、A-Z）</small></span><span class="switch"><input
+                          id="require-letters" type="checkbox"><span class="slider"></span></span></label>
+                    <label><span><strong>包含阿拉伯数字</strong><small>（0-9）</small></span><span class="switch"><input
+                          id="require-digits" type="checkbox"><span class="slider"></span></span></label>
+                    <label><span><strong>包含特殊符号</strong><small>（! @ # $ 等可见符号）</small></span><span class="switch"><input
+                          id="require-symbols" type="checkbox"><span class="slider"></span></span></label>
+                  </div>
+                </section>
+                <section class="card security-policy-card">
+                  <div class="sim-card-header">
+                    <div class="sim-card-header-left"><svg>
+                        <use href="#i-lock" />
+                      </svg>
+                      <h3 class="sim-card-header-title">会话控制</h3>
+                    </div>
+                  </div>
+                  <p class="sim-card-subtitle">管理用户登录状态的有效期以及浏览器空闲自动退出行为。</p>
+                  <div class="session-control-fields">
+                    <label class="form-group"><span class="form-label">会话有效期</span><select id="session-ttl"
+                        class="form-select">
+                        <option value="86400">1 天</option>
+                        <option value="604800">7 天</option>
+                        <option value="1209600">14 天</option>
+                        <option value="2592000">30 天</option>
+                      </select></label>
+                    <label class="form-group"><span class="form-label">空闲超时</span><select id="idle-timeout"
+                        class="form-select">
+                        <option value="1800">30 分钟</option>
+                        <option value="3600">1 小时</option>
+                        <option value="7200">2 小时</option>
+                        <option value="10800">3 小时</option>
+                        <option value="21600">6 小时</option>
+                        <option value="0">关闭</option>
+                      </select></label>
+                    <div class="notice warning">公共网络环境建议设置较短的空闲超时，避免设备被未授权人员操作。</div>
+                  </div>
+                </section>
+              </div>
+              <div class="security-action-bar hidden"><span id="security-dirty-note">有未保存的设置项：0</span>
+                <div><button id="auth-settings-reset" class="btn btn-glass" type="button">还原</button><button
+                    id="auth-settings-save" class="btn btn-primary" type="submit"><svg>
+                      <use href="#i-save" />
+                    </svg>保存安全设置</button></div>
+              </div>
+            </form>
+          </div>
         </section>
       </main>
     </div>
@@ -271,31 +912,124 @@
 
   <dialog id="schedule-dialog" class="dialog">
     <form id="schedule-form" method="dialog">
-      <div class="dialog-head"><div><p class="eyebrow">SCHEDULE</p><h3 id="schedule-dialog-title">新建任务</h3></div><button type="button" class="icon-button dialog-close" title="关闭">×</button></div>
+      <div class="dialog-head">
+        <div>
+          <p class="eyebrow">SCHEDULE</p>
+          <h3 id="schedule-dialog-title">新建任务</h3>
+        </div><button type="button" class="icon-button dialog-close" title="关闭">×</button>
+      </div>
       <input id="schedule-id" type="hidden">
       <div class="form-grid two">
         <label>任务名称<input id="schedule-name" required maxlength="80"></label>
-        <label class="toggle-label">启用任务<input id="schedule-enabled" type="checkbox" checked><span class="toggle"></span></label>
+        <label class="toggle-label">启用任务<input id="schedule-enabled" type="checkbox" checked><span
+            class="toggle"></span></label>
       </div>
-      <label>执行时间<select id="cron-preset"><option value="30 8 * * *">每天 08:30</option><option value="0 9 * * *">每天 09:00</option><option value="0 9 * * 1-5">工作日 09:00</option><option value="0 9 * * 1">每周一 09:00</option><option value="custom">自定义 Cron</option></select></label>
+      <label>执行时间<select id="cron-preset">
+          <option value="30 8 * * *">每天 08:30</option>
+          <option value="0 9 * * *">每天 09:00</option>
+          <option value="0 9 * * 1-5">工作日 09:00</option>
+          <option value="0 9 * * 1">每周一 09:00</option>
+          <option value="custom">自定义 Cron</option>
+        </select></label>
       <label>Cron 表达式<input id="schedule-cron" value="30 8 * * *" required></label>
       <p id="cron-next" class="field-note"></p>
       <div class="form-grid two">
-        <label>命令<select id="schedule-command"><option value="task">task</option><option value="sign">sign</option><option value="playids">playids</option><option value="musician">musician</option><option value="musician-sign">musician-sign</option><option value="musician-vip">musician-vip</option><option value="note">note</option><option value="daily-song-share">daily-song-share</option><option value="vip-member-gift">vip-member-gift</option><option value="fansgroup">fansgroup</option></select></label>
-        <label>重叠策略<select id="schedule-overlap"><option value="skip">跳过重复触发</option><option value="allow">重复触发进入队列</option></select></label>
+        <label>命令<select id="schedule-command">
+            <option value="task">task</option>
+            <option value="sign">sign</option>
+            <option value="playids">playids</option>
+            <option value="musician">musician</option>
+            <option value="musician-sign">musician-sign</option>
+            <option value="musician-vip">musician-vip</option>
+            <option value="note">note</option>
+            <option value="daily-song-share">daily-song-share</option>
+            <option value="vip-member-gift">vip-member-gift</option>
+            <option value="fansgroup">fansgroup</option>
+          </select></label>
+        <label>重叠策略<select id="schedule-overlap">
+            <option value="skip">跳过重复触发</option>
+            <option value="allow">重复触发进入队列</option>
+          </select></label>
       </div>
       <label>命令参数<input id="schedule-args" placeholder="--only-fast"></label>
-      <div class="dialog-actions"><button type="button" class="button subtle dialog-close">取消</button><button id="schedule-submit" type="submit" class="button primary"><svg><use href="#i-save"/></svg>保存任务</button></div>
+      <div class="dialog-actions"><button type="button" class="button subtle dialog-close">取消</button><button
+          id="schedule-submit" type="submit" class="button primary"><svg>
+            <use href="#i-save" />
+          </svg>保存任务</button></div>
     </form>
   </dialog>
 
   <dialog id="log-dialog" class="dialog log-dialog">
-    <div class="dialog-head"><div><p class="eyebrow">RUN LOG</p><h3 id="log-title">运行日志</h3></div><button type="button" class="icon-button log-close" title="关闭">×</button></div>
+    <div class="dialog-head">
+      <div>
+        <p class="eyebrow">RUN LOG</p>
+        <h3 id="log-title">运行日志</h3>
+      </div><button type="button" class="icon-button log-close" title="关闭">×</button>
+    </div>
     <pre id="log-content"></pre>
     <div class="dialog-actions"><button type="button" class="button subtle log-close">关闭</button></div>
   </dialog>
 
-  <div id="toast-region" class="toast-region" aria-live="polite"></div>
-  <script src="/app.js" defer></script>
+  <dialog id="logs-auto-dialog" class="dialog compact-dialog">
+    <form id="logs-auto-form" method="dialog">
+      <div class="dialog-head">
+        <div>
+          <p class="eyebrow">LOG POLICY</p>
+          <h3>自动清理设置</h3>
+        </div><button type="button" class="icon-button logs-auto-close" title="关闭">×</button>
+      </div>
+      <div class="cleanup-setting-block">
+        <label class="cleanup-setting-head"><span><strong>按保留时长清理</strong><small>超过设定天数的记录将被永久删除</small></span><span
+            class="switch"><input id="retention-enabled" type="checkbox"><span class="slider"></span></span></label>
+        <label class="input-with-unit"><input id="retention-days" class="form-input" type="number" min="1"
+            max="365"><span>天</span></label>
+      </div>
+      <div class="security-divider"></div>
+      <div class="cleanup-setting-block">
+        <label class="cleanup-setting-head"><span><strong>按最大空间清理</strong><small>日志超过空间上限时，优先删除最早记录</small></span><span
+            class="switch"><input id="max-size-enabled" type="checkbox"><span class="slider"></span></span></label>
+        <label class="input-with-unit"><input id="max-log-size" class="form-input" type="number" min="16"
+            max="10240"><span>MB</span></label>
+      </div>
+      <div class="dialog-actions"><button type="button" class="btn btn-glass logs-auto-close">取消</button><button
+          class="btn btn-primary" type="submit"><svg>
+            <use href="#i-save" />
+          </svg>保存设置</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="logs-advanced-dialog" class="dialog compact-dialog">
+    <form id="logs-advanced-form" method="dialog">
+      <div class="dialog-head">
+        <div>
+          <p class="eyebrow">LOG CLEANUP</p>
+          <h3>高级清理日志</h3>
+        </div><button type="button" class="icon-button logs-advanced-close" title="关闭">×</button>
+      </div>
+      <div class="notice warning">清理操作不可撤销，请谨慎选择过滤条件。留空表示不限制对应条件。</div>
+      <label class="form-group"><span class="form-label">任务名称或命令</span><input id="cleanup-job-name" class="form-input"
+          placeholder="全部任务"></label>
+      <label class="form-group"><span class="form-label">运行状态</span><select id="cleanup-status" class="form-select">
+          <option value="">所有状态（不限制）</option>
+          <option value="success">成功</option>
+          <option value="failed">失败</option>
+          <option value="skipped">已跳过</option>
+          <option value="stopped">已停止</option>
+          <option value="interrupted">已中断</option>
+          <option value="timed_out">已超时</option>
+        </select></label>
+      <div class="form-grid two"><label class="form-group"><span class="form-label">开始日期</span><input
+            id="cleanup-start-date" class="form-input" type="date"></label><label class="form-group"><span
+            class="form-label">结束日期</span><input id="cleanup-end-date" class="form-input" type="date"></label></div>
+      <div class="dialog-actions"><button type="button" class="btn btn-glass logs-advanced-close">取消</button><button
+          class="btn btn-primary danger-fill" type="submit"><svg>
+            <use href="#i-trash" />
+          </svg>确认清理</button></div>
+    </form>
+  </dialog>
+
+  <div id="toast-region" class="toast-region toast-container" aria-live="polite"></div>
+  <script src="/app.js?v=3.1" defer></script>
 </body>
+
 </html>

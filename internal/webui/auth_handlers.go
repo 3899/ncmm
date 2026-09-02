@@ -21,6 +21,12 @@ type authStatusResponse struct {
 	Version       string `json:"version"`
 }
 
+type authSettingsResponse struct {
+	webauth.Settings
+	Configured                bool `json:"configured"`
+	PasswordProtectionEnabled bool `json:"passwordProtectionEnabled"`
+}
+
 func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
 	status, err := s.authManager.Status(r.Context(), sessionToken(r))
 	if err != nil {
@@ -141,19 +147,35 @@ func (s *Server) handleAuthSettingsGet(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, status.Settings)
+	writeJSON(w, http.StatusOK, authSettingsResponse{
+		Settings: status.Settings, Configured: status.Configured,
+		PasswordProtectionEnabled: status.PasswordProtectionEnabled,
+	})
 }
 
 func (s *Server) handleAuthSettingsPut(w http.ResponseWriter, r *http.Request) {
-	var settings webauth.Settings
-	if !decodeJSON(w, r, &settings, 8<<10) {
+	var req struct {
+		webauth.Settings
+		PasswordProtectionEnabled *bool `json:"passwordProtectionEnabled"`
+	}
+	if !decodeJSON(w, r, &req, 8<<10) {
 		return
 	}
-	if err := s.authManager.UpdateSettings(r.Context(), settings); err != nil {
+	enabled := s.authManager.ProtectionEnabled()
+	if req.PasswordProtectionEnabled != nil {
+		enabled = *req.PasswordProtectionEnabled
+	}
+	if err := s.authManager.UpdateSecurity(r.Context(), req.Settings, enabled); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, settings)
+	if !enabled {
+		s.expireSessionCookie(w)
+	}
+	writeJSON(w, http.StatusOK, authSettingsResponse{
+		Settings: req.Settings, Configured: true,
+		PasswordProtectionEnabled: enabled,
+	})
 }
 
 func (s *Server) handleAuthSessionsGet(w http.ResponseWriter, r *http.Request) {

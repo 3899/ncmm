@@ -30,12 +30,15 @@ type RootOpts struct {
 }
 
 type Root struct {
-	Cfg        *config.Config
-	CfgPath    string
-	Opts       RootOpts
-	cmd        *cobra.Command
-	l          *log.Logger
-	AppVersion string
+	Cfg          *config.Config
+	CfgPath      string
+	Opts         RootOpts
+	cmd          *cobra.Command
+	l            *log.Logger
+	AppVersion   string
+	AppCommit    string
+	AppBranch    string
+	AppBuildTime string
 	// Report collects failures/skips for end-of-run notify summary.
 	Report *notify.Report
 	// Notifier is nil when notify is disabled or no channels are configured.
@@ -178,10 +181,13 @@ func (c *Root) addFlags() {
 	c.cmd.PersistentFlags().StringVar(&c.Opts.Home, "home", config.HomeDir, "configuration home path. the home path is used to store running information")
 }
 
-func (c *Root) Version(version, buildTime, commitHash string) {
+func (c *Root) Version(version, buildTime, commitHash, branch string) {
 	c.AppVersion = version
-	c.cmd.Version = fmt.Sprintf("%s\n Version: \t%s\n Go version: \t%s\n Git commit: \t%s\n OS/Arch: \t%s\n Build time: \t%s",
-		title, version, runtime.Version(), commitHash, runtime.GOOS+"/"+runtime.GOARCH, buildTime)
+	c.AppCommit = commitHash
+	c.AppBranch = branch
+	c.AppBuildTime = buildTime
+	c.cmd.Version = fmt.Sprintf("%s\n Version: \t%s\n Go version: \t%s\n Git branch: \t%s\n Git commit: \t%s\n OS/Arch: \t%s\n Build time: \t%s",
+		title, version, runtime.Version(), branch, commitHash, runtime.GOOS+"/"+runtime.GOARCH, buildTime)
 }
 
 func (c *Root) Add(command ...*cobra.Command) {

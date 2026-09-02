@@ -93,6 +93,49 @@ func TestAuthStatusContainsOnlyNewSetupContract(t *testing.T) {
 	}
 }
 
+func TestPasswordProtectionToggleChangesMiddlewareBehavior(t *testing.T) {
+	server := newAuthTestServer(t, t.TempDir())
+	credentials, err := server.authManager.Setup(context.Background(), "a", requestClientInfo(httptest.NewRequest(http.MethodGet, "/", nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := server.routes()
+	settings := `{"passwordProtectionEnabled":false,"passwordMinLength":1,"passwordRequireLetters":false,"passwordRequireDigits":false,"passwordRequireSymbols":false,"sessionTTLSeconds":604800,"idleTimeoutSeconds":3600}`
+	request := httptest.NewRequest(http.MethodPut, "/api/v1/auth/settings", strings.NewReader(settings))
+	request.Host = "localhost:3899"
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(csrfHeader, credentials.Session.CSRFToken)
+	request.AddCookie(&http.Cookie{Name: webauth.SessionCookieName, Value: credentials.Token})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("disable status=%d body=%s", response.Code, response.Body.String())
+	}
+	request = httptest.NewRequest(http.MethodGet, "/api/v1/auth/settings", nil)
+	request.Host = "localhost:3899"
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("unprotected API status=%d body=%s", response.Code, response.Body.String())
+	}
+	settings = strings.Replace(settings, `"passwordProtectionEnabled":false`, `"passwordProtectionEnabled":true`, 1)
+	request = httptest.NewRequest(http.MethodPut, "/api/v1/auth/settings", strings.NewReader(settings))
+	request.Host = "localhost:3899"
+	request.Header.Set("Content-Type", "application/json")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("re-enable status=%d body=%s", response.Code, response.Body.String())
+	}
+	request = httptest.NewRequest(http.MethodGet, "/api/v1/auth/settings", nil)
+	request.Host = "localhost:3899"
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("protected API without session status=%d", response.Code)
+	}
+}
+
 func TestUnconfiguredRemoteListenerAllowsFirstSetup(t *testing.T) {
 	home := t.TempDir()
 	server, err := New(context.Background(), Options{Home: home, Listen: "0.0.0.0:3899"})

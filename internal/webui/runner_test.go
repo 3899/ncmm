@@ -25,6 +25,107 @@ func TestRunManagerHelperProcess(t *testing.T) {
 	os.Exit(2)
 }
 
+func TestParseRunRewards(t *testing.T) {
+	logData := `[sign] >>>>>> 开始主账号签到 (cookie.json) <<<<<<
+  [当前账号信息] Uid: 1311667400 | 昵称: 涂小惜 | 等级: 黑胶·贰 (Lv.2) | 头像: https://p1.music.126.net/main.jpg
+  [账号身份] 音乐人
+  --- 云贝任务 ---
+  云贝今天已签到过
+  🎉 成功领取云贝 [分享歌曲] 任务奖励，获得云贝: 100
+  🎉 预约活动奖励领取成功，获得云贝数量：50
+  👉 [执行后] 黑胶成长值最终状态: 今日已获得 42，当前成长值 946
+  [云贝余额] 当前可用云贝: 1230
+  [今日收益] 云贝 +2328 / 1230 | 成长值 12 / 3937
+[musician vip] >>>>>> 开始主账号音乐人VIP进阶任务 (cookie.json) <<<<<<
+  ✅ 已认证音乐人 | 维持天数: 30 天 | 近30天播放: 1200 次 | 解锁VIP权益: true
+    - 当前进度: 35/100, 今日尚缺有效播放: 65 次
+[sign] >>>>>> 开始辅助账号签到 (sub/2TH.json) <<<<<<
+  [当前账号信息] Uid: 17609220462 | 昵称: 二号西柚 | 等级: 黑胶·壹 (Lv.1)
+  --- 云贝任务 ---
+  云贝签到成功
+  暂无会员权益 (VIP 状态: 0)
+  [今日收益] 云贝 +60 / 321 | 非 VIP 账号
+[musician sign] >>>>>> 开始辅助账号音乐人日常签到 (sub/2TH.json) <<<<<<
+  [musician sign] ❌ 辅助账号签到失败: 当前账号不是音乐人
+`
+	rewards := parseRunRewardsReader(strings.NewReader(logData))
+	if len(rewards) != 2 {
+		t.Fatalf("reward count = %d; want 2: %+v", len(rewards), rewards)
+	}
+	main := rewards[0]
+	if main.Account != "cookie.json" || main.UID != "1311667400" || main.Nickname != "涂小惜" || main.AvatarURL != "https://p1.music.126.net/main.jpg" || main.Identity != "黑胶·贰 (Lv.2)" {
+		t.Fatalf("unexpected main profile: %+v", main)
+	}
+	if !main.CookieKnown || !main.CookieValid || !main.MusicianKnown || !main.Musician || !main.YunbeiKnown || main.Yunbei != 2328 || !main.YunbeiCumulative || !main.YunbeiBalanceKnown || main.YunbeiBalance != 1230 || !main.GrowthKnown || main.GrowthToday != 12 || main.GrowthTotal != 3937 || !main.VIPKnown || !main.VIP || !main.EffectiveKnown || main.EffectivePlays != 35 || main.EffectiveTarget != 100 || !main.SignKnown || !main.Signed {
+		t.Fatalf("unexpected main rewards: %+v", main)
+	}
+	secondary := rewards[1]
+	if secondary.Account != "sub/2TH.json" || secondary.Yunbei != 60 || !secondary.YunbeiKnown || !secondary.YunbeiCumulative || secondary.YunbeiBalance != 321 || !secondary.YunbeiBalanceKnown || !secondary.VIPKnown || secondary.VIP || !secondary.MusicianKnown || secondary.Musician || secondary.GrowthKnown || !secondary.SignKnown || !secondary.Signed {
+		t.Fatalf("unexpected secondary rewards: %+v", secondary)
+	}
+}
+
+func TestParseRunRewardsTaskAccountMusicianIdentity(t *testing.T) {
+	logData := `[task] >>> 账号 (one.json) 开始执行 [音乐人日常签到] 任务 <<<
+  ✅ 已认证音乐人 (来自身份缓存)
+[task] >>> 账号 (two.json) 开始执行 [音乐人VIP进阶] 任务 <<<
+[task] ❌ 账号 (two.json) [音乐人VIP进阶] 执行失败: 当前账号不是音乐人
+`
+	rewards := parseRunRewardsReader(strings.NewReader(logData))
+	if len(rewards) != 2 || !rewards[0].MusicianKnown || !rewards[0].Musician || !rewards[1].MusicianKnown || rewards[1].Musician {
+		t.Fatalf("unexpected task musician identities: %+v", rewards)
+	}
+}
+
+func TestParseRunRewardsLegacyYunbeiFallback(t *testing.T) {
+	logData := `[sign] >>>>>> 开始主账号签到 (cookie.json) <<<<<<
+  🎉 成功领取云贝 [分享歌曲] 任务奖励，获得云贝: 100
+  🎉 预约活动奖励领取成功，获得云贝数量：50
+  [云贝余额] 当前可用云贝: 1230
+`
+	rewards := parseRunRewardsReader(strings.NewReader(logData))
+	if len(rewards) != 1 || rewards[0].Yunbei != 150 || !rewards[0].YunbeiKnown || rewards[0].YunbeiCumulative || rewards[0].YunbeiBalance != 1230 {
+		t.Fatalf("unexpected legacy rewards: %+v", rewards)
+	}
+}
+
+func TestParseRunRewardsPrefersStructuredDomainEvents(t *testing.T) {
+	logData := `[sign] >>>>>> 开始主账号签到 (cookie.json) <<<<<<
+  [NCMM_REWARD] {"version":1,"account":"cookie.json","domain":"yunbei","yunbei":{"today":500,"todayKnown":true,"balance":1230,"balanceKnown":true}}
+  [云贝收益] 今日 +500 | 当前余额 1230
+  [NCMM_REWARD] {"version":1,"account":"cookie.json","domain":"vip","vip":{"enabled":true,"statusKnown":true,"today":42,"total":946,"growthKnown":true}}
+  [会员收益] 今日成长值 42 | 当前成长值 946
+  [今日收益] 云贝 +999 / 999 | 成长值 99 / 999
+`
+	rewards := parseRunRewardsReader(strings.NewReader(logData))
+	if len(rewards) != 1 {
+		t.Fatalf("reward count = %d; want 1: %+v", len(rewards), rewards)
+	}
+	reward := rewards[0]
+	if reward.Account != "cookie.json" || reward.Yunbei != 500 || !reward.YunbeiKnown || !reward.YunbeiCumulative || reward.YunbeiBalance != 1230 || !reward.YunbeiBalanceKnown {
+		t.Fatalf("unexpected structured yunbei reward: %+v", reward)
+	}
+	if !reward.VIPKnown || !reward.VIP || !reward.GrowthKnown || reward.GrowthToday != 42 || reward.GrowthTotal != 946 {
+		t.Fatalf("unexpected structured VIP reward: %+v", reward)
+	}
+}
+
+func TestParseRunRewardsStructuredEventCreatesAccount(t *testing.T) {
+	logData := `[NCMM_REWARD] {"version":1,"account":"sub/fan1.json","domain":"yunbei","yunbei":{"today":12,"todayKnown":true,"balance":345,"balanceKnown":true}}
+`
+	rewards := parseRunRewardsReader(strings.NewReader(logData))
+	if len(rewards) != 1 || rewards[0].Account != "sub/fan1.json" || rewards[0].Yunbei != 12 || rewards[0].YunbeiBalance != 345 {
+		t.Fatalf("unexpected rewards: %+v", rewards)
+	}
+}
+
+func TestHideStructuredRewardEvents(t *testing.T) {
+	data := []byte("普通日志\n  [NCMM_REWARD] {\"version\":1,\"account\":\"cookie.json\",\"domain\":\"vip\",\"vip\":{}}\n收益完成\n")
+	if got := string(hideStructuredRewardEvents(data)); got != "普通日志\n收益完成\n" {
+		t.Fatalf("visible log = %q", got)
+	}
+}
+
 func newControlledRunManager(t *testing.T, maxParallel int) *runManager {
 	t.Helper()
 	home := t.TempDir()
@@ -236,6 +337,37 @@ func TestRunManagerRecordsExplicitStop(t *testing.T) {
 	stopped := waitForRunStatus(t, manager, record.ID, "stopped")
 	if stopped.ExitCode == nil || *stopped.ExitCode != -1 || !strings.Contains(stopped.Error, "已停止") {
 		t.Fatalf("unexpected stopped record: %+v", stopped)
+	}
+}
+
+func TestRunManagerDeletesOnlyFinishedRunFiles(t *testing.T) {
+	manager := newControlledRunManager(t, 1)
+	gate := filepath.Join(manager.home, "delete.done")
+	record, err := manager.start(context.Background(), controlledJob("job-delete", "skip", "account.json", gate))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.deleteRun(record.ID); err == nil || !strings.Contains(err.Error(), "cannot be deleted") {
+		t.Fatalf("delete running error = %v", err)
+	}
+	releaseRun(t, gate)
+	finished := waitForRunStatus(t, manager, record.ID, "success")
+	if _, err := os.Stat(finished.LogFile); err != nil {
+		t.Fatalf("log file before delete: %v", err)
+	}
+	if _, err := os.Stat(finished.MetaFile); err != nil {
+		t.Fatalf("meta file before delete: %v", err)
+	}
+	if err := manager.deleteRun(record.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := manager.get(record.ID); ok {
+		t.Fatal("deleted run remains in memory")
+	}
+	for _, path := range []string{finished.LogFile, finished.MetaFile} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("deleted file %s still exists: %v", path, err)
+		}
 	}
 }
 

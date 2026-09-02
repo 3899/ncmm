@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -18,18 +19,26 @@ import (
 const sessionTouchInterval = time.Minute
 
 type Manager struct {
-	store *store
-	now   func() time.Time
+	store             *store
+	now               func() time.Time
+	protectionEnabled atomic.Bool
 }
 
 func NewManager(path string) (*Manager, error) {
 	m := &Manager{store: newStore(path), now: time.Now}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := m.store.view(ctx, func(storeData) error { return nil }); err != nil {
+	if err := m.store.view(ctx, func(data storeData) error {
+		m.protectionEnabled.Store(!data.ProtectionDisabled)
+		return nil
+	}); err != nil {
 		return nil, err
 	}
 	return m, nil
+}
+
+func (m *Manager) ProtectionEnabled() bool {
+	return m.protectionEnabled.Load()
 }
 
 func (m *Manager) Configured(ctx context.Context) (bool, error) {
@@ -45,9 +54,14 @@ func (m *Manager) Status(ctx context.Context, token string) (Status, error) {
 	var status Status
 	err := m.store.view(ctx, func(data storeData) error {
 		status.Configured = data.PasswordHash != ""
+		status.PasswordProtectionEnabled = !data.ProtectionDisabled
 		status.Settings = data.Settings
 		return nil
 	})
+	if err == nil && !status.PasswordProtectionEnabled {
+		status.Authenticated = true
+		return status, nil
+	}
 	if err != nil || token == "" {
 		return status, err
 	}
@@ -79,6 +93,7 @@ func (m *Manager) Setup(ctx context.Context, password string, client ClientInfo)
 			return false, ErrAlreadyConfigured
 		}
 		data.PasswordHash = hash
+		data.ProtectionDisabled = false
 		data.Settings = settings
 		data.Sessions = map[string]Session{credentials.Session.ID: credentials.Session}
 		return true, nil
@@ -198,16 +213,28 @@ func (m *Manager) ResetPassword(ctx context.Context, password string) error {
 }
 
 func (m *Manager) UpdateSettings(ctx context.Context, settings Settings) error {
+	return m.UpdateSecurity(ctx, settings, m.ProtectionEnabled())
+}
+
+func (m *Manager) UpdateSecurity(ctx context.Context, settings Settings, protectionEnabled bool) error {
 	if err := ValidateSettings(settings); err != nil {
 		return err
 	}
-	return m.store.update(ctx, func(data *storeData) (bool, error) {
+	err := m.store.update(ctx, func(data *storeData) (bool, error) {
 		if data.PasswordHash == "" {
 			return false, ErrNotConfigured
 		}
 		data.Settings = settings
+		data.ProtectionDisabled = !protectionEnabled
+		if !protectionEnabled {
+			data.Sessions = make(map[string]Session)
+		}
 		return true, nil
 	})
+	if err == nil {
+		m.protectionEnabled.Store(protectionEnabled)
+	}
+	return err
 }
 
 func (m *Manager) ListSessions(ctx context.Context, currentID string) ([]SessionView, error) {
@@ -266,12 +293,16 @@ func (m *Manager) Clear(ctx context.Context) error {
 }
 
 func RecoverPassword(ctx context.Context, path, password string) error {
+	store := newStore(path)
 	settings := DefaultSettings()
+	if existing, err := store.read(); err == nil {
+		settings = existing.Settings
+	}
 	hash, err := HashPassword(password, settings)
 	if err != nil {
 		return err
 	}
-	return newStore(path).replace(ctx, storeData{
+	return store.replace(ctx, storeData{
 		Version: StoreVersion, PasswordHash: hash,
 		Settings: settings, Sessions: make(map[string]Session),
 	})

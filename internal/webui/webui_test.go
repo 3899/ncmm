@@ -179,6 +179,9 @@ func TestNewAllowsUnconfiguredRemoteListener(t *testing.T) {
 	}
 	defer server.scheduler.close()
 	defer server.qrcode.close()
+	if server.startedAt.IsZero() {
+		t.Fatal("server start time was not initialized")
+	}
 	configured, err := server.authManager.Configured(ctx)
 	if err != nil || configured {
 		t.Fatalf("new remote authentication state = configured %v, err %v", configured, err)
@@ -270,7 +273,7 @@ func TestWebConfigStoreMigratesV1SchedulerSafely(t *testing.T) {
 				t.Fatal(err)
 			}
 			cfg := store.snapshot()
-			if cfg.Version != 2 || len(cfg.Jobs) != 1 || cfg.Jobs[0].Enabled != test.want {
+			if cfg.Version != 3 || !cfg.Logs.RetentionEnabled || !cfg.Logs.MaxSizeEnabled || len(cfg.Jobs) != 1 || cfg.Jobs[0].Enabled != test.want {
 				t.Fatalf("unexpected migrated config: %+v", cfg)
 			}
 			data, err := os.ReadFile(path)
@@ -284,7 +287,7 @@ func TestWebConfigStoreMigratesV1SchedulerSafely(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := reloaded.snapshot(); got.Version != 2 || len(got.Jobs) != 1 || got.Jobs[0].Enabled != test.want {
+			if got := reloaded.snapshot(); got.Version != 3 || len(got.Jobs) != 1 || got.Jobs[0].Enabled != test.want {
 				t.Fatalf("migration was not persisted: %+v", got)
 			}
 		})
@@ -302,7 +305,7 @@ func TestWebConfigStoreMigratesDeprecatedV2SchedulerField(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := store.snapshot()
-	if cfg.Version != 2 || len(cfg.Jobs) != 1 || cfg.Jobs[0].Enabled {
+	if cfg.Version != 3 || len(cfg.Jobs) != 1 || cfg.Jobs[0].Enabled {
 		t.Fatalf("deprecated v2 config data changed: %+v", cfg)
 	}
 	data, err := os.ReadFile(path)
@@ -417,6 +420,38 @@ func TestConfigStorePreservesComments(t *testing.T) {
 	}
 }
 
+func TestConfigStoreVisualSaveRemovesDeletedValuesAndPreservesMatchingComments(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	raw := strings.Replace(
+		string(configForTest()),
+		"accounts:\n  main: \"./cookie.json\"\n  secondary: []",
+		"accounts:\n  main: \"./cookie.json\" # keep main\n  secondary:\n    - ./fan1.json\n  antiCheatTokens:\n    ./cookie.json: token-main\n    ./fan1.json: token-fan",
+		1,
+	)
+	if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
+		t.Fatal(err)
+	}
+	store := newConfigStore(path)
+	document, err := store.get()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := document.Data.(map[string]any)
+	accounts := data["accounts"].(map[string]any)
+	accounts["secondary"] = []any{}
+	delete(accounts["antiCheatTokens"].(map[string]any), "./fan1.json")
+	updated, err := store.saveData(document.Revision, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(updated.Raw, "fan1.json") || strings.Contains(updated.Raw, "token-fan") {
+		t.Fatalf("deleted values were retained:\n%s", updated.Raw)
+	}
+	if !strings.Contains(updated.Raw, "# keep main") || !strings.Contains(updated.Raw, "# keep this comment") {
+		t.Fatalf("matching comments were removed:\n%s", updated.Raw)
+	}
+}
+
 func TestConfigStoreReturnsRawInvalidYAMLForRepair(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "notify.yaml")
 	raw := "notify:\n  enabled: [invalid\n"
@@ -519,13 +554,13 @@ func TestConfigStoreAccountUpdatePreservesOtherData(t *testing.T) {
 		t.Fatal(err)
 	}
 	updated, err := store.updateAccount(document.Revision, loginresult.Result{
-		UID: 123, Nickname: "测试账号", CookiePath: filepath.Join(filepath.Dir(path), "fan1.json"),
+		UID: 123, Nickname: "测试账号", AvatarURL: "https://p1.music.126.net/test.jpg", CookiePath: filepath.Join(filepath.Dir(path), "fan1.json"),
 		AccountPath: "${HOME}/fan1.json", Main: false,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(updated.Raw, "${HOME}/fan1.json") || !strings.Contains(updated.Raw, "昵称: 测试账号") || !strings.Contains(updated.Raw, "# keep this comment") {
+	if !strings.Contains(updated.Raw, "${HOME}/fan1.json") || !strings.Contains(updated.Raw, "昵称: 测试账号") || !strings.Contains(updated.Raw, "头像: https://p1.music.126.net/test.jpg") || !strings.Contains(updated.Raw, "# keep this comment") {
 		t.Fatalf("account update did not preserve expected YAML:\n%s", updated.Raw)
 	}
 	if _, err := store.updateAccount(document.Revision, loginresult.Result{
@@ -560,6 +595,55 @@ func TestConfigStoreReturnsFieldDescriptions(t *testing.T) {
 	}
 }
 
+func TestConfigStoreReturnsAccountNicknames(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	raw := strings.Replace(
+		string(configForTest()),
+		"main: \"./cookie.json\"\n  secondary: []",
+		"main: \"./cookie.json\" # 昵称: 未满风 | 头像: https://p1.music.126.net/main.jpg\n  secondary:\n    - ./fan1.json # 昵称：一号西柚 | 头像：https://p2.music.126.net/secondary.jpg",
+		1,
+	)
+	if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
+		t.Fatal(err)
+	}
+	document, err := newConfigStore(path).get()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if document.AccountNames["./cookie.json"] != "未满风" || document.AccountNames["./fan1.json"] != "一号西柚" {
+		t.Fatalf("unexpected account nicknames: %#v", document.AccountNames)
+	}
+	if document.AccountProfiles["./cookie.json"].AvatarURL != "https://p1.music.126.net/main.jpg" || document.AccountProfiles["./fan1.json"].AvatarURL != "https://p2.music.126.net/secondary.jpg" {
+		t.Fatalf("unexpected account profiles: %#v", document.AccountProfiles)
+	}
+}
+
+func TestConfigStoreSavesOnlySelectedBusinessSection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, configForTest(), 0600); err != nil {
+		t.Fatal(err)
+	}
+	store := newConfigStore(path)
+	document, err := store.get()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sections := extractYAMLSections(document.Raw)
+	if !strings.Contains(sections["accounts"], "cookie.json") || strings.Contains(sections["accounts"], "network:") {
+		t.Fatalf("unexpected accounts section: %q", sections["accounts"])
+	}
+	updated, err := store.saveSectionRaw(document.Revision, "accounts", "accounts:\n  main: ./updated.json # 昵称: 新昵称\n  secondary: []\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(updated.Raw, "./updated.json") || !strings.Contains(updated.Raw, "network:") || !strings.Contains(updated.Raw, "# keep this comment") {
+		t.Fatalf("selected business section save changed unrelated YAML:\n%s", updated.Raw)
+	}
+	if updated.AccountNames["./updated.json"] != "新昵称" {
+		t.Fatalf("updated nickname missing: %#v", updated.AccountNames)
+	}
+}
+
 func TestNotifyStoreInitializesAndSaves(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "notify.yaml")
 	store, err := newNotifyStore(path)
@@ -590,6 +674,32 @@ func TestNotifyStoreInitializesAndSaves(t *testing.T) {
 	}
 }
 
+func TestNotifyStoreSavesOnlySelectedYAMLSection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "notify.yaml")
+	store, err := newNotifyStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	document, err := store.get()
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := store.saveSectionRaw(document.Revision, "pushplus", "pushplus:\n  enabled: true\n  token: selected-token\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(updated.Raw, "selected-token") || !strings.Contains(updated.Raw, "webhook:") {
+		t.Fatalf("selected section save changed the document unexpectedly:\n%s", updated.Raw)
+	}
+	sections := extractYAMLSections(updated.Raw)
+	if !strings.Contains(sections["pushplus"], "selected-token") || strings.Contains(sections["pushplus"], "webhook:") {
+		t.Fatalf("unexpected selected YAML section: %q", sections["pushplus"])
+	}
+	if _, err := store.saveSectionRaw(updated.Revision, "pushplus", "webhook:\n  enabled: false\n"); err == nil {
+		t.Fatal("mismatched top-level channel key was accepted")
+	}
+}
+
 func TestResolveNotifyPath(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.yaml")
@@ -613,7 +723,7 @@ func TestRunCleanupHonorsRetention(t *testing.T) {
 		runs:    make(map[string]RunRecord),
 		running: make(map[string]*runningProcess),
 		jobRuns: make(map[string]map[string]struct{}),
-		policy:  LogPolicy{RetentionDays: 7, MaxTotalSizeMB: 16},
+		policy:  LogPolicy{RetentionEnabled: true, RetentionDays: 7, MaxSizeEnabled: true, MaxTotalSizeMB: 16},
 	}
 	oldPath := filepath.Join(dir, "old.log")
 	if err := os.WriteFile(oldPath, []byte("old"), 0600); err != nil {
@@ -628,6 +738,60 @@ func TestRunCleanupHonorsRetention(t *testing.T) {
 	}
 	if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
 		t.Fatalf("expired log still exists: %v", err)
+	}
+}
+
+func TestRunAdvancedCleanupFiltersTerminalRecords(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now()
+	manager := &runManager{
+		logDir: dir, runs: make(map[string]RunRecord), running: make(map[string]*runningProcess),
+		queued: make(map[string]*queuedProcess), jobRuns: make(map[string]map[string]struct{}),
+	}
+	add := func(id, name, status string, started time.Time) {
+		logPath := filepath.Join(dir, id+".log")
+		metaPath := filepath.Join(dir, id+".json")
+		if err := os.WriteFile(logPath, []byte("log"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(metaPath, []byte("{}"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		manager.runs[id] = RunRecord{ID: id, JobID: id, JobName: name, Command: "task", Status: status, StartedAt: started, LogFile: logPath, MetaFile: metaPath}
+	}
+	add("old-success", "每日任务", "success", now.Add(-48*time.Hour))
+	add("recent-failed", "每日任务", "failed", now.Add(-time.Hour))
+	add("other-success", "其他任务", "success", now.Add(-48*time.Hour))
+	result, err := manager.cleanupMatching(LogCleanupFilter{JobName: "每日", Statuses: []string{"success"}, StartedBefore: now.Add(-24 * time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Deleted != 1 || result.FreedBytes == 0 || len(manager.runs) != 2 {
+		t.Fatalf("unexpected cleanup result: %+v, runs=%+v", result, manager.runs)
+	}
+	if _, exists := manager.runs["old-success"]; exists {
+		t.Fatal("matching record was not removed")
+	}
+}
+
+func TestFrontendRoutesServeSPAWithoutSwallowingUnknownPaths(t *testing.T) {
+	server := newAuthTestServer(t, t.TempDir())
+	handler := server.routes()
+	for _, route := range []string{"/", "/account", "/task", "/config", "/logs", "/system"} {
+		request := httptest.NewRequest(http.MethodGet, route, nil)
+		request.Host = "localhost:3899"
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "id=\"app-shell\"") {
+			t.Fatalf("route %s status=%d body=%q", route, response.Code, response.Body.String())
+		}
+	}
+	request := httptest.NewRequest(http.MethodGet, "/unknown", nil)
+	request.Host = "localhost:3899"
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusNotFound || strings.Contains(response.Body.String(), "id=\"app-shell\"") {
+		t.Fatalf("unknown path status=%d body=%q", response.Code, response.Body.String())
 	}
 }
 

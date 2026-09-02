@@ -167,6 +167,51 @@ func (a *Api) VipGrowPoint(ctx context.Context, req *VipGrowPointReq) (*VipGrowP
 	return &reply, nil
 }
 
+type VipGrowthDetailsReq struct {
+	types.EApiReqCommon
+	Limit  int64 `json:"limit"`
+	Offset int64 `json:"offset"`
+}
+
+type VipGrowthDetailsResp struct {
+	Code    int                  `json:"code"`
+	Data    VipGrowthDetailsData `json:"data"`
+	Message string               `json:"message"`
+}
+
+type VipGrowthDetailsData struct {
+	Details       []VipGrowthDetail `json:"details"`
+	HasMore       bool              `json:"hasMore"`
+	MaxTaskScore  int64             `json:"maxTaskScore"`
+	ScoreDuration int64             `json:"scoreDuration"`
+}
+
+type VipGrowthDetail struct {
+	Description string `json:"descript"`
+	GrowthPoint int64  `json:"growthPoint"`
+	ResourceId  int64  `json:"resourceId"`
+	Time        int64  `json:"time"`
+}
+
+// VipGrowthDetails 获取成长值明细，仅用于基础接口缺少今日累计值时回退统计。
+func (a *Api) VipGrowthDetails(ctx context.Context, req *VipGrowthDetailsReq) (*VipGrowthDetailsResp, error) {
+	var (
+		url   = "https://interface3.music.163.com/eapi/vipnewcenter/app/level/growth/details"
+		reply VipGrowthDetailsResp
+		opts  = api.NewOptions()
+	)
+	if req.Limit <= 0 {
+		req.Limit = 20
+	}
+	opts.CryptoMode = api.CryptoModeEAPI
+	resp, err := a.client.Request(ctx, url, req, &reply, opts)
+	if err != nil {
+		return nil, fmt.Errorf("Request: %w", err)
+	}
+	_ = resp
+	return &reply, nil
+}
+
 type VipCommonReq struct {
 	DeviceId string      `json:"deviceId,omitempty"`
 	OS       string      `json:"os,omitempty"`

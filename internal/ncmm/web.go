@@ -2,8 +2,10 @@ package ncmm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strconv"
@@ -112,11 +114,21 @@ func runWeb(parent context.Context, root *Root, opts webOptions) error {
 	server, err := webui.New(ctx, webui.Options{
 		Listen: opts.listen, Home: home, ConfigPath: configPath,
 		WebConfig: opts.webConfig, Executable: executable, Version: root.AppVersion,
+		Commit: root.AppCommit, Branch: root.AppBranch, BuildTime: root.AppBuildTime,
 		SecureCookie: opts.secureCookie, Output: root.cmd.Printf,
 		SchedulerMigration: opts.schedulerMigration,
 	})
 	if err != nil {
 		return err
 	}
-	return server.Run(ctx)
+	err = server.Run(ctx)
+	if !errors.Is(err, webui.ErrRestartRequested) {
+		return err
+	}
+	restarted := exec.Command(executable, os.Args[1:]...)
+	restarted.Dir = home
+	restarted.Env = append(os.Environ(), "NCMM_WEB_RESTARTED=1")
+	restarted.Stdout = os.Stdout
+	restarted.Stderr = os.Stderr
+	return restarted.Start()
 }

@@ -991,6 +991,11 @@ func UpdateAccountInFile(cfgPath, accountPath, nickname string, main bool) error
 
 // ApplyAccountUpdate changes only the target account entry and preserves unrelated YAML nodes and comments.
 func ApplyAccountUpdate(document *yaml.Node, accountPath, nickname string, main bool) error {
+	return ApplyAccountProfileUpdate(document, accountPath, nickname, "", main)
+}
+
+// ApplyAccountProfileUpdate changes only the target account entry and preserves unrelated YAML nodes and comments.
+func ApplyAccountProfileUpdate(document *yaml.Node, accountPath, nickname, avatarURL string, main bool) error {
 	if document == nil || document.Kind != yaml.DocumentNode || len(document.Content) == 0 || document.Content[0].Kind != yaml.MappingNode {
 		return fmt.Errorf("config root must be a mapping")
 	}
@@ -1006,18 +1011,18 @@ func ApplyAccountUpdate(document *yaml.Node, accountPath, nickname string, main 
 	if main {
 		value := ensureMappingNodeValue(accounts, "main", yaml.ScalarNode, "!!str")
 		value.Value = accountPath
-		setAccountNickname(value, nickname)
+		setAccountProfile(value, nickname, avatarURL)
 		return nil
 	}
 	secondary := ensureMappingNodeValue(accounts, "secondary", yaml.SequenceNode, "!!seq")
 	for _, item := range secondary.Content {
 		if item.Kind == yaml.ScalarNode && sameAccountPath(item.Value, accountPath) {
-			setAccountNickname(item, nickname)
+			setAccountProfile(item, nickname, avatarURL)
 			return nil
 		}
 	}
 	item := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: accountPath}
-	setAccountNickname(item, nickname)
+	setAccountProfile(item, nickname, avatarURL)
 	secondary.Content = append(secondary.Content, item)
 	return nil
 }
@@ -1050,9 +1055,44 @@ func ensureMappingNodeValue(mapping *yaml.Node, key string, kind yaml.Kind, tag 
 }
 
 func setAccountNickname(node *yaml.Node, nickname string) {
-	if nickname = strings.TrimSpace(nickname); nickname != "" {
-		node.LineComment = "# 昵称: " + nickname
+	setAccountProfile(node, nickname, "")
+}
+
+func setAccountProfile(node *yaml.Node, nickname, avatarURL string) {
+	existingAvatar := accountCommentValue(node.LineComment, "头像")
+	nickname = sanitizeAccountCommentValue(nickname)
+	avatarURL = sanitizeAccountCommentValue(avatarURL)
+	if avatarURL == "" {
+		avatarURL = existingAvatar
 	}
+	parts := make([]string, 0, 2)
+	if nickname != "" {
+		parts = append(parts, "昵称: "+nickname)
+	}
+	if avatarURL != "" {
+		parts = append(parts, "头像: "+avatarURL)
+	}
+	if len(parts) > 0 {
+		node.LineComment = "# " + strings.Join(parts, " | ")
+	}
+}
+
+func sanitizeAccountCommentValue(value string) string {
+	value = strings.NewReplacer("\r", " ", "\n", " ", "|", " ").Replace(strings.TrimSpace(value))
+	return strings.Join(strings.Fields(value), " ")
+}
+
+func accountCommentValue(comment, key string) string {
+	comment = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(comment), "#"))
+	for _, part := range strings.Split(comment, "|") {
+		part = strings.TrimSpace(part)
+		for _, separator := range []string{":", "："} {
+			if label, value, ok := strings.Cut(part, separator); ok && strings.TrimSpace(label) == key {
+				return strings.TrimSpace(value)
+			}
+		}
+	}
+	return ""
 }
 
 func sameAccountPath(left, right string) bool {

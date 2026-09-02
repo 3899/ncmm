@@ -188,7 +188,7 @@ ok:
 	}
 	c.cmd.Printf("login success: uid=%d nickname=%s\n", user.Account.Id, user.Profile.Nickname)
 
-	err = c.root.saveLoginResult(ctx, user.Profile.Nickname, user.Account.Id, tempCookieFile, c.output, "")
+	err = c.root.saveLoginResult(ctx, user.Profile.Nickname, user.Profile.AvatarUrl, user.Account.Id, tempCookieFile, c.output, "")
 	if err != nil {
 		return err
 	}

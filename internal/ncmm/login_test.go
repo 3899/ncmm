@@ -34,7 +34,7 @@ func TestSaveLoginResultNoConfigWrite(t *testing.T) {
 	if err := os.WriteFile(tempCookie, []byte(`{"MUSIC_U":"test"}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := login.saveLoginResult(context.Background(), "tester", 123, tempCookie, "fan1.json", ""); err != nil {
+	if err := login.saveLoginResult(context.Background(), "tester", "https://p1.music.126.net/avatar.jpg", 123, tempCookie, "fan1.json", ""); err != nil {
 		t.Fatal(err)
 	}
 	current, err := os.ReadFile(configPath)
@@ -48,7 +48,7 @@ func TestSaveLoginResultNoConfigWrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.UID != 123 || result.Main || filepath.Base(result.CookiePath) != "fan1.json" {
+	if result.UID != 123 || result.AvatarURL != "https://p1.music.126.net/avatar.jpg" || result.Main || filepath.Base(result.CookiePath) != "fan1.json" {
 		t.Fatalf("unexpected structured result: %+v", result)
 	}
 	if _, err := os.Stat(result.CookiePath); err != nil {

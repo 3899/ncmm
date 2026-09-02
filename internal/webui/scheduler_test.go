@@ -126,3 +126,51 @@ func TestSchedulerLoadsLegacyEnvironmentRulesReadOnly(t *testing.T) {
 	}
 	_ = os.Unsetenv("CRON_NCMM_VALID")
 }
+
+func TestSchedulerPinPersistsScheduleOrder(t *testing.T) {
+	manager := newControlledRunManager(t, 1)
+	defer manager.supervisor.Close(0)
+	path := filepath.Join(manager.home, "webui.yaml")
+	store, err := newWebConfigStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := store.upsert(Schedule{Name: "First", Cron: "30 8 * * *", Command: "task", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.upsert(Schedule{Name: "Second", Cron: "0 9 * * *", Command: "sign", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scheduler, err := newScheduler(context.Background(), store, manager)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer scheduler.close()
+	if jobs := scheduler.list(); len(jobs) != 2 || jobs[0].ID != first.ID {
+		t.Fatalf("initial schedule order = %+v", jobs)
+	}
+	if err := scheduler.pin(second.ID); err != nil {
+		t.Fatal(err)
+	}
+	if jobs := scheduler.list(); len(jobs) != 2 || jobs[0].ID != second.ID {
+		t.Fatalf("pinned schedule order = %+v", jobs)
+	}
+	reloaded, err := newWebConfigStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if jobs := reloaded.snapshot().Jobs; len(jobs) != 2 || jobs[0].ID != second.ID {
+		t.Fatalf("persisted schedule order = %+v", jobs)
+	}
+
+	// When a job is disabled, it should be sorted to the bottom
+	second.Enabled = false
+	if _, err := scheduler.upsert(second); err != nil {
+		t.Fatal(err)
+	}
+	if jobs := scheduler.list(); len(jobs) != 2 || jobs[0].ID != first.ID || jobs[1].ID != second.ID {
+		t.Fatalf("disabled schedule order = %+v", jobs)
+	}
+}

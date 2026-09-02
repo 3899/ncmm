@@ -29,11 +29,52 @@ var (
 const configLockTimeout = 10 * time.Second
 
 type configDocument struct {
-	Revision     string            `json:"revision"`
-	Raw          string            `json:"raw"`
-	Data         any               `json:"data"`
-	Descriptions map[string]string `json:"descriptions,omitempty"`
-	ParseError   string            `json:"parseError,omitempty"`
+	Revision        string                    `json:"revision"`
+	ModifiedAt      time.Time                 `json:"modifiedAt"`
+	Raw             string                    `json:"raw"`
+	Data            any                       `json:"data"`
+	Descriptions    map[string]string         `json:"descriptions,omitempty"`
+	ParseError      string                    `json:"parseError,omitempty"`
+	Sections        map[string]string         `json:"sections,omitempty"`
+	AccountNames    map[string]string         `json:"accountNames,omitempty"`
+	AccountProfiles map[string]accountProfile `json:"accountProfiles,omitempty"`
+}
+
+type accountProfile struct {
+	Nickname  string `json:"nickname,omitempty"`
+	AvatarURL string `json:"avatarUrl,omitempty"`
+}
+
+func withYAMLSections(document configDocument) configDocument {
+	if document.ParseError == "" {
+		document.Sections = extractYAMLSections(document.Raw)
+	}
+	return document
+}
+
+func extractYAMLSections(raw string) map[string]string {
+	var document yaml.Node
+	if yaml.Unmarshal([]byte(raw), &document) != nil || len(document.Content) == 0 {
+		return nil
+	}
+	root := document.Content[0]
+	if root.Kind != yaml.MappingNode {
+		return nil
+	}
+	sections := make(map[string]string, len(root.Content)/2)
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		section := &yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{{
+			Kind: yaml.MappingNode, Tag: "!!map",
+			Content: []*yaml.Node{cloneYAMLNode(root.Content[i]), cloneYAMLNode(root.Content[i+1])},
+		}}}
+		var output bytes.Buffer
+		encoder := yaml.NewEncoder(&output)
+		encoder.SetIndent(2)
+		if encoder.Encode(section) == nil && encoder.Close() == nil {
+			sections[root.Content[i].Value] = output.String()
+		}
+	}
+	return sections
 }
 
 type configStore struct {
@@ -91,6 +132,9 @@ func (s *configStore) getLocked() (configDocument, error) {
 		return configDocument{}, err
 	}
 	document := configDocument{Revision: revision(data), Raw: string(data)}
+	if info, statErr := os.Stat(s.path); statErr == nil {
+		document.ModifiedAt = info.ModTime()
+	}
 	var parsed any
 	if err := yaml.Unmarshal(data, &parsed); err != nil {
 		document.ParseError = fmt.Errorf("parse config: %w", err).Error()
@@ -103,6 +147,13 @@ func (s *configStore) getLocked() (configDocument, error) {
 	}
 	document.Data = parsed
 	document.Descriptions = collectYAMLDescriptions(&yamlDocument)
+	document.AccountProfiles = collectAccountProfiles(&yamlDocument)
+	document.AccountNames = make(map[string]string, len(document.AccountProfiles))
+	for path, profile := range document.AccountProfiles {
+		if profile.Nickname != "" {
+			document.AccountNames[path] = profile.Nickname
+		}
+	}
 	return document, nil
 }
 
@@ -125,6 +176,142 @@ func (s *configStore) saveRaw(expectedRevision, raw string) (configDocument, err
 		return configDocument{}, err
 	}
 	return s.getLocked()
+}
+
+func (s *configStore) saveSectionRaw(expectedRevision, section, raw string) (configDocument, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	lock, err := acquireConfigLock(s.path)
+	if err != nil {
+		return configDocument{}, err
+	}
+	defer lock.Close()
+	existing, err := s.checkRevisionLocked(expectedRevision)
+	if err != nil {
+		return configDocument{}, err
+	}
+	var source yaml.Node
+	if err := yaml.Unmarshal([]byte(raw), &source); err != nil {
+		return configDocument{}, fmt.Errorf("parse section YAML: %w", err)
+	}
+	if len(source.Content) == 0 || source.Content[0].Kind != yaml.MappingNode || len(source.Content[0].Content) != 2 || source.Content[0].Content[0].Value != section {
+		return configDocument{}, fmt.Errorf("section YAML must contain only the %q top-level key", section)
+	}
+	var destination yaml.Node
+	if err := yaml.Unmarshal(existing, &destination); err != nil {
+		return configDocument{}, err
+	}
+	if len(destination.Content) == 0 || destination.Content[0].Kind != yaml.MappingNode {
+		return configDocument{}, fmt.Errorf("YAML root must be a mapping")
+	}
+	root := destination.Content[0]
+	replaced := false
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if root.Content[i].Value == section {
+			root.Content[i+1] = cloneYAMLNode(source.Content[0].Content[1])
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		root.Content = append(root.Content, cloneYAMLNode(source.Content[0].Content[0]), cloneYAMLNode(source.Content[0].Content[1]))
+	}
+	var output bytes.Buffer
+	encoder := yaml.NewEncoder(&output)
+	encoder.SetIndent(2)
+	if err := encoder.Encode(&destination); err != nil {
+		return configDocument{}, err
+	}
+	if err := encoder.Close(); err != nil {
+		return configDocument{}, err
+	}
+	if err := s.validateAndWriteLocked(output.Bytes()); err != nil {
+		return configDocument{}, err
+	}
+	return s.getLocked()
+}
+
+func collectAccountNicknames(document *yaml.Node) map[string]string {
+	names := make(map[string]string)
+	for path, profile := range collectAccountProfiles(document) {
+		if profile.Nickname != "" {
+			names[path] = profile.Nickname
+		}
+	}
+	return names
+}
+
+func collectAccountProfiles(document *yaml.Node) map[string]accountProfile {
+	profiles := make(map[string]accountProfile)
+	if document == nil || document.Kind != yaml.DocumentNode || len(document.Content) == 0 {
+		return profiles
+	}
+	root := document.Content[0]
+	if root.Kind != yaml.MappingNode {
+		return profiles
+	}
+	var accounts *yaml.Node
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if root.Content[i].Value == "accounts" {
+			accounts = root.Content[i+1]
+			break
+		}
+	}
+	if accounts == nil || accounts.Kind != yaml.MappingNode {
+		return profiles
+	}
+	for i := 0; i+1 < len(accounts.Content); i += 2 {
+		key, value := accounts.Content[i].Value, accounts.Content[i+1]
+		switch key {
+		case "main", "primary":
+			if value.Kind == yaml.ScalarNode {
+				if profile := accountProfileFromNode(value); profile.Nickname != "" || profile.AvatarURL != "" {
+					profiles[value.Value] = profile
+				}
+			}
+		case "secondary":
+			if value.Kind != yaml.SequenceNode {
+				continue
+			}
+			for _, item := range value.Content {
+				if item.Kind == yaml.ScalarNode {
+					if profile := accountProfileFromNode(item); profile.Nickname != "" || profile.AvatarURL != "" {
+						profiles[item.Value] = profile
+					}
+				}
+			}
+		}
+	}
+	return profiles
+}
+
+func accountNickname(node *yaml.Node) string {
+	return accountProfileFromNode(node).Nickname
+}
+
+func accountProfileFromNode(node *yaml.Node) accountProfile {
+	var profile accountProfile
+	for _, comment := range []string{node.LineComment, node.HeadComment} {
+		comment = normalizeYAMLComment(comment)
+		for _, line := range strings.Split(comment, "\n") {
+			for _, part := range strings.Split(line, "|") {
+				part = strings.TrimSpace(part)
+				for _, separator := range []string{":", "："} {
+					label, value, ok := strings.Cut(part, separator)
+					if !ok {
+						continue
+					}
+					switch strings.TrimSpace(label) {
+					case "昵称":
+						profile.Nickname = strings.TrimSpace(value)
+					case "头像":
+						profile.AvatarURL = strings.TrimSpace(value)
+					}
+				}
+			}
+		}
+	}
+	return profile
 }
 
 func (s *configStore) saveData(expectedRevision string, value any) (configDocument, error) {
@@ -233,7 +420,7 @@ func (s *configStore) updateAccount(expectedRevision string, result loginresult.
 	if err := yaml.Unmarshal(existing, &document); err != nil {
 		return configDocument{}, fmt.Errorf("parse config: %w", err)
 	}
-	if err := config.ApplyAccountUpdate(&document, result.AccountPath, result.Nickname, result.Main); err != nil {
+	if err := config.ApplyAccountProfileUpdate(&document, result.AccountPath, result.Nickname, result.AvatarURL, result.Main); err != nil {
 		return configDocument{}, err
 	}
 	var out bytes.Buffer
@@ -294,20 +481,30 @@ func mergeYAMLNode(dst, src *yaml.Node) {
 		return
 	}
 	if dst.Kind == yaml.MappingNode && src.Kind == yaml.MappingNode {
+		source := make(map[string][2]*yaml.Node, len(src.Content)/2)
 		for i := 0; i+1 < len(src.Content); i += 2 {
-			srcKey, srcValue := src.Content[i], src.Content[i+1]
-			found := false
-			for j := 0; j+1 < len(dst.Content); j += 2 {
-				if dst.Content[j].Value == srcKey.Value {
-					mergeYAMLNode(dst.Content[j+1], srcValue)
-					found = true
-					break
-				}
-			}
-			if !found {
-				dst.Content = append(dst.Content, cloneYAMLNode(srcKey), cloneYAMLNode(srcValue))
-			}
+			source[src.Content[i].Value] = [2]*yaml.Node{src.Content[i], src.Content[i+1]}
 		}
+		merged := make([]*yaml.Node, 0, len(src.Content))
+		seen := make(map[string]bool, len(source))
+		for i := 0; i+1 < len(dst.Content); i += 2 {
+			key := dst.Content[i].Value
+			pair, ok := source[key]
+			if !ok {
+				continue
+			}
+			mergeYAMLNode(dst.Content[i+1], pair[1])
+			merged = append(merged, dst.Content[i], dst.Content[i+1])
+			seen[key] = true
+		}
+		for i := 0; i+1 < len(src.Content); i += 2 {
+			key := src.Content[i].Value
+			if seen[key] {
+				continue
+			}
+			merged = append(merged, cloneYAMLNode(src.Content[i]), cloneYAMLNode(src.Content[i+1]))
+		}
+		dst.Content = merged
 		return
 	}
 	comments := [3]string{dst.HeadComment, dst.LineComment, dst.FootComment}

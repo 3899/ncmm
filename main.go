@@ -17,6 +17,7 @@ var versionStr string
 var (
 	Version   string
 	Commit    = "none"
+	Branch    = "unknown"
 	BuildTime = "now"
 )
 
@@ -28,6 +29,6 @@ func init() {
 
 func main() {
 	c := ncmm.New()
-	c.Version(Version, BuildTime, Commit)
+	c.Version(Version, BuildTime, Commit, Branch)
 	c.Execute()
 }

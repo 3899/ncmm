@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="25 24.5 70.5 70.5" fill="none" width="120px" height="120px" preserveAspectRatio="xMidYMid meet">
+  <style>
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+    .cd-disk {
+      animation: spin 8.0s linear infinite;
+      transform-origin: 60px 60px;
+    }
+    .cd-groove { stroke: #5c667a; }
+  </style>
+
+  <!-- CD Disk Logo Group -->
+  <g>
+    <!-- Outer CD Body (纯黑胶盘体，无外圈浅色粗边框) -->
+    <circle cx="60" cy="60" r="35" fill="#181f2a"/>
+    
+    <!-- Spinning Vinyl Record -->
+    <g class="cd-disk">
+      <!-- Vinyl Grooves -->
+      <circle cx="60" cy="60" r="30" fill="none" stroke-width="0.9" class="cd-groove" stroke-dasharray="6,4"/>
+      <circle cx="60" cy="60" r="26" fill="none" stroke-width="0.9" class="cd-groove"/>
+      <circle cx="60" cy="60" r="21" fill="none" stroke-width="0.9" class="cd-groove" stroke-dasharray="10,5"/>
+      <circle cx="60" cy="60" r="16" fill="none" stroke-width="0.9" class="cd-groove"/>
+      <!-- Center Label & Spindle Hole -->
+      <circle cx="60" cy="60" r="10" fill="#e60026"/>
+      <circle cx="60" cy="60" r="3" fill="#090d16"/>
+    </g>
+
+    <!-- Stylus / Needle -->
+    <circle cx="93" cy="27" r="2.5" fill="#6e7781"/>
+    <path d="M93 27 L79 40 L74 52" stroke="#6e7781" stroke-width="1.6" stroke-linecap="round" fill="none"/>
+    <rect x="71" y="50" width="4" height="6" transform="rotate(-25 73 53)" fill="#6e7781"/>
+  </g>
+</svg>
