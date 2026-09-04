@@ -10,15 +10,12 @@ if not exist "%NCMM_EXE%" (
     exit /b 1
 )
 
-"%NCMM_EXE%" --home "%~dp0" web --background
-set "exit_code=%errorlevel%"
+:: 启动服务（新窗口运行，避免阻塞批处理）
+start "NCMM Server" "%NCMM_EXE%" web
 
-if not "%exit_code%"=="0" (
-    echo.
-    echo [ERROR] Failed to start ncmm. Exit code: %exit_code%.
-    pause
-    exit /b %exit_code%
-)
+:: 等待 2 秒，确保 Web 端口监听已就绪
+timeout /t 2 /nobreak >nul
 
+:: 打开浏览器访问
 start "" "http://127.0.0.1:3899"
 exit /b 0
