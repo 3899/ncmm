@@ -114,6 +114,9 @@
   <img src="https://contrib.rocks/image?repo=3899/ncmm" />
 </a>
 
+### 🌱 社区支持
+
+[LINUX DO](https://linux.do/)
 
 ### 📦 参考项目
 | 项目 | 说明 |
