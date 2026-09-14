@@ -2147,11 +2147,7 @@
             <span class="plugin-detail-val"><code>${escapeHTML(p.name)}</code></span>
           </div>
           ${p.author ? `<div class="plugin-detail-row"><span>插件作者:</span><span class="plugin-detail-val">${escapeHTML(p.author)}</span></div>` : ''}
-          <div class="plugin-detail-row">
-            <span>可执行文件:</span>
-            <span class="plugin-detail-val" title="${escapeHTML(p.path)}">${escapeHTML(fileBase(p.path) || p.path)}</span>
-          </div>
-          ${p.manifest?.recommendedCron ? `<div class="plugin-detail-row"><span>推荐 Cron:</span><span class="plugin-detail-val"><code>${escapeHTML(p.manifest.recommendedCron)}</code></span></div>` : ''}
+          ${(p.recommendedCron || p.manifest?.recommendedCron) ? `<div class="plugin-detail-row"><span>推荐 Cron:</span><span class="plugin-detail-val"><code>${escapeHTML(p.recommendedCron || p.manifest?.recommendedCron)}</code></span></div>` : ''}
         </div>
         <div class="plugin-card-actions">
           <button type="button" class="btn btn-primary btn-sm" data-plugin-action="schedule" data-name="${escapeHTML(p.name)}">
@@ -2293,14 +2289,15 @@
     }
     if (!currentPlugin) return;
 
-    if (currentPlugin.manifest?.recommendedCron) {
+    const recCron = currentPlugin.recommendedCron || currentPlugin.manifest?.recommendedCron;
+    if (recCron) {
       tip?.classList.remove('hidden');
       const cronValEl = $('#schedule-plugin-cron-val');
-      if (cronValEl) cronValEl.textContent = currentPlugin.manifest.recommendedCron;
+      if (cronValEl) cronValEl.textContent = recCron;
       const applyBtn = $('#schedule-plugin-cron-apply');
       if (applyBtn) {
         applyBtn.onclick = () => {
-          $('#schedule-cron').value = currentPlugin.manifest.recommendedCron;
+          $('#schedule-cron').value = recCron;
           $('#cron-preset').value = 'custom';
           toast('已应用插件推荐的 Cron 规则');
         };
@@ -2326,7 +2323,7 @@
       }
     }
 
-    const params = currentPlugin.manifest?.params || [];
+    const params = currentPlugin.params || currentPlugin.manifest?.params || [];
     if (params.length === 0) {
       dynamicContainer.innerHTML = '<p class="field-note">该插件未声明结构化参数，可直接在下方命令行输入参数。</p>';
       return;
@@ -2505,8 +2502,9 @@
     if (pluginPreset) {
       $('#schedule-name').value = pluginPreset.title ? `${pluginPreset.title} - 定时提现` : `${pluginPreset.name} 任务`;
       $('#schedule-command').value = 'plugin';
-      if (pluginPreset.manifest?.recommendedCron) {
-        $('#schedule-cron').value = pluginPreset.manifest.recommendedCron;
+      const recCron = pluginPreset.recommendedCron || pluginPreset.manifest?.recommendedCron;
+      if (recCron) {
+        $('#schedule-cron').value = recCron;
         $('#cron-preset').value = 'custom';
       } else {
         $('#schedule-cron').value = '30 8 * * *';
