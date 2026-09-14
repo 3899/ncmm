@@ -39,6 +39,7 @@ type Server struct {
 	scheduler    *scheduler
 	qrcode       *qrcodeLoginManager
 	processes    *processSupervisor
+	plugins      PluginManager
 	instance     instanceMetadata
 	startedAt    time.Time
 	updateMu     sync.Mutex
@@ -87,7 +88,7 @@ func New(ctx context.Context, opts Options) (*Server, error) {
 		opts: opts, authManager: authManager, loginLimiter: newLoginRateLimiter(),
 		config: configRepository, notify: notifyStore,
 		webConfig: webConfig, runner: runner, scheduler: scheduler,
-		processes: processes, startedAt: time.Now(),
+		processes: processes, plugins: opts.PluginManager, startedAt: time.Now(),
 		restartCh: make(chan struct{}, 1),
 		qrcode: newQRCodeLoginManager(ctx, opts.Executable, opts.ConfigPath, opts.Home, func(expectedRevision string, result loginresult.Result) error {
 			_, updateErr := configRepository.updateAccount(expectedRevision, result)
@@ -212,6 +213,11 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/accounts/qrcode/{id}", s.handleQRCodeLoginGet)
 	mux.HandleFunc("GET /api/v1/accounts/qrcode/{id}/image", s.handleQRCodeLoginImage)
 	mux.HandleFunc("DELETE /api/v1/accounts/qrcode/{id}", s.handleQRCodeLoginCancel)
+	mux.HandleFunc("GET /api/v1/plugins", s.handlePluginsGet)
+	mux.HandleFunc("POST /api/v1/plugins/install", s.handlePluginInstall)
+	mux.HandleFunc("POST /api/v1/plugins/upload", s.handlePluginUpload)
+	mux.HandleFunc("DELETE /api/v1/plugins/{name}", s.handlePluginDelete)
+	mux.HandleFunc("POST /api/v1/plugins/{name}/run", s.handlePluginRun)
 
 	staticFS, _ := fs.Sub(staticFiles, "static")
 	fileServer := http.FileServer(http.FS(staticFS))
@@ -267,7 +273,7 @@ func (s *Server) routes() http.Handler {
 
 func frontendRoute(path string) bool {
 	switch path {
-	case "/", "/account", "/task", "/config", "/logs", "/system":
+	case "/", "/account", "/task", "/config", "/logs", "/system", "/plugins":
 		return true
 	default:
 		return false
@@ -1049,3 +1055,126 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]string{"error": message})
 }
+
+func (s *Server) handlePluginsGet(w http.ResponseWriter, r *http.Request) {
+	if s.plugins == nil {
+		writeJSON(w, http.StatusOK, []PluginInfo{})
+		return
+	}
+	plugins := s.plugins.DiscoverPlugins()
+	if plugins == nil {
+		plugins = []PluginInfo{}
+	}
+	writeJSON(w, http.StatusOK, plugins)
+}
+
+func (s *Server) handlePluginInstall(w http.ResponseWriter, r *http.Request) {
+	if s.plugins == nil {
+		writeError(w, http.StatusBadRequest, "plugin management is not available")
+		return
+	}
+	var req struct {
+		Target string `json:"target"`
+		Token  string `json:"token"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 16<<10)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	target := strings.TrimSpace(req.Target)
+	if target == "" {
+		writeError(w, http.StatusBadRequest, "target URL or repo is required")
+		return
+	}
+
+	var name string
+	var err error
+	if strings.HasPrefix(target, "http://") || strings.HasPrefix(target, "https://") {
+		name, err = s.plugins.InstallFromURL(r.Context(), target, strings.TrimSpace(req.Token), "", nil)
+	} else if strings.Contains(target, "/") {
+		name, err = s.plugins.InstallFromGitHub(r.Context(), target, strings.TrimSpace(req.Token), "", nil)
+	} else {
+		writeError(w, http.StatusBadRequest, "invalid target format: expected URL or 'owner/repo'")
+		return
+	}
+
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "name": name})
+}
+
+func (s *Server) handlePluginUpload(w http.ResponseWriter, r *http.Request) {
+	if s.plugins == nil {
+		writeError(w, http.StatusBadRequest, "plugin management is not available")
+		return
+	}
+	if err := r.ParseMultipartForm(64 << 20); err != nil {
+		writeError(w, http.StatusBadRequest, "parse multipart upload: "+err.Error())
+		return
+	}
+	file, handler, err := r.FormFile("file")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "file parameter is required")
+		return
+	}
+	defer file.Close()
+
+	data, err := io.ReadAll(io.LimitReader(file, 64<<20))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "read upload data: "+err.Error())
+		return
+	}
+
+	name, err := s.plugins.InstallFromArchive(data, handler.Filename, "")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "install archive: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "name": name})
+}
+
+func (s *Server) handlePluginDelete(w http.ResponseWriter, r *http.Request) {
+	if s.plugins == nil {
+		writeError(w, http.StatusBadRequest, "plugin management is not available")
+		return
+	}
+	name := strings.TrimSpace(r.PathValue("name"))
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "plugin name is required")
+		return
+	}
+	if err := s.plugins.UninstallPlugin(name); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true})
+}
+
+func (s *Server) handlePluginRun(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimSpace(r.PathValue("name"))
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "plugin name is required")
+		return
+	}
+	var req struct {
+		Args []string `json:"args"`
+	}
+	_ = json.NewDecoder(io.LimitReader(r.Body, 16<<10)).Decode(&req)
+	args := []string{"run", name}
+	args = append(args, req.Args...)
+	job := Schedule{
+		ID:      "plugin-" + name,
+		Name:    "插件运行: " + name,
+		Command: "plugin",
+		Args:    args,
+	}
+	record, err := s.runner.start(r.Context(), job)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "runId": record.ID})
+}
+

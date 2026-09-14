@@ -165,6 +165,9 @@
       <circle cx="12" cy="12" r="9" />
       <path d="M12 8v5m0 3h.01" />
     </symbol>
+    <symbol id="i-plugin" viewBox="0 0 24 24">
+      <path d="M14 7V4a2 2 0 0 0-2-2 2 2 0 0 0-2 2v3H6a2 2 0 0 0-2 2v4h3a2 2 0 0 1 2 2 2 2 0 0 1-2 2H4v4a2 2 0 0 0 2 2h4v-3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v3h4a2 2 0 0 0 2-2v-4h-3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h3V9a2 2 0 0 0-2-2h-3z" />
+    </symbol>
   </svg>
 
   <section id="login-view" class="login-view">
@@ -273,6 +276,10 @@
         <button class="nav-item" data-page="schedules"><span class="nav-item-left"><svg>
               <use href="#i-calendar" />
             </svg><span>定时任务</span></span></button>
+        <button class="nav-item" data-page="plugins"><span class="nav-item-left"><svg>
+              <use href="#i-plugin" />
+            </svg><span>插件中心</span></span><span id="plugin-nav-count"
+            class="nav-badge">0</span></button>
         <button class="nav-item" data-page="config"><span class="nav-item-left"><svg>
               <use href="#i-settings" />
             </svg><span>策略配置</span></span></button>
@@ -673,6 +680,36 @@
           </div>
         </section>
 
+        <section id="page-plugins" class="page tab-page">
+          <div class="plugin-toolbar">
+            <div class="plugin-toolbar-left">
+              <button id="plugin-install-open" class="btn btn-primary"><svg>
+                  <use href="#i-download" />
+                </svg>在线安装插件</button>
+              <button id="plugin-upload-btn" class="btn btn-glass"><svg>
+                  <use href="#i-plus" />
+                </svg>上传插件包</button>
+              <input id="plugin-file-input" type="file" accept=".zip,.tar.gz,.gz" style="display:none">
+              <div class="schedule-search-box">
+                <span class="schedule-search-icon">🔍</span>
+                <input id="plugin-search" class="schedule-search-input" type="text" placeholder="搜索已安装插件...">
+              </div>
+            </div>
+            <div class="plugin-toolbar-right">
+              <button id="plugin-refresh" class="btn btn-glass btn-icon" title="刷新插件列表"><svg>
+                  <use href="#i-refresh" />
+                </svg></button>
+            </div>
+          </div>
+
+          <div id="plugin-cards-grid" class="plugin-cards-grid">
+            <div class="plugin-empty-box">
+              <svg class="plugin-empty-icon" aria-hidden="true"><use href="#i-plugin" /></svg>
+              <p>正在加载插件列表...</p>
+            </div>
+          </div>
+        </section>
+
         <section id="page-runs" class="page tab-page">
           <div class="run-filter-toolbar">
             <div class="run-filter-left">
@@ -945,13 +982,25 @@
             <option value="daily-song-share">daily-song-share</option>
             <option value="vip-member-gift">vip-member-gift</option>
             <option value="fansgroup">fansgroup</option>
+            <option value="plugin">plugin (插件)</option>
           </select></label>
         <label>重叠策略<select id="schedule-overlap">
             <option value="skip">跳过重复触发</option>
             <option value="allow">重复触发进入队列</option>
           </select></label>
       </div>
-      <label>命令参数<input id="schedule-args" placeholder="--only-fast"></label>
+      <div id="schedule-plugin-fields" class="plugin-params-panel hidden">
+        <div class="plugin-panel-header">
+          <span class="plugin-panel-title"><svg class="plugin-title-icon"><use href="#i-plugin" /></svg>插件参数可视化配置</span>
+          <select id="schedule-plugin-select" class="form-select compact-select" style="max-width:220px;"></select>
+        </div>
+        <div id="schedule-plugin-tip" class="plugin-cron-tip hidden">
+          <span>💡 推荐执行规则：<code id="schedule-plugin-cron-val">30 59 7,11,17,19,23 * * *</code></span>
+          <button type="button" id="schedule-plugin-cron-apply" class="btn-link">一键填入</button>
+        </div>
+        <div id="schedule-plugin-dynamic-fields" class="plugin-dynamic-fields"></div>
+      </div>
+      <label>命令参数<input id="schedule-args" placeholder="如 --only-fast 或 run withdraw --target 15"></label>
       <div class="dialog-actions"><button type="button" class="button subtle dialog-close">取消</button><button
           id="schedule-submit" type="submit" class="button primary"><svg>
             <use href="#i-save" />
@@ -1025,6 +1074,29 @@
           class="btn btn-primary danger-fill" type="submit"><svg>
             <use href="#i-trash" />
           </svg>确认清理</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="plugin-install-dialog" class="dialog compact-dialog">
+    <form id="plugin-install-form" method="dialog">
+      <div class="dialog-head">
+        <div>
+          <p class="eyebrow">INSTALL PLUGIN</p>
+          <h3>在线安装插件</h3>
+        </div><button type="button" class="icon-button plugin-install-close" title="关闭">×</button>
+      </div>
+      <p class="field-note" style="margin-bottom:12px;">支持填写 GitHub 仓库名 (如 <code>3899/ncmm-withdraw</code>) 或 Release 安装包直链 URL。</p>
+      <label class="form-group"><span class="form-label">仓库或下载地址</span><input id="plugin-install-repo" class="form-input" placeholder="3899/ncmm-withdraw 或 https://..." required autocomplete="off"></label>
+      <div class="form-grid two">
+        <label class="form-group"><span class="form-label">版本 Tag (可选)</span><input id="plugin-install-tag" class="form-input" placeholder="默认最新 (latest)" autocomplete="off"></label>
+        <label class="form-group"><span class="form-label">GitHub Token (私有库可选)</span><input id="plugin-install-token" class="form-input" type="password" placeholder="ghp_xxx" autocomplete="off"></label>
+      </div>
+      <div class="dialog-actions">
+        <button type="button" class="btn btn-glass plugin-install-close">取消</button>
+        <button id="plugin-install-submit" class="btn btn-primary" type="submit"><svg>
+            <use href="#i-download" />
+          </svg><span id="plugin-install-btn-text">开始安装</span></button>
+      </div>
     </form>
   </dialog>
 

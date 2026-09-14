@@ -158,6 +158,7 @@ func New() *Root {
 	c.Add(NewVipMemberGift(c, c.l).Command())
 	c.Add(NewFansGroup(c, c.l).Command())
 	c.Add(NewTask(c, c.l).Command())
+	c.Add(NewPlugin(c, c.l).Command())
 	c.Add(newWebCommand(c))
 	c.Add(newAuthCommand(c))
 	c.Add(newUpdateCommand(c))

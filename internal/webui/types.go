@@ -1,6 +1,9 @@
 package webui
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 const (
 	defaultListen           = "127.0.0.1:3899"
@@ -23,6 +26,48 @@ type Options struct {
 	SchedulerMigration *SchedulerMigration
 	SecureCookie       bool
 	Output             func(string, ...any)
+	PluginManager      PluginManager
+}
+
+type PluginParamSchema struct {
+	Name        string        `json:"name"`
+	Label       string        `json:"label"`
+	Type        string        `json:"type"` // "chips", "select", "number", "boolean", "account-select", "text"
+	Options     []interface{} `json:"options,omitempty"`
+	Default     interface{}   `json:"default,omitempty"`
+	Min         *int          `json:"min,omitempty"`
+	Max         *int          `json:"max,omitempty"`
+	Description string        `json:"description,omitempty"`
+}
+
+type PluginManifest struct {
+	Name            string              `json:"name"`
+	Title           string              `json:"title,omitempty"`
+	Version         string              `json:"version,omitempty"`
+	Description     string              `json:"description,omitempty"`
+	Author          string              `json:"author,omitempty"`
+	RecommendedCron string              `json:"recommendedCron,omitempty"`
+	Params          []PluginParamSchema `json:"params,omitempty"`
+}
+
+type PluginInfo struct {
+	Name            string              `json:"name"`
+	Path            string              `json:"path"`
+	Title           string              `json:"title,omitempty"`
+	Version         string              `json:"version,omitempty"`
+	Description     string              `json:"description,omitempty"`
+	Author          string              `json:"author,omitempty"`
+	RecommendedCron string              `json:"recommendedCron,omitempty"`
+	Params          []PluginParamSchema `json:"params,omitempty"`
+}
+
+type PluginManager interface {
+	DiscoverPlugins() []PluginInfo
+	InstallFromURL(ctx context.Context, targetURL, token, destDir string, logFn func(string, ...any)) (string, error)
+	InstallFromGitHub(ctx context.Context, repo, token, destDir string, logFn func(string, ...any)) (string, error)
+	InstallFromArchive(data []byte, filename, destDir string) (string, error)
+	UninstallPlugin(name string) error
+	DefaultPluginDir() string
 }
 
 type SchedulerMigration struct {

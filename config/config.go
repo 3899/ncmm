@@ -237,7 +237,15 @@ type MusicianConf struct {
 	IdentityCacheDays *int             `json:"identityCacheDays" yaml:"identityCacheDays"`
 	EnableVipNote     *bool            `json:"enableVipNote" yaml:"enableVipNote"`
 	EnableVipPlay     *bool            `json:"enableVipPlay" yaml:"enableVipPlay"`
+	EnableVipClaim    *bool            `json:"enableVipClaim" yaml:"enableVipClaim"`
 	Play              MusicianPlayConf `json:"play" yaml:"play"`
+}
+
+func (m *MusicianConf) IsVipClaimEnabled() bool {
+	if m == nil || m.EnableVipClaim == nil {
+		return true
+	}
+	return *m.EnableVipClaim
 }
 
 // NoteConf 笔记发布公共配置

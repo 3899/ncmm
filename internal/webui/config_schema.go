@@ -310,6 +310,7 @@ func mainConfigSchema() configTargetSchema {
 		}(),
 		schemaField("musician.enableVipNote", "VIP 进阶自动发笔记", "允许进阶任务复用笔记配置。", "musician-main", "boolean", "switch"),
 		schemaField("musician.enableVipPlay", "VIP 进阶接力播放", "允许进阶任务执行专属播放目标。", "musician-main", "boolean", "switch"),
+		schemaField("musician.enableVipClaim", "VIP 进阶自动领卡", "允许进阶任务在达标后自动领取黑胶 VIP 会员卡。", "musician-main", "boolean", "switch"),
 		schemaField("musician.play.ids", "专属歌曲 ID", "留空继承指定播放模块的歌曲池。", "musician-play", "csv", "tags"),
 		schemaField("musician.play.idsFile", "专属歌曲文件", "留空继承指定播放模块的文件列表。", "musician-play", "string-list", "tags"),
 		func() configSchemaField {

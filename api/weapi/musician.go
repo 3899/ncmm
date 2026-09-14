@@ -145,3 +145,129 @@ func (a *Api) MusicianCloudbeanObtain(ctx context.Context, req *MusicianCloudbea
 	_ = resp
 	return &reply, nil
 }
+
+// MusicianVipInfoReq 音乐人 VIP 进阶权益与任务状态查询请求
+type MusicianVipInfoReq struct{}
+
+// MusicianVipInfoResp 音乐人 VIP 进阶权益与任务状态查询响应
+type MusicianVipInfoResp struct {
+	types.RespCommon[MusicianVipInfoData]
+}
+
+// MusicianVipInfoData 音乐人 VIP 状态数据 (对齐 weapi/nmusician/workbench/special/right/vip/info 响应)
+type MusicianVipInfoData struct {
+	HasOpen              bool                    `json:"hasOpen"`
+	IsMusician           bool                    `json:"isMusician"`
+	CanOpen              bool                    `json:"canOpen"`              // 当前是否可以开启/领取 VIP
+	HasFurtherTask       bool                    `json:"hasFurtherTask"`
+	TaskStatus           bool                    `json:"taskStatus"`           // 任务达标状态
+	MusicianType         int                     `json:"musicianType"`
+	Status               int                     `json:"status"`
+	MaintainDays         int                     `json:"maintainDays"`
+	RecentPlayCount30    int                     `json:"recentPlayCount30"`
+	IsTodayStart         bool                    `json:"isTodayStart"`
+	IsGrowthSupportUser  bool                    `json:"isGrowthSupportUser"`
+	UnlockVipRight       bool                    `json:"unlockVipRight"`
+	FurtherVipGetTime    int64                   `json:"furtherVipGetTime"`    // 可领取 VIP 的时间戳 (毫秒)
+	FurtherTaskStartTime int64                   `json:"furtherTaskStartTime"`
+	FurtherTask          *MusicianVipFurtherTask `json:"furtherTask"`
+}
+
+// MusicianVipFurtherTask 进阶任务
+type MusicianVipFurtherTask struct {
+	Name             string               `json:"name"`
+	TotalCompleteNum int                  `json:"totalCompleteNum"`
+	ProgressRate     int                  `json:"progressRate"`
+	MissionStatus    int                  `json:"missionStatus"`
+	MissionCode      string               `json:"missionCode"`
+	SortValue        int                  `json:"sortValue"`
+	Desc             string               `json:"desc"`
+	TaskProgressText string               `json:"taskProgressText"`
+	Button           string               `json:"button"`
+	IconUrl          string               `json:"iconUrl"`
+	IosUrl           string               `json:"iosUrl"`
+	AndroidUrl       string               `json:"androidUrl"`
+	PcUrl            string               `json:"pcUrl"`
+	Children         []MusicianVipSubTask `json:"children"`
+}
+
+// MusicianVipSubTask 子任务
+type MusicianVipSubTask struct {
+	Name             string               `json:"name"`
+	TotalCompleteNum int                  `json:"totalCompleteNum"`
+	ProgressRate     int                  `json:"progressRate"`
+	MissionStatus    int                  `json:"missionStatus"`
+	MissionCode      string               `json:"missionCode"`
+	SortValue        int                  `json:"sortValue"`
+	Desc             string               `json:"desc"`
+	TaskProgressText string               `json:"taskProgressText"`
+	Button           string               `json:"button"`
+	IconUrl          string               `json:"iconUrl"`
+	IosUrl           string               `json:"iosUrl"`
+	AndroidUrl       string               `json:"androidUrl"`
+	PcUrl            string               `json:"pcUrl"`
+	Children         []MusicianVipSubTask `json:"children"`
+}
+
+// MusicianVipInfo 获取音乐人 VIP 进阶权益与任务状态 (WEAPI)
+// url: /weapi/nmusician/workbench/special/right/vip/info
+func (a *Api) MusicianVipInfo(ctx context.Context, req *MusicianVipInfoReq) (*MusicianVipInfoResp, error) {
+	if req == nil {
+		req = &MusicianVipInfoReq{}
+	}
+	var (
+		url   = "https://interface.music.163.com/weapi/nmusician/workbench/special/right/vip/info"
+		reply MusicianVipInfoResp
+		opts  = api.NewOptions()
+	)
+	opts.CryptoMode = api.CryptoModeWEAPI
+	opts.SetHeader("Referer", "https://y.music.163.com/")
+	opts.SetHeader("Origin", "https://y.music.163.com")
+
+	resp, err := a.client.Request(ctx, url, req, &reply, opts)
+	if err != nil {
+		return nil, fmt.Errorf("Request: %w", err)
+	}
+	_ = resp
+	return &reply, nil
+}
+
+// MusicianVipGetReq 领取音乐人黑胶 VIP 请求
+type MusicianVipGetReq struct {
+	CheckToken string `json:"checkToken,omitempty"`
+}
+
+// MusicianVipGetResp 领取音乐人黑胶 VIP 响应
+type MusicianVipGetResp struct {
+	types.RespCommon[bool]
+}
+
+// MusicianVipGet 领取音乐人黑胶 VIP (WEAPI)
+// url: /weapi/nmusician/workbench/special/right/vip/get
+func (a *Api) MusicianVipGet(ctx context.Context, req *MusicianVipGetReq, antiCheatToken string) (*MusicianVipGetResp, error) {
+	if req == nil {
+		req = &MusicianVipGetReq{}
+	}
+	if antiCheatToken != "" && req.CheckToken == "" {
+		req.CheckToken = antiCheatToken
+	}
+
+	var (
+		url   = "https://interface.music.163.com/weapi/nmusician/workbench/special/right/vip/get"
+		reply MusicianVipGetResp
+		opts  = api.NewOptions()
+	)
+	opts.CryptoMode = api.CryptoModeWEAPI
+	opts.SetHeader("Referer", "https://y.music.163.com/")
+	opts.SetHeader("Origin", "https://y.music.163.com")
+	if antiCheatToken != "" {
+		opts.SetHeader("x-anticheattoken", antiCheatToken)
+	}
+
+	resp, err := a.client.Request(ctx, url, req, &reply, opts)
+	if err != nil {
+		return nil, fmt.Errorf("Request: %w", err)
+	}
+	_ = resp
+	return &reply, nil
+}
