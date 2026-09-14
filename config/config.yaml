@@ -188,6 +188,8 @@ musician:
   enableVipNote: true
   # VIP 进阶任务执行专属播放目标。
   enableVipPlay: true
+  # VIP 进阶任务完成且到达领取时间后自动领取黑胶 VIP（每月一次，需要 antiCheatToken）。
+  enableVipClaim: true
 
   # 留空或填 0 时继承 playids 对应配置。
   play:

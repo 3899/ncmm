@@ -13,6 +13,7 @@ import (
 
 	"github.com/3899/ncmm/api"
 	"github.com/3899/ncmm/api/eapi"
+	"github.com/3899/ncmm/api/weapi"
 	"github.com/3899/ncmm/config"
 	"github.com/3899/ncmm/pkg/database"
 	"github.com/3899/ncmm/pkg/log"
@@ -149,10 +150,11 @@ func (c *Musician) saveMusicianIdentityCache(ctx context.Context, db database.Da
 
 // musicianContext 保存单次执行所需的公共上下文
 type musicianContext struct {
-	cli     *api.Client
-	eapiCli *eapi.Api
-	db      database.Database
-	resp    *eapi.MusicianVipTasksResp // 可能为 nil（当缓存命中且仅执行 sign 时）
+	cli      *api.Client
+	eapiCli  *eapi.Api
+	weapiCli *weapi.Api
+	db       database.Database
+	resp     *eapi.MusicianVipTasksResp // 可能为 nil（当缓存命中且仅执行 sign 时）
 }
 
 // initMusicianContext 初始化客户端并检查音乐人身份（优先读缓存）
@@ -179,9 +181,10 @@ func (c *Musician) initMusicianContext(ctx context.Context, cookieFile string, n
 	}
 
 	mctx := &musicianContext{
-		cli:     cli,
-		eapiCli: eapi.New(cli),
-		db:      db,
+		cli:      cli,
+		eapiCli:  eapi.New(cli),
+		weapiCli: weapi.New(cli),
+		db:       db,
 	}
 
 	syncSessionConfig(ctx, cli, cookieFile, 0, db, nil)
@@ -363,6 +366,9 @@ func (c *Musician) runMusicianForCookie(ctx context.Context, cookieFile string, 
 	// 第二阶段：音乐人 VIP 任务
 	c.doVipPhase(ctx, mctx, cookieFile)
 
+	// 第三阶段：音乐人 VIP 领取
+	c.doVipClaimPhase(ctx, mctx, cookieFile)
+
 	// 统计接口每天 09:00 后最多请求一次；历史缺口才调用趋势接口回补。
 	c.syncAndPrintPlayStats(ctx, mctx, cookieFile)
 
@@ -513,6 +519,7 @@ func (c *Musician) RunVipForCookie(ctx context.Context, cookieFile string) error
 	defer mctx.close(ctx)
 
 	c.doVipPhase(ctx, mctx, cookieFile)
+	c.doVipClaimPhase(ctx, mctx, cookieFile)
 	c.syncAndPrintPlayStats(ctx, mctx, cookieFile)
 	return nil
 }
@@ -983,4 +990,102 @@ func playCandidateIdsSource(vipIds string, vipIdsFile config.StringOrSlice, root
 		}
 	}
 	return uniqueIds
+}
+
+// ==================== doVipClaimPhase: 音乐人 VIP 自动领取 ====================
+
+func musicianVipClaimCacheKey(cookieFile, month string) string {
+	return fmt.Sprintf("musician:vip:claim:%s:%s", cookieFile, month)
+}
+
+// doVipClaimPhase 执行第三阶段：音乐人 VIP 领取
+func (c *Musician) doVipClaimPhase(ctx context.Context, mctx *musicianContext, cookieFile string) {
+	if c.root.Cfg.Musician != nil && !c.root.Cfg.Musician.IsVipClaimEnabled() {
+		c.cmd.Println("  👉 [第三阶段] 提示: 音乐人 VIP 自动领取已在配置中关闭 (enableVipClaim = false)")
+		return
+	}
+
+	c.cmd.Println("  👉 [第三阶段] 检查并尝试领取本月音乐人黑胶 VIP...")
+
+	currentMonth := time.Now().Format("2006-01")
+	if mctx.db != nil {
+		if cached, _ := mctx.db.Exists(ctx, musicianVipClaimCacheKey(cookieFile, currentMonth)); cached {
+			c.cmd.Printf("    ✅ 本月 (%s) 音乐人黑胶 VIP 已领取 (来自本地缓存记录)\n", currentMonth)
+			return
+		}
+	}
+
+	// 1. 查询最新的音乐人 VIP 权益与任务状态 (WEAPI)
+	info, err := mctx.weapiCli.MusicianVipInfo(ctx, &weapi.MusicianVipInfoReq{})
+	if err != nil {
+		c.cmd.Printf("    ⚠️ 查询音乐人 VIP 领取状态失败: %v\n", err)
+		return
+	}
+	if info.Code != 200 {
+		c.cmd.Printf("    ⚠️ 查询音乐人 VIP 状态提示: code=%d msg=%s\n", info.Code, info.Message)
+		return
+	}
+
+	data := info.Data
+	nowMs := time.Now().UnixMilli()
+
+	// 2. 检查任务达成状态
+	taskFinished := data.TaskStatus
+	if data.FurtherTask != nil && data.FurtherTask.MissionStatus == 100 {
+		taskFinished = true
+	}
+
+	var getTimeStr string
+	if data.FurtherVipGetTime > 0 {
+		getTimeStr = time.UnixMilli(data.FurtherVipGetTime).Format("2006-01-02 15:04:05")
+	}
+
+	if !taskFinished {
+		c.cmd.Println("    ℹ️ 音乐人进阶任务（笔记/播放量）尚未全部达成，暂不可领取 VIP")
+		return
+	}
+
+	// 3. 检查是否已经领取过或未到领取时间
+	if !data.CanOpen && data.FurtherVipGetTime > nowMs {
+		c.cmd.Printf("    ✅ 本月音乐人 VIP 已成功领取 (下次可领时间: %s)\n", getTimeStr)
+		if mctx.db != nil {
+			_ = mctx.db.Set(ctx, musicianVipClaimCacheKey(cookieFile, currentMonth), "1", 35*24*time.Hour)
+		}
+		return
+	}
+
+	if data.FurtherVipGetTime > nowMs {
+		c.cmd.Printf("    ℹ️ 进阶任务已全部达标，但尚未到达领取时间 (预计可领时间: %s)\n", getTimeStr)
+		return
+	}
+
+	if !data.CanOpen {
+		c.cmd.Println("    ℹ️ 当前账号暂不满足 VIP 开启条件 (canOpen = false)")
+		return
+	}
+
+	// 4. 检查 antiCheatToken
+	antiCheatToken := c.root.Cfg.Accounts.AntiCheatTokenFor(cookieFile)
+	if strings.TrimSpace(antiCheatToken) == "" {
+		c.cmd.Println("    ⚠️ 当前已满足音乐人 VIP 领取条件，但 accounts.antiCheatTokens 中未配置该账号的 token，已跳过领取")
+		return
+	}
+
+	// 5. 调用 WEAPI vip/get 接口领取
+	c.cmd.Println("    👉 正在提交领取音乐人黑胶 VIP 请求...")
+	claimResp, err := mctx.weapiCli.MusicianVipGet(ctx, &weapi.MusicianVipGetReq{
+		CheckToken: antiCheatToken,
+	}, antiCheatToken)
+	if err != nil {
+		c.cmd.Printf("    ❌ 领取音乐人黑胶 VIP 请求异常: %v\n", err)
+		return
+	}
+	if claimResp.Code == 200 && claimResp.Data {
+		c.cmd.Println("    🎉 恭喜！成功领取本月音乐人黑胶 VIP！")
+		if mctx.db != nil {
+			_ = mctx.db.Set(ctx, musicianVipClaimCacheKey(cookieFile, currentMonth), "1", 35*24*time.Hour)
+		}
+	} else {
+		c.cmd.Printf("    ❌ 领取音乐人黑胶 VIP 失败: code=%d msg=%s\n", claimResp.Code, claimResp.Message)
+	}
 }
