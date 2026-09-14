@@ -117,6 +117,7 @@ func runWeb(parent context.Context, root *Root, opts webOptions) error {
 		Commit: root.AppCommit, Branch: root.AppBranch, BuildTime: root.AppBuildTime,
 		SecureCookie: opts.secureCookie, Output: root.cmd.Printf,
 		SchedulerMigration: opts.schedulerMigration,
+		PluginManager:      NewPlugin(root, root.l),
 	})
 	if err != nil {
 		return err

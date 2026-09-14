@@ -44,12 +44,15 @@
     lastOnlineAt: null,
     consecutivePollFailures: 0,
     openLogContent: '',
+    plugins: [],
+    pluginSearch: '',
+    pluginInstalling: false,
   };
   let dashboardChartObserver = null;
   let dashboardChartResizeTimer = 0;
 
-  const pageTitles = { dashboard: '仪表盘', accounts: '账号中心', schedules: '定时任务', config: '策略配置', runs: '运行日志', system: '系统设置' };
-  const pageRoutes = { dashboard: '/', accounts: '/account', schedules: '/task', config: '/config', runs: '/logs', system: '/system' };
+  const pageTitles = { dashboard: '仪表盘', accounts: '账号中心', schedules: '定时任务', plugins: '插件中心', config: '策略配置', runs: '运行日志', system: '系统设置' };
+  const pageRoutes = { dashboard: '/', accounts: '/account', schedules: '/task', plugins: '/plugins', config: '/config', runs: '/logs', system: '/system' };
   const routePages = Object.fromEntries(Object.entries(pageRoutes).map(([page, route]) => [route, page]));
 	const playStatsCommands = new Set(['task', 'musician', 'musician-sign', 'musician-vip']);
 	const databaseRunCommands = new Set(['task', 'playids', 'musician', 'musician-sign', 'musician-vip', 'vip-member-gift']);
@@ -438,6 +441,7 @@
 		state.playStats = value;
 		state.playStatsRunToken = playStatsRunToken(state.runs);
 	  }, true],
+	  ['插件列表', '/api/v1/plugins', value => { state.plugins = Array.isArray(value) ? value : []; }, true],
     ];
     const results = await Promise.allSettled(requests.map(([, path]) => api(path)));
     if (!state.authenticated) return;
@@ -465,6 +469,7 @@
     renderAccounts();
     renderSchedules();
     renderRuns();
+    renderPlugins();
     renderSettings();
     renderSystem();
     renderDashboard();
@@ -2098,18 +2103,438 @@
     }).join('');
   }
 
-  function openScheduleDialog(job = null) {
-    $('#schedule-dialog-title').textContent = job ? '编辑任务' : '新建任务';
+  function renderPlugins() {
+    const grid = $('#plugin-cards-grid');
+    const badge = $('#plugin-nav-count');
+    if (badge) badge.textContent = state.plugins.length;
+    if (!grid) return;
+
+    const query = state.pluginSearch.trim().toLowerCase();
+    const plugins = (state.plugins || []).filter(p => {
+      if (!query) return true;
+      return (p.name || '').toLowerCase().includes(query)
+        || (p.title || '').toLowerCase().includes(query)
+        || (p.description || '').toLowerCase().includes(query)
+        || (p.author || '').toLowerCase().includes(query);
+    });
+
+    if (!plugins.length) {
+      grid.innerHTML = `<div class="plugin-empty-box">
+        <svg class="plugin-empty-icon" aria-hidden="true"><use href="#i-plugin" /></svg>
+        <p>${state.pluginSearch ? '未匹配到相关插件' : '暂无已安装的插件，点击上方“在线安装”或“上传插件包”即可快速扩展系统功能'}</p>
+      </div>`;
+      return;
+    }
+
+    grid.innerHTML = plugins.map(p => `
+      <article class="plugin-card" data-name="${escapeHTML(p.name)}">
+        <div class="plugin-card-head">
+          <div class="plugin-card-icon-wrap">
+            <svg><use href="#i-plugin" /></svg>
+          </div>
+          <div class="plugin-card-meta">
+            <div class="plugin-card-title-row">
+              <span class="plugin-card-name">${escapeHTML(p.title || p.name)}</span>
+              <span class="badge-pill cyan">v${escapeHTML(p.version || '1.0.0')}</span>
+              <span class="badge-pill success">就绪</span>
+            </div>
+            <p class="plugin-card-desc">${escapeHTML(p.description || '网易云音乐扩展增强插件')}</p>
+          </div>
+        </div>
+        <div class="plugin-card-details">
+          <div class="plugin-detail-row">
+            <span>插件标识:</span>
+            <span class="plugin-detail-val"><code>${escapeHTML(p.name)}</code></span>
+          </div>
+          ${p.author ? `<div class="plugin-detail-row"><span>插件作者:</span><span class="plugin-detail-val">${escapeHTML(p.author)}</span></div>` : ''}
+          <div class="plugin-detail-row">
+            <span>可执行文件:</span>
+            <span class="plugin-detail-val" title="${escapeHTML(p.path)}">${escapeHTML(fileBase(p.path) || p.path)}</span>
+          </div>
+          ${p.manifest?.recommendedCron ? `<div class="plugin-detail-row"><span>推荐 Cron:</span><span class="plugin-detail-val"><code>${escapeHTML(p.manifest.recommendedCron)}</code></span></div>` : ''}
+        </div>
+        <div class="plugin-card-actions">
+          <button type="button" class="btn btn-primary btn-sm" data-plugin-action="schedule" data-name="${escapeHTML(p.name)}">
+            <svg><use href="#i-calendar" /></svg>添加到定时任务
+          </button>
+          <button type="button" class="btn btn-glass btn-sm" data-plugin-action="run" data-name="${escapeHTML(p.name)}">
+            <svg><use href="#i-play" /></svg>立即运行
+          </button>
+          <button type="button" class="btn btn-glass btn-sm danger" data-plugin-action="delete" data-name="${escapeHTML(p.name)}">
+            <svg><use href="#i-trash" /></svg>卸载
+          </button>
+        </div>
+      </article>
+    `).join('');
+  }
+
+  async function refreshPlugins() {
+    try {
+      const res = await api('/api/v1/plugins');
+      state.plugins = Array.isArray(res) ? res : [];
+      renderPlugins();
+    } catch (err) {
+      toast(`获取插件列表失败: ${err.message}`, true);
+    }
+  }
+
+  async function installPlugin(repoOrURL, tag = '', token = '') {
+    const submitBtn = $('#plugin-install-submit');
+    const btnText = $('#plugin-install-btn-text');
+    if (submitBtn) submitBtn.disabled = true;
+    if (btnText) btnText.textContent = '正在下载安装...';
+    try {
+      const res = await api('/api/v1/plugins/install', {
+        method: 'POST',
+        body: { repoOrURL: repoOrURL.trim(), tag: tag.trim(), token: token.trim() }
+      });
+      toast(res.message || '插件安装成功');
+      $('#plugin-install-dialog')?.close();
+      if ($('#plugin-install-repo')) $('#plugin-install-repo').value = '';
+      if ($('#plugin-install-tag')) $('#plugin-install-tag').value = '';
+      if ($('#plugin-install-token')) $('#plugin-install-token').value = '';
+      await refreshPlugins();
+    } catch (err) {
+      toast(`插件安装失败: ${err.message}`, true);
+    } finally {
+      if (submitBtn) submitBtn.disabled = false;
+      if (btnText) btnText.textContent = '开始安装';
+    }
+  }
+
+  async function uploadPlugin(file) {
+    if (!file) return;
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+      toast(`正在上传安装 ${file.name}...`);
+      const headers = {};
+      if (state.csrf) headers['X-NCMM-CSRF'] = state.csrf;
+      const res = await fetch('/api/v1/plugins/upload', {
+        method: 'POST',
+        headers,
+        body: formData,
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ message: res.statusText }));
+        throw new Error(err.message || '上传安装失败');
+      }
+      const data = await res.json();
+      toast(data.message || '插件上传安装成功');
+      await refreshPlugins();
+    } catch (err) {
+      toast(`上传安装失败: ${err.message}`, true);
+    } finally {
+      const fileInput = $('#plugin-file-input');
+      if (fileInput) fileInput.value = '';
+    }
+  }
+
+  async function deletePlugin(name) {
+    if (!confirm(`确定要卸载插件 “${name}” 吗？此操作将删除该插件程序和配置文件。`)) return;
+    try {
+      await api(`/api/v1/plugins/${encodeURIComponent(name)}`, { method: 'DELETE' });
+      toast(`插件 “${name}” 已成功卸载`);
+      await refreshPlugins();
+    } catch (err) {
+      toast(`卸载失败: ${err.message}`, true);
+    }
+  }
+
+  async function runPlugin(name, customArgs = []) {
+    try {
+      const res = await api(`/api/v1/plugins/${encodeURIComponent(name)}/run`, {
+        method: 'POST',
+        body: { args: customArgs }
+      });
+      toast(`插件 “${name}” 已触发运行`);
+      await refreshOperationalState();
+      if (res?.run?.id) {
+        await openRunLog(res.run);
+      }
+    } catch (err) {
+      toast(`运行插件失败: ${err.message}`, true);
+    }
+  }
+
+  function updateSchedulePluginPanel(selectedPluginName = null, initialArgs = []) {
+    const panel = $('#schedule-plugin-fields');
+    if (!$('#schedule-command') || $('#schedule-command').value !== 'plugin') {
+      panel?.classList.add('hidden');
+      return;
+    }
+    panel?.classList.remove('hidden');
+
+    const select = $('#schedule-plugin-select');
+    const dynamicContainer = $('#schedule-plugin-dynamic-fields');
+    const tip = $('#schedule-plugin-tip');
+    if (!select || !dynamicContainer) return;
+
+    if (!state.plugins || state.plugins.length === 0) {
+      select.innerHTML = '<option value="">(暂无已安装插件)</option>';
+      tip?.classList.add('hidden');
+      dynamicContainer.innerHTML = '<div class="notice warning">暂未检测到已安装插件，可前往<a href="javascript:void(0)" id="schedule-go-plugin-center" class="btn-link" style="margin:0 4px;font-weight:600;">插件中心</a>安装插件。</div>';
+      $('#schedule-go-plugin-center')?.addEventListener('click', () => {
+        $('#schedule-dialog')?.close();
+        navigate('plugins');
+      });
+      return;
+    }
+
+    select.innerHTML = state.plugins.map(p => {
+      const isSel = (selectedPluginName && p.name === selectedPluginName) ? 'selected' : '';
+      return `<option value="${escapeHTML(p.name)}" ${isSel}>${escapeHTML(p.title || p.name)} (${escapeHTML(p.name)})</option>`;
+    }).join('');
+
+    let pluginName = selectedPluginName || select.value;
+    let currentPlugin = state.plugins.find(p => p.name === pluginName) || state.plugins[0];
+    if (currentPlugin && select.value !== currentPlugin.name) {
+      select.value = currentPlugin.name;
+    }
+    if (!currentPlugin) return;
+
+    if (currentPlugin.manifest?.recommendedCron) {
+      tip?.classList.remove('hidden');
+      const cronValEl = $('#schedule-plugin-cron-val');
+      if (cronValEl) cronValEl.textContent = currentPlugin.manifest.recommendedCron;
+      const applyBtn = $('#schedule-plugin-cron-apply');
+      if (applyBtn) {
+        applyBtn.onclick = () => {
+          $('#schedule-cron').value = currentPlugin.manifest.recommendedCron;
+          $('#cron-preset').value = 'custom';
+          toast('已应用插件推荐的 Cron 规则');
+        };
+      }
+    } else {
+      tip?.classList.add('hidden');
+    }
+
+    const argMap = {};
+    if (Array.isArray(initialArgs)) {
+      for (let i = 0; i < initialArgs.length; i++) {
+        const item = String(initialArgs[i] || '');
+        if (item.startsWith('--')) {
+          const eqIdx = item.indexOf('=');
+          if (eqIdx !== -1) {
+            argMap[item.slice(2, eqIdx)] = item.slice(eqIdx + 1);
+          } else if (i + 1 < initialArgs.length && !String(initialArgs[i + 1]).startsWith('--')) {
+            argMap[item.slice(2)] = String(initialArgs[++i]);
+          } else {
+            argMap[item.slice(2)] = 'true';
+          }
+        }
+      }
+    }
+
+    const params = currentPlugin.manifest?.params || [];
+    if (params.length === 0) {
+      dynamicContainer.innerHTML = '<p class="field-note">该插件未声明结构化参数，可直接在下方命令行输入参数。</p>';
+      return;
+    }
+
+    let html = '';
+    params.forEach(param => {
+      const pName = param.name;
+      const rawVal = argMap[pName] !== undefined ? argMap[pName] : param.default;
+
+      if (param.type === 'chips') {
+        const currentStr = String(rawVal !== undefined ? rawVal : '');
+        const activeTokens = new Set(currentStr.split(',').map(s => s.trim()).filter(Boolean));
+        const options = Array.isArray(param.options) ? param.options : [];
+        html += `<div class="plugin-field-row" data-param-name="${escapeHTML(pName)}" data-type="chips">
+          <div class="plugin-field-header">
+            <span><strong>${escapeHTML(param.label || pName)}</strong></span>
+            ${param.description ? `<span class="plugin-field-desc">${escapeHTML(param.description)}</span>` : ''}
+          </div>
+          <div class="plugin-chips-group">
+            ${options.map(opt => {
+              const val = typeof opt === 'object' ? String(opt.value) : String(opt);
+              const lbl = typeof opt === 'object' ? opt.label : `${opt}元`;
+              const active = activeTokens.has(val);
+              return `<button type="button" class="plugin-chip ${active ? 'active' : ''}" data-param="${escapeHTML(pName)}" data-chip-val="${escapeHTML(val)}">${escapeHTML(lbl)}</button>`;
+            }).join('')}
+          </div>
+          <input type="text" class="form-input compact-input plugin-param-input" data-param="${escapeHTML(pName)}" data-type="chips" value="${escapeHTML(currentStr)}" placeholder="如 15,25,0.3,0.1">
+        </div>`;
+      } else if (param.type === 'select') {
+        const options = Array.isArray(param.options) ? param.options : [];
+        const currentVal = String(rawVal !== undefined ? rawVal : '');
+        html += `<div class="plugin-field-row" data-param-name="${escapeHTML(pName)}">
+          <div class="plugin-field-header">
+            <span><strong>${escapeHTML(param.label || pName)}</strong></span>
+            ${param.description ? `<span class="plugin-field-desc">${escapeHTML(param.description)}</span>` : ''}
+          </div>
+          <select class="form-select plugin-param-input" data-param="${escapeHTML(pName)}" data-type="select">
+            ${options.map(opt => {
+              const val = typeof opt === 'object' ? String(opt.value) : String(opt);
+              const lbl = typeof opt === 'object' ? opt.label : opt;
+              const sel = val === currentVal ? 'selected' : '';
+              return `<option value="${escapeHTML(val)}" ${sel}>${escapeHTML(lbl)}</option>`;
+            }).join('')}
+          </select>
+        </div>`;
+      } else if (param.type === 'number') {
+        const currentVal = rawVal !== undefined ? rawVal : 0;
+        html += `<div class="plugin-field-row" data-param-name="${escapeHTML(pName)}">
+          <div class="plugin-field-header">
+            <span><strong>${escapeHTML(param.label || pName)}</strong></span>
+            ${param.description ? `<span class="plugin-field-desc">${escapeHTML(param.description)}</span>` : ''}
+          </div>
+          <input type="number" class="form-input plugin-param-input" data-param="${escapeHTML(pName)}" data-type="number"
+            value="${escapeHTML(String(currentVal))}"
+            ${param.min !== undefined ? `min="${param.min}"` : ''}
+            ${param.max !== undefined ? `max="${param.max}"` : ''}>
+        </div>`;
+      } else if (param.type === 'boolean') {
+        const checked = rawVal === true || rawVal === 'true' || rawVal === '' || (rawVal === undefined && param.default === true);
+        html += `<div class="plugin-field-row" data-param-name="${escapeHTML(pName)}">
+          <label class="toggle-label" style="justify-content:space-between; width:100%; margin:0;">
+            <div>
+              <span><strong>${escapeHTML(param.label || pName)}</strong></span>
+              ${param.description ? `<p class="field-note" style="margin-top:2px;">${escapeHTML(param.description)}</p>` : ''}
+            </div>
+            <input type="checkbox" class="plugin-param-input" data-param="${escapeHTML(pName)}" data-type="boolean" ${checked ? 'checked' : ''}>
+            <span class="toggle"></span>
+          </label>
+        </div>`;
+      } else if (param.type === 'account-select') {
+        const currentVal = String(rawVal !== undefined ? rawVal : '');
+        const accounts = configuredAccounts();
+        html += `<div class="plugin-field-row" data-param-name="${escapeHTML(pName)}">
+          <div class="plugin-field-header">
+            <span><strong>${escapeHTML(param.label || pName)}</strong></span>
+            ${param.description ? `<span class="plugin-field-desc">${escapeHTML(param.description)}</span>` : ''}
+          </div>
+          <select class="form-select plugin-param-input" data-param="${escapeHTML(pName)}" data-type="account-select">
+            <option value="">全部 / 默认账号配置</option>
+            ${accounts.map(acc => {
+              const sel = acc.path === currentVal ? 'selected' : '';
+              return `<option value="${escapeHTML(acc.path)}" ${sel}>${escapeHTML(acc.label)} (${acc.main ? '主账号' : '辅助账号'}) · ${escapeHTML(acc.path)}</option>`;
+            }).join('')}
+          </select>
+        </div>`;
+      } else {
+        const currentVal = String(rawVal !== undefined ? rawVal : '');
+        html += `<div class="plugin-field-row" data-param-name="${escapeHTML(pName)}">
+          <div class="plugin-field-header">
+            <span><strong>${escapeHTML(param.label || pName)}</strong></span>
+            ${param.description ? `<span class="plugin-field-desc">${escapeHTML(param.description)}</span>` : ''}
+          </div>
+          <input type="text" class="form-input plugin-param-input" data-param="${escapeHTML(pName)}" data-type="string" value="${escapeHTML(currentVal)}">
+        </div>`;
+      }
+    });
+
+    dynamicContainer.innerHTML = html;
+
+    dynamicContainer.querySelectorAll('.plugin-chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        const pName = chip.dataset.param;
+        const val = chip.dataset.chipVal;
+        const input = dynamicContainer.querySelector(`.plugin-param-input[data-param="${pName}"]`);
+        if (!input) return;
+        const curList = input.value.split(',').map(s => s.trim()).filter(Boolean);
+        const set = new Set(curList);
+        if (set.has(val)) {
+          set.delete(val);
+          chip.classList.remove('active');
+        } else {
+          set.add(val);
+          chip.classList.add('active');
+        }
+        input.value = [...set].join(',');
+        syncPluginParamsToArgs();
+      });
+    });
+
+    dynamicContainer.querySelectorAll('.plugin-param-input').forEach(input => {
+      const evt = (input.type === 'checkbox' || input.tagName === 'SELECT') ? 'change' : 'input';
+      input.addEventListener(evt, () => {
+        if (input.dataset.type === 'chips') {
+          const activeVals = new Set(input.value.split(',').map(s => s.trim()).filter(Boolean));
+          dynamicContainer.querySelectorAll(`.plugin-chip[data-param="${input.dataset.param}"]`).forEach(chip => {
+            chip.classList.toggle('active', activeVals.has(chip.dataset.chipVal));
+          });
+        }
+        syncPluginParamsToArgs();
+      });
+    });
+  }
+
+  function syncPluginParamsToArgs() {
+    if (!$('#schedule-command') || $('#schedule-command').value !== 'plugin') return;
+    const select = $('#schedule-plugin-select');
+    if (!select || !select.value) return;
+    const pluginName = select.value;
+
+    const parts = ['run', pluginName];
+    const inputs = $$('#schedule-plugin-dynamic-fields .plugin-param-input');
+    inputs.forEach(input => {
+      const pName = input.dataset.param;
+      const pType = input.dataset.type;
+      if (pType === 'boolean') {
+        if (input.checked) {
+          parts.push(`--${pName}`);
+        } else {
+          parts.push(`--${pName}=false`);
+        }
+      } else if (pType === 'number') {
+        const v = input.value.trim();
+        if (v !== '') parts.push(`--${pName}`, v);
+      } else {
+        const v = input.value.trim();
+        if (v !== '') {
+          if (v.includes(' ')) {
+            parts.push(`--${pName}`, `"${v}"`);
+          } else {
+            parts.push(`--${pName}`, v);
+          }
+        }
+      }
+    });
+
+    $('#schedule-args').value = parts.join(' ');
+  }
+
+  function openScheduleDialog(job = null, pluginPreset = null) {
+    $('#schedule-dialog-title').textContent = job ? '编辑任务' : (pluginPreset ? '新建插件任务' : '新建任务');
     $('#schedule-id').value = job?.id || '';
-    $('#schedule-name').value = job?.name || '';
     $('#schedule-enabled').checked = job?.enabled ?? true;
+    $('#schedule-overlap').value = job?.overlapPolicy || 'skip';
+
+    if (pluginPreset) {
+      $('#schedule-name').value = pluginPreset.title ? `${pluginPreset.title} - 定时提现` : `${pluginPreset.name} 任务`;
+      $('#schedule-command').value = 'plugin';
+      if (pluginPreset.manifest?.recommendedCron) {
+        $('#schedule-cron').value = pluginPreset.manifest.recommendedCron;
+        $('#cron-preset').value = 'custom';
+      } else {
+        $('#schedule-cron').value = '30 8 * * *';
+        $('#cron-preset').value = '30 8 * * *';
+      }
+      updateSchedulePluginPanel(pluginPreset.name, []);
+      syncPluginParamsToArgs();
+      renderCronNext([]);
+      $('#schedule-dialog').showModal();
+      return;
+    }
+
+    $('#schedule-name').value = job?.name || '';
     $('#schedule-cron').value = job?.cron || '30 8 * * *';
     $('#schedule-command').value = job?.command || 'task';
     $('#schedule-args').value = (job?.args || []).join(' ');
-    $('#schedule-overlap').value = job?.overlapPolicy || 'skip';
     const preset = [...$('#cron-preset').options].some(x => x.value === $('#schedule-cron').value) ? $('#schedule-cron').value : 'custom';
     $('#cron-preset').value = preset;
     renderCronNext(job?.nextRuns || []);
+
+    if ($('#schedule-command').value === 'plugin') {
+      const args = job?.args || [];
+      const pluginName = (args[0] === 'run' && args[1]) ? args[1] : (args[0] || '');
+      updateSchedulePluginPanel(pluginName, args);
+    } else {
+      updateSchedulePluginPanel();
+    }
+
     $('#schedule-dialog').showModal();
   }
 
@@ -2908,6 +3333,16 @@
     $$('.dialog-close').forEach(x => x.addEventListener('click', () => $('#schedule-dialog').close()));
     $('#schedule-form').addEventListener('submit', saveSchedule);
     $('#cron-preset').addEventListener('change', event => { if (event.target.value !== 'custom') $('#schedule-cron').value = event.target.value; });
+    $('#schedule-command').addEventListener('change', () => {
+      updateSchedulePluginPanel();
+      if ($('#schedule-command').value === 'plugin') {
+        syncPluginParamsToArgs();
+      }
+    });
+    $('#schedule-plugin-select')?.addEventListener('change', () => {
+      updateSchedulePluginPanel($('#schedule-plugin-select').value);
+      syncPluginParamsToArgs();
+    });
     $('#schedule-table').addEventListener('click', async event => {
       const button = event.target.closest('[data-action]'); if (!button) return;
       const job = state.schedules.find(x => x.id === button.dataset.id); if (!job) return;
@@ -2966,6 +3401,48 @@
     });
     document.addEventListener('click', event => {
       if (!event.target.closest('.schedule-actions-row')) $$('.schedule-pop-menu.open').forEach(item => item.classList.remove('open'));
+    });
+
+    $('#plugin-refresh')?.addEventListener('click', refreshPlugins);
+    $('#plugin-search')?.addEventListener('input', event => {
+      state.pluginSearch = event.target.value;
+      renderPlugins();
+    });
+    $('#plugin-install-open')?.addEventListener('click', () => {
+      if ($('#plugin-install-repo')) $('#plugin-install-repo').value = '';
+      if ($('#plugin-install-tag')) $('#plugin-install-tag').value = '';
+      if ($('#plugin-install-token')) $('#plugin-install-token').value = '';
+      $('#plugin-install-dialog')?.showModal();
+    });
+    $$('.plugin-install-close').forEach(btn => btn.addEventListener('click', () => $('#plugin-install-dialog')?.close()));
+    $('#plugin-install-form')?.addEventListener('submit', async event => {
+      event.preventDefault();
+      const repo = $('#plugin-install-repo')?.value.trim() || '';
+      const tag = $('#plugin-install-tag')?.value.trim() || '';
+      const token = $('#plugin-install-token')?.value.trim() || '';
+      if (!repo) return;
+      await installPlugin(repo, tag, token);
+    });
+    $('#plugin-upload-btn')?.addEventListener('click', () => {
+      $('#plugin-file-input')?.click();
+    });
+    $('#plugin-file-input')?.addEventListener('change', async event => {
+      const file = event.target.files?.[0];
+      if (file) await uploadPlugin(file);
+    });
+    $('#plugin-cards-grid')?.addEventListener('click', async event => {
+      const btn = event.target.closest('[data-plugin-action]');
+      if (!btn) return;
+      const action = btn.dataset.pluginAction;
+      const name = btn.dataset.name;
+      const plugin = state.plugins.find(p => p.name === name);
+      if (action === 'schedule') {
+        openScheduleDialog(null, plugin || { name });
+      } else if (action === 'run') {
+        await runPlugin(name);
+      } else if (action === 'delete') {
+        await deletePlugin(name);
+      }
     });
 
     $('#runs-table').addEventListener('click', async event => {

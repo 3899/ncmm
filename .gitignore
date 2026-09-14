@@ -16,3 +16,6 @@ __pycache__/
 /.tmp-webui-smoke
 /node_modules/
 TODO.md
+/plugins/
+/ncmm-withdraw/
+ncmm-update.json

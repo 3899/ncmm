@@ -16,7 +16,7 @@ var allowedCommands = map[string]bool{
 	"task": true, "sign": true, "playids": true,
 	"musician": true, "musician-sign": true, "musician-vip": true,
 	"note": true, "daily-song-share": true, "vip-member-gift": true,
-	"fansgroup": true,
+	"fansgroup": true, "plugin": true,
 }
 
 type scheduler struct {
