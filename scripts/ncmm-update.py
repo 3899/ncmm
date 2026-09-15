@@ -447,6 +447,76 @@ def merge_yaml(default_content, user_content):
 
     return '\n'.join(output) + '\n'
 
+def backup_config_file(config_path, max_backups=2):
+    """在 backups 子目录下备份配置文件，并自动保留最新的 max_backups 份。"""
+    try:
+        if not os.path.exists(config_path) or os.path.getsize(config_path) == 0:
+            return None
+        
+        cfg_dir = os.path.dirname(os.path.abspath(config_path))
+        backup_dir = os.path.join(cfg_dir, "backups")
+        os.makedirs(backup_dir, exist_ok=True)
+        
+        base_name = os.path.basename(config_path)
+        name_part, ext = os.path.splitext(base_name)
+        
+        # 读取当前配置二进制内容
+        with open(config_path, 'rb') as f:
+            current_data = f.read()
+            
+        # 查找已有备份，若最新备份内容与当前一致则不重复备份
+        existing_backups = []
+        for item in os.listdir(backup_dir):
+            if item.startswith(f"{name_part}_") and item.endswith(ext):
+                full_path = os.path.join(backup_dir, item)
+                if os.path.isfile(full_path):
+                    existing_backups.append(full_path)
+                    
+        existing_backups.sort()
+        if existing_backups:
+            latest_backup = existing_backups[-1]
+            try:
+                with open(latest_backup, 'rb') as f:
+                    if f.read() == current_data:
+                        print(f"[LOG] 当前配置与最新备份一致，无需重复创建: {latest_backup}")
+                        return latest_backup
+            except Exception:
+                pass
+                
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        backup_name = f"{name_part}_{timestamp}{ext}"
+        backup_path = os.path.join(backup_dir, backup_name)
+        
+        if os.path.exists(backup_path):
+            backup_name = f"{name_part}_{timestamp}_{int(time.time() * 1000) % 1000:03d}{ext}"
+            backup_path = os.path.join(backup_dir, backup_name)
+            
+        shutil.copy2(config_path, backup_path)
+        print(f"[LOG] 升级前已自动备份当前配置文件至: {backup_path}")
+        
+        # 清理超出 max_backups 的历史备份（按修改时间升序排列，删除最旧的）
+        all_backups = []
+        for item in os.listdir(backup_dir):
+            if item.startswith(f"{name_part}_") and item.endswith(ext):
+                full_path = os.path.join(backup_dir, item)
+                if os.path.isfile(full_path):
+                    all_backups.append((os.path.getmtime(full_path), full_path))
+                    
+        all_backups.sort(key=lambda x: x[0])
+        if len(all_backups) > max_backups:
+            to_delete = all_backups[:len(all_backups) - max_backups]
+            for _, del_path in to_delete:
+                try:
+                    os.remove(del_path)
+                    print(f"[LOG] 已清理历史多余备份: {del_path}")
+                except Exception as e:
+                    print(f"[WARNING] 清理历史备份失败 ({del_path}): {e}")
+                    
+        return backup_path
+    except Exception as e:
+        print(f"[WARNING] 备份配置文件时发生异常: {e}")
+        return None
+
 # 7. 带有多镜像重试与原地址兜底的下载模块
 PROXIES = [
     "https://gh-proxy.com/",
@@ -554,6 +624,9 @@ def main():
         print("[WARNING] GitHub API 资源匹配失败，尝试手动拼接下载链接...")
         download_url = f"https://github.com/3899/ncmm/releases/download/{remote_tag}/{asset_filename}"
         
+    # 在终止进程与下载前，优先备份现有配置文件
+    backup_config_file(config_path, max_backups=2)
+
     # 强制终止有可能占用的进程
     stop_running_ncmm(binary_name)
     
@@ -631,6 +704,7 @@ def main():
         # 处理配置文件合并逻辑
         if os.path.exists(config_path):
             print("[LOG] 检测到本地已存在旧版 config.yaml，启动结构化差异对比与非破坏性合并...")
+            backup_config_file(config_path, max_backups=2)
             try:
                 with open(default_config_path, 'r', encoding='utf-8') as f:
                     default_yaml_content = f.read()

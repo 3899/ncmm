@@ -4,6 +4,7 @@
 package config
 
 import (
+	"bytes"
 	"context"
 	_ "embed"
 	"encoding/base64"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -631,6 +633,9 @@ func AutoUpgradeConfigIfNeeded(cfgPath string) error {
 	_ = yaml.Unmarshal(data, &v)
 
 	if v.Version != defaultConfig.Version {
+		if _, err := BackupConfigFile(cfgPath, 2); err != nil {
+			log.Warn("[config] 升级前自动备份配置文件失败: %v", err)
+		}
 		// 先执行原有的字段名重命名迁移
 		_ = MigrateConfigFile(cfgPath)
 		// 再执行 AST 级的新配置模板字段与注释合并升级
@@ -646,6 +651,11 @@ func AutoUpgradeConfig(cfgPath string) error {
 		return err
 	}
 	defer lock.Close()
+
+	if _, err := BackupConfigFile(cfgPath, 2); err != nil {
+		log.Warn("[config] 升级前自动备份配置文件失败: %v", err)
+	}
+
 	userData, err := os.ReadFile(cfgPath)
 	if err != nil {
 		return err
@@ -721,6 +731,11 @@ func MigrateConfigFile(cfgPath string) error {
 		return err
 	}
 	defer lock.Close()
+
+	if _, err := BackupConfigFile(cfgPath, 2); err != nil {
+		log.Warn("[config] 升级前自动备份配置文件失败: %v", err)
+	}
+
 	data, err := os.ReadFile(cfgPath)
 	if err != nil {
 		return err
@@ -834,6 +849,103 @@ func migrateNode(node *yaml.Node) bool {
 	}
 
 	return modified
+}
+
+// BackupConfigFile 在配置文件的同级 backups 子目录下创建备份，并自动保留最新的 maxBackups 份
+func BackupConfigFile(cfgPath string, maxBackups int) (string, error) {
+	if cfgPath == "" || cfgPath == "default" {
+		return "", nil
+	}
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		return "", nil
+	}
+
+	if maxBackups <= 0 {
+		maxBackups = 2
+	}
+
+	cfgDir := filepath.Dir(cfgPath)
+	backupDir := filepath.Join(cfgDir, "backups")
+	if err := os.MkdirAll(backupDir, 0755); err != nil {
+		return "", fmt.Errorf("create backup directory: %w", err)
+	}
+
+	baseName := filepath.Base(cfgPath)
+	ext := filepath.Ext(baseName)
+	prefix := strings.TrimSuffix(baseName, ext)
+
+	// 检查已有的备份文件
+	pattern := filepath.Join(backupDir, fmt.Sprintf("%s_*%s", prefix, ext))
+	matches, _ := filepath.Glob(pattern)
+
+	// 检查最新备份内容是否与当前文件完全一致（避免同一更新流程中重复生成冗余备份）
+	if len(matches) > 0 {
+		sort.Strings(matches)
+		latestBackup := matches[len(matches)-1]
+		if latestData, err := os.ReadFile(latestBackup); err == nil {
+			if bytes.Equal(latestData, data) {
+				return latestBackup, nil
+			}
+		}
+	}
+
+	timestamp := time.Now().Format("20060102_150405")
+	backupName := fmt.Sprintf("%s_%s%s", prefix, timestamp, ext)
+	backupPath := filepath.Join(backupDir, backupName)
+
+	if _, err := os.Stat(backupPath); err == nil {
+		backupName = fmt.Sprintf("%s_%s_%03d%s", prefix, timestamp, time.Now().Nanosecond()/1e6, ext)
+		backupPath = filepath.Join(backupDir, backupName)
+	}
+
+	if err := atomicfile.Write(backupPath, data, 0644); err != nil {
+		return "", fmt.Errorf("write backup file: %w", err)
+	}
+
+	log.Info("[config] 升级前已自动备份配置文件至: %s", backupPath)
+
+	cleanOldBackups(backupDir, prefix, ext, maxBackups)
+
+	return backupPath, nil
+}
+
+func cleanOldBackups(backupDir, prefix, ext string, maxBackups int) {
+	pattern := filepath.Join(backupDir, fmt.Sprintf("%s_*%s", prefix, ext))
+	matches, err := filepath.Glob(pattern)
+	if err != nil || len(matches) <= maxBackups {
+		return
+	}
+
+	type fileItem struct {
+		path    string
+		modTime time.Time
+	}
+	items := make([]fileItem, 0, len(matches))
+	for _, m := range matches {
+		fi, err := os.Stat(m)
+		if err == nil {
+			items = append(items, fileItem{path: m, modTime: fi.ModTime()})
+		}
+	}
+
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].modTime.Equal(items[j].modTime) {
+			return items[i].path < items[j].path
+		}
+		return items[i].modTime.Before(items[j].modTime)
+	})
+
+	toDelete := len(items) - maxBackups
+	for i := 0; i < toDelete; i++ {
+		_ = os.Remove(items[i].path)
+	}
 }
 
 // UpdateAccountsInFile 更新配置文件中的 accounts 并为每个账号添加昵称注释，同时保持原有文件的注释和排版

@@ -479,6 +479,12 @@ func (c *Root) performSelfUpdateWithInfo(tag string, assetName string, rawDownlo
 		return fmt.Errorf("在升级包中找不到可执行文件: %s", binaryName)
 	}
 
+	if c.CfgPath != "" && c.CfgPath != "default" {
+		if _, err := config.BackupConfigFile(c.CfgPath, 2); err != nil {
+			log.Warn("[updater] 升级前备份配置文件失败: %v", err)
+		}
+	}
+
 	execPath, err := os.Executable()
 	if err != nil {
 		return err
