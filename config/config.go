@@ -709,6 +709,15 @@ func mergeYAMLNodes(dest, src *yaml.Node) {
 				if destKey == "version" {
 					continue
 				}
+				if destKey == "antiCheatTokens" {
+					destVal.Kind = srcVal.Kind
+					destVal.Tag = srcVal.Tag
+					destVal.Style = srcVal.Style
+					destVal.Value = srcVal.Value
+					destVal.Content = srcVal.Content
+					destVal.FootComment = srcVal.FootComment
+					continue
+				}
 				if destVal.Kind == yaml.MappingNode && srcVal.Kind == yaml.MappingNode {
 					mergeYAMLNodes(destVal, srcVal)
 				} else if destVal.Kind == yaml.SequenceNode && srcVal.Kind == yaml.SequenceNode {

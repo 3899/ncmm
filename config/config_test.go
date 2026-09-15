@@ -181,3 +181,50 @@ func TestBackupConfigFile(t *testing.T) {
 		t.Fatalf("expected newest backup %s to exist", b3)
 	}
 }
+
+func TestAutoUpgradeConfig_PreservesAntiCheatTokens(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "ncmm_tokens_test_*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %s", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	oldYAML := `version: 1.2.0
+accounts:
+    main: "./9082.json"
+    secondary:
+        - "./9088.json"
+    antiCheatTokens:
+        "./9082.json": "xxxxxx"
+        # "./fan1.json": ""
+`
+	testCfgPath := filepath.Join(tempDir, "config.yaml")
+	if err := os.WriteFile(testCfgPath, []byte(oldYAML), 0644); err != nil {
+		t.Fatalf("failed to write old config: %s", err)
+	}
+
+	if err := AutoUpgradeConfig(testCfgPath); err != nil {
+		t.Fatalf("AutoUpgradeConfig failed: %s", err)
+	}
+
+	upgradedData, err := os.ReadFile(testCfgPath)
+	if err != nil {
+		t.Fatalf("failed to read upgraded config: %s", err)
+	}
+
+	var conf Config
+	if err := yaml.Unmarshal(upgradedData, &conf); err != nil {
+		t.Fatalf("unmarshal Config struct failed: %s", err)
+	}
+
+	if conf.Accounts == nil || conf.Accounts.AntiCheatTokens == nil {
+		t.Fatalf("expected antiCheatTokens to be preserved, got nil")
+	}
+	if val, ok := conf.Accounts.AntiCheatTokens["./9082.json"]; !ok || val != "xxxxxx" {
+		t.Errorf("expected antiCheatTokens['./9082.json'] == 'xxxxxx', got: %+v\nYAML:\n%s", conf.Accounts.AntiCheatTokens, string(upgradedData))
+	}
+	if _, ok := conf.Accounts.AntiCheatTokens["./cookie.json"]; ok {
+		t.Errorf("did not expect default placeholder './cookie.json' in antiCheatTokens, got: %+v", conf.Accounts.AntiCheatTokens)
+	}
+}
+
