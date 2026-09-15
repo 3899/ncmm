@@ -27,51 +27,85 @@ import subprocess
 # ==============================================================================
 
 def get_run_args():
-    # 1. 如果命令行直接传入了参数，则直接透传 (例如: python ncmm-withdraw-run.py --target 15 --advance 60)
-    if len(sys.argv) > 1:
-        return sys.argv[1:]
+    """
+    智能合并命令行参数与环境变量/默认值：
+    1. 若命令行传入了 --help 或 -h，直接透传展示帮助。
+    2. 命令行显式传入的参数具有最高优先级。
+    3. 未在命令行传入的参数，将自动回退读取环境变量或使用推荐默认值（如 --snipe auto, --advance 50 等），
+       彻底避免因仅传入 --account 而丢失整点秒杀的核心逻辑。
+    """
+    raw_args = sys.argv[1:]
 
-    # 2. 从环境变量读取动态配置，未配置则使用推荐默认值
-    # 青龙面板可在【环境变量】中随意添加/修改以下变量，无需改动脚本代码
-    target = os.getenv("WITHDRAW_TARGET", "15,25,0.3,0.1").strip()
-    snipe = os.getenv("WITHDRAW_SNIPE", "auto").strip()
-    advance = os.getenv("WITHDRAW_ADVANCE", "50").strip()
-    channel = os.getenv("WITHDRAW_CHANNEL", "ALIPAY").strip()
-    fallback = os.getenv("WITHDRAW_FALLBACK", "true").strip().lower()
-    account = os.getenv("WITHDRAW_ACCOUNT", "").strip()
+    # 如果包含帮助参数，直接透传
+    if any(arg in ("--help", "-help", "-h", "--h") for arg in raw_args):
+        return raw_args
 
-    args = []
-    if target:
-        args.extend(["--target", target])
-    if snipe:
-        args.extend(["--snipe", snipe])
-    if advance:
-        args.extend(["--advance", advance])
-    if channel:
-        args.extend(["--channel", channel])
-    if fallback == "false":
-        args.append("--fallback=false")
-    if account:
-        args.extend(["--account", account])
+    def has_flag(flag_names):
+        for arg in raw_args:
+            for name in flag_names:
+                if arg == name or arg.startswith(name + "="):
+                    return True
+        return False
 
-    return args
+    merged_args = list(raw_args)
+
+    # 1. 抢购时段 (snipe)
+    if not has_flag(["--snipe", "-snipe"]):
+        snipe = os.getenv("WITHDRAW_SNIPE", "auto").strip()
+        if snipe:
+            merged_args.extend(["--snipe", snipe])
+
+    # 2. 提前请求毫秒数 (advance)
+    if not has_flag(["--advance", "-advance"]):
+        advance = os.getenv("WITHDRAW_ADVANCE", "50").strip()
+        if advance:
+            merged_args.extend(["--advance", advance])
+
+    # 3. 目标金额 (target)
+    if not has_flag(["--target", "-target"]):
+        target = os.getenv("WITHDRAW_TARGET", "15,25,0.3,0.1").strip()
+        if target:
+            merged_args.extend(["--target", target])
+
+    # 4. 提现渠道 (channel)
+    if not has_flag(["--channel", "-channel"]):
+        channel = os.getenv("WITHDRAW_CHANNEL", "ALIPAY").strip()
+        if channel:
+            merged_args.extend(["--channel", channel])
+
+    # 5. 自动降级 (fallback)
+    if not has_flag(["--fallback", "-fallback"]):
+        fallback = os.getenv("WITHDRAW_FALLBACK", "true").strip().lower()
+        if fallback == "false":
+            merged_args.append("--fallback=false")
+
+    # 6. 指定账号 (account)
+    if not has_flag(["--account", "-account", "--cookie", "-cookie", "-a"]):
+        account = os.getenv("WITHDRAW_ACCOUNT", "").strip()
+        if account:
+            merged_args.extend(["--account", account])
+
+    return merged_args
 
 
 # 获取当前脚本所在的真实目录
 current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
 
 # 判断操作系统与二进制文件名
 is_windows = 'windows' in platform.system().lower()
 binary_name = "ncmm-withdraw.exe" if is_windows else "ncmm-withdraw"
 
-# 自动扫描可执行文件路径
+# 自动扫描可执行文件路径 (多路径容错与兼容)
 candidate_paths = [
     os.path.join(current_dir, binary_name),
     os.path.join(current_dir, "plugins", binary_name),
     os.path.join(current_dir, "plugins", "ncmm-withdraw", binary_name),
-    os.path.join(os.path.dirname(current_dir), "plugins", binary_name),
-    os.path.join(os.path.dirname(current_dir), "plugins", "ncmm-withdraw", binary_name),
-    os.path.join(os.path.dirname(current_dir), binary_name),
+    os.path.join(current_dir, "plugins", "ncmm-withdraw-run", binary_name),
+    os.path.join(parent_dir, "plugins", binary_name),
+    os.path.join(parent_dir, "plugins", "ncmm-withdraw", binary_name),
+    os.path.join(parent_dir, "plugins", "ncmm-withdraw-run", binary_name),
+    os.path.join(parent_dir, binary_name),
 ]
 
 binary_path = None
@@ -83,8 +117,11 @@ for p in candidate_paths:
 if not binary_path:
     print(f"[ERROR] 未找到提现程序: {binary_name}")
     print(f"[ERROR] 搜索候选路径:")
+    seen_paths = set()
     for p in candidate_paths:
-        print(f"  - {p}")
+        if p not in seen_paths:
+            seen_paths.add(p)
+            print(f"  - {p}")
     print(f"[INFO] 请先编译或放置 {binary_name} 至上述路径之一，并确保有可执行权限。")
     sys.exit(1)
 
@@ -95,14 +132,24 @@ if not is_windows and not os.access(binary_path, os.X_OK):
     except Exception as e:
         print(f"[WARN] 赋予执行权限失败: {e}")
 
+# 智能确定运行工作目录（优先 ncmm 项目根目录，确保相对路径配置文件与 Cookie 能被正确找到）
+work_dir = current_dir
+if os.path.isfile(os.path.join(current_dir, "config.yaml")) or os.path.isdir(os.path.join(current_dir, "plugins")):
+    work_dir = current_dir
+elif os.path.isfile(os.path.join(parent_dir, "config.yaml")) or os.path.isdir(os.path.join(parent_dir, "plugins")):
+    work_dir = parent_dir
+else:
+    work_dir = os.path.dirname(binary_path)
+
 run_args = get_run_args()
 cmd = [binary_path] + run_args
 
 print("=================================================================")
 print(f"[INFO] 提现可执行程序: {binary_path}")
+print(f"[INFO] 执行工作目录: {work_dir}")
 print(f"[INFO] 启动参数: {' '.join(run_args)}")
 print(f"[INFO] 进程生命周期: 单次抢购完成后自动停止退出，不常驻后台。")
 print("=================================================================")
 
-result = subprocess.run(cmd, cwd=os.path.dirname(binary_path))
+result = subprocess.run(cmd, cwd=work_dir)
 sys.exit(result.returncode)
