@@ -12,42 +12,49 @@ import (
 )
 
 func TestPartnerWeek(t *testing.T) {
+	skipIfNoLiveAPI(t)
 	resp, err := cli.PartnerWeek(ctx, &PartnerWeekReq{Period: "MMD-1617552000000-37-1"})
 	assert.NoError(t, err)
 	t.Logf("resp: %+v\n", resp)
 }
 
 func TestPartnerPeriod(t *testing.T) {
+	skipIfNoLiveAPI(t)
 	resp, err := cli.PartnerPeriod(ctx, &PartnerPeriodReq{})
 	assert.NoError(t, err)
 	t.Logf("resp: %+v\n", resp)
 }
 
 func TestPartnerPeriodUserinfo(t *testing.T) {
+	skipIfNoLiveAPI(t)
 	resp, err := cli.PartnerUserinfo(ctx, &PartnerUserinfoReq{})
 	assert.NoError(t, err)
 	t.Logf("resp: %+v\n", resp)
 }
 
 func TestPartnerLatest(t *testing.T) {
+	skipIfNoLiveAPI(t)
 	resp, err := cli.PartnerLatest(ctx, &PartnerLatestReq{})
 	assert.NoError(t, err)
 	t.Logf("resp: %+v\n", resp)
 }
 
 func TestPartnerHome(t *testing.T) {
+	skipIfNoLiveAPI(t)
 	resp, err := cli.PartnerHome(ctx, &PartnerHomeReq{})
 	assert.NoError(t, err)
 	t.Logf("resp: %+v\n", resp)
 }
 
 func TestPartnerTask(t *testing.T) {
+	skipIfNoLiveAPI(t)
 	resp, err := cli.PartnerDailyTask(ctx, &PartnerTaskReq{})
 	assert.NoError(t, err)
 	t.Logf("resp: %+v\n", resp)
 }
 
 func TestPartnerEvaluate(t *testing.T) {
+	skipIfNoLiveAPI(t)
 	resp, err := cli.PartnerEvaluate(ctx, &PartnerEvaluateReq{
 		ReqCommon:     types.ReqCommon{CSRFToken: ""},
 		TaskId:        "101398359",

@@ -15,6 +15,7 @@ const (
 )
 
 func TestCaptchaSend(t *testing.T) {
+	skipIfNoLiveAPI(t)
 	// 发送验证码
 	var req = CaptchaSendReq{
 		Phone:  phone,
@@ -26,6 +27,7 @@ func TestCaptchaSend(t *testing.T) {
 }
 
 func TestCaptchaVerify(t *testing.T) {
+	skipIfNoLiveAPI(t)
 	// 发送验证码
 	var req = CaptchaVerifyReq{
 		Phone:   phone,
