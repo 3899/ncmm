@@ -18,10 +18,9 @@ import tarfile
 import time
 import subprocess
 
-# 用户配置中这些键包含动态映射或完整列表，更新时必须整体保留。
+# 用户配置中这些键包含动态映射或专属块，更新时必须整块保留，不与模板项按键对齐。
 ATOMIC_BLOCK_KEYS = {
-    'antiCheatTokens', 'topics', 'fast_tasks', 'slow_tasks',
-    'proxy_mirrors', 'idsFile', 'titlesFile', 'messagesFile', 'imageUrls'
+    'antiCheatTokens', 'topics', 'fast_tasks', 'slow_tasks', 'proxy_mirrors'
 }
 
 # 1. 稳定获取当前脚本所在的真实目录
@@ -273,6 +272,9 @@ def get_block_by_key_name(parsed_lines, target_key):
     for j in range(key_idx + 1, len(parsed_lines)):
         line = parsed_lines[j]
         if line['type'] in ('empty', 'comment'):
+            if line['indent'] > d:
+                block_lines.append(line['raw'])
+                continue
             has_child = False
             for k in range(j + 1, len(parsed_lines)):
                 fut = parsed_lines[k]
@@ -352,33 +354,7 @@ def adjust_block_indent(block_lines, target_indent, source_indent):
     return adjusted
 
 def merge_yaml(default_content, user_content):
-    """将用户配置值合并到默认配置结构中，保持默认配置的缩进风格。"""
-    # 方案 1：若环境安装了 PyYAML，优先使用安全的 AST 级深层字典合并
-    try:
-        import yaml
-        def deep_merge(def_dict, user_dict):
-            merged = dict(def_dict)
-            for k, u_val in user_dict.items():
-                if k in merged:
-                    if k in ATOMIC_BLOCK_KEYS:
-                        merged[k] = u_val
-                    elif isinstance(merged[k], dict) and isinstance(u_val, dict):
-                        merged[k] = deep_merge(merged[k], u_val)
-                    else:
-                        merged[k] = u_val
-                else:
-                    merged[k] = u_val
-            return merged
-
-        def_obj = yaml.safe_load(default_content)
-        user_obj = yaml.safe_load(user_content)
-        if isinstance(def_obj, dict) and isinstance(user_obj, dict):
-            merged_obj = deep_merge(def_obj, user_obj)
-            return yaml.dump(merged_obj, allow_unicode=True, sort_keys=False, indent=2)
-    except Exception:
-        pass
-
-    # 方案 2：纯 Python 文本级解析与原子 Block 保护合并
+    """将用户配置值合并到默认配置结构中，保持默认配置的缩进风格与完整中文注释。"""
     default_lines = parse_yaml(default_content)
     user_lines = parse_yaml(user_content)
 
@@ -390,11 +366,12 @@ def merge_yaml(default_content, user_content):
 
     for line in default_lines:
         if skip_depth != -1:
-            if line['type'] in ('empty', 'comment'):
+            if line['indent'] <= skip_depth and line['type'] != 'empty':
+                skip_depth = -1
+            elif line['indent'] > skip_depth:
                 continue
-            if line['indent'] > skip_depth:
-                continue
-            skip_depth = -1
+            else:
+                skip_depth = -1
 
         if line['type'] in ('comment', 'empty'):
             output.append(line['raw'])
@@ -407,7 +384,7 @@ def merge_yaml(default_content, user_content):
             key_name = line['key']
             path = line['key_path']
 
-            # 处理原子 Block 键 (如 antiCheatTokens, topics)
+            # 处理原子 Block 键 (如 antiCheatTokens, topics, fast_tasks, slow_tasks, proxy_mirrors)
             if key_name in ATOMIC_BLOCK_KEYS:
                 user_blk, user_d = get_block_by_key_name(user_lines, key_name)
                 if user_blk:
@@ -429,6 +406,13 @@ def merge_yaml(default_content, user_content):
 
             # 叶子数据键：优先使用用户值，否则使用默认值
             if path in user_data_paths:
+                if path == ('version',):
+                    # 版本号使用新模板中的版本号，避免保留旧版本号导致二进制启动时二次触发配置合并
+                    default_block = get_block_for_path(default_lines, path)
+                    output.extend(default_block if default_block else [line['raw']])
+                    skip_depth = line['indent']
+                    continue
+
                 user_block = get_block_for_path(user_lines, path)
                 if user_block:
                     user_key_indent = len(user_block[0]) - len(user_block[0].lstrip(' '))
