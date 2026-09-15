@@ -10,6 +10,7 @@ import (
 )
 
 func TestYunBeiSign(t *testing.T) {
+	skipIfNoLiveAPI(t)
 	var req = YunBeiSignInReq{}
 	got, err := cli.YunBeiSignIn(ctx, &req)
 	assert.NoError(t, err)

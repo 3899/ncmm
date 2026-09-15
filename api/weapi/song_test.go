@@ -12,6 +12,7 @@ import (
 )
 
 func TestSongPlayer(t *testing.T) {
+	skipIfNoLiveAPI(t)
 	got, err := cli.SongPlayer(ctx, &SongPlayerReq{Ids: types.IntsString{2115747785}, Br: "128000"})
 	assert.NoError(t, err)
 	t.Logf("resp:%+v\n", got)

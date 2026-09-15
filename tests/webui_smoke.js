@@ -99,7 +99,7 @@ async function hasHorizontalScroll(locator, label) {
   await page.locator('#setup-submit').click();
   await page.locator('#app-shell').waitFor({ state: 'visible' });
   const navLabels = await page.locator('.nav-item-left > span').allTextContents();
-  assert(JSON.stringify(navLabels) === JSON.stringify(['仪表盘', '账号中心', '定时任务', '策略配置', '运行日志', '系统设置']), `unexpected navigation: ${JSON.stringify(navLabels)}`);
+  assert(JSON.stringify(navLabels) === JSON.stringify(['仪表盘', '账号中心', '定时任务', '插件中心', '策略配置', '运行日志', '系统设置']), `unexpected navigation: ${JSON.stringify(navLabels)}`);
   assert((await page.locator('#page-title').textContent()).trim() === '仪表盘', 'dashboard title was not restored');
   assert((await page.locator('#dashboard-uptime').textContent()).trim() !== '--', 'dashboard uptime was not exposed');
   const upcomingHeaders = (await page.locator('.dashboard-schedule-table th').allTextContents()).map(value => value.trim());

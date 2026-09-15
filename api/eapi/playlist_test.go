@@ -10,6 +10,7 @@ import (
 )
 
 func TestPlaylist(t *testing.T) {
+	skipIfNoLiveAPI(t)
 	var req = PlaylistReq{
 		Uid:    "1289504343",
 		Offset: "",

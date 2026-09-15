@@ -37,3 +37,10 @@ func TestMain(t *testing.M) {
 	cli = New(client)
 	os.Exit(t.Run())
 }
+
+func skipIfNoLiveAPI(t *testing.T) {
+	t.Helper()
+	if os.Getenv("NCMM_TEST_LIVE") == "" {
+		t.Skip("skipping live NetEase API test (set NCMM_TEST_LIVE=1 to run)")
+	}
+}

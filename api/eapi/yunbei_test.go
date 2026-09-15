@@ -10,6 +10,7 @@ import (
 )
 
 func TestYunBeiInSign(t *testing.T) {
+	skipIfNoLiveAPI(t)
 	var req = YunBeiSignInReq{
 		Type: 1,
 	}

@@ -135,44 +135,51 @@ func log(h slog.Handler, lv slog.Level, msg string, args ...any) {
 	}
 }
 
+func defaultHandler() slog.Handler {
+	if Default != nil && Default.l != nil {
+		return Default.l.Handler()
+	}
+	return slog.Default().Handler()
+}
+
 func Debug(format string, args ...any) {
-	log(Default.l.Handler(), slog.LevelDebug, fmt.Sprintf(format, args...))
+	log(defaultHandler(), slog.LevelDebug, fmt.Sprintf(format, args...))
 }
 
 func Info(format string, args ...any) {
-	log(Default.l.Handler(), slog.LevelInfo, fmt.Sprintf(format, args...))
+	log(defaultHandler(), slog.LevelInfo, fmt.Sprintf(format, args...))
 }
 
 func Warn(format string, args ...any) {
-	log(Default.l.Handler(), slog.LevelWarn, fmt.Sprintf(format, args...))
+	log(defaultHandler(), slog.LevelWarn, fmt.Sprintf(format, args...))
 }
 
 func Error(format string, args ...any) {
-	log(Default.l.Handler(), slog.LevelError, fmt.Sprintf(format, args...))
+	log(defaultHandler(), slog.LevelError, fmt.Sprintf(format, args...))
 }
 
 func Fatal(format string, args ...any) {
-	log(Default.l.Handler(), slog.LevelError, fmt.Sprintf(format, args...))
+	log(defaultHandler(), slog.LevelError, fmt.Sprintf(format, args...))
 	os.Exit(1)
 }
 
 func DebugW(msg string, args ...any) {
-	log(Default.l.Handler(), slog.LevelDebug, msg, args...)
+	log(defaultHandler(), slog.LevelDebug, msg, args...)
 }
 
 func InfoW(msg string, args ...any) {
-	log(Default.l.Handler(), slog.LevelInfo, msg, args...)
+	log(defaultHandler(), slog.LevelInfo, msg, args...)
 }
 
 func WarnW(msg string, args ...any) {
-	log(Default.l.Handler(), slog.LevelWarn, msg, args...)
+	log(defaultHandler(), slog.LevelWarn, msg, args...)
 }
 
 func ErrorW(msg string, args ...any) {
-	log(Default.l.Handler(), slog.LevelError, msg, args...)
+	log(defaultHandler(), slog.LevelError, msg, args...)
 }
 
 func FatalW(msg string, args ...any) {
-	log(Default.l.Handler(), slog.LevelError, msg, args...)
+	log(defaultHandler(), slog.LevelError, msg, args...)
 	os.Exit(1)
 }
