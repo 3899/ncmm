@@ -1,0 +1,64 @@
+# ncmm 通知通道配置示例
+# 复制为 notify.yaml（或与 config.notify.file 指定路径一致）后填写凭证。
+# 策略开关在 config.yaml 的 notify 节点；本文件只放通道。
+
+# 自定义 Webhook（POST JSON，可用 body_template 适配飞书/Discord 等）
+webhook:
+  enabled: false
+  url: ""
+  method: POST
+  headers: {}
+  # 留空使用默认: {"title","content","level","time","host"}
+  # body_template: |
+  #   {"msg_type":"text","content":{"text":"{{title}}\n{{content}}"}}
+  body_template: ""
+
+# Bark
+bark:
+  enabled: false
+  key: ""
+  server: ""   # 自建地址，空则 https://api.day.app
+
+# Server酱 / Server酱 Turbo（SCT 开头 key 走 sctapi）
+serverchan:
+  enabled: false
+  sckey: ""
+
+# Telegram
+telegram:
+  enabled: false
+  bot_token: ""
+  user_id: ""
+  api_host: ""   # 可选反代，如 http://tg-api.example.com
+  proxy: ""      # 可选 http 代理，如 http://127.0.0.1:7890
+
+# 钉钉机器人（加签 secret 可选）
+dingtalk:
+  enabled: false
+  access_token: ""
+  secret: ""
+
+# QQ CoolPush / Qmsg
+coolpush:
+  enabled: false
+  skey: ""
+  mode: "send"   # send / group 等
+
+# PushPlus
+pushplus:
+  enabled: false
+  token: ""
+
+# 企业微信群机器人
+wecom_key:
+  enabled: false
+  key: ""
+
+# 企业微信应用消息
+wecom_app:
+  enabled: false
+  corp_id: ""
+  corp_secret: ""
+  to_user: "@all"
+  agent_id: ""
+  media_id: ""   # 可选，填写则发 mpnews

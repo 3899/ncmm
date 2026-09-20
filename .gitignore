@@ -1,0 +1,16 @@
+/data/
+/log/
+/database/
+/run/
+/temp/
+ncmm
+ncmm.exe
+.idea/
+.vscode/
+.gemini/
+.DS_Store
+Thumbs.db
+__pycache__/
+*.py[cod]
+*.class
+*.sqlite3

@@ -1,0 +1,449 @@
+# 📖 命令行使用说明
+
+`ncmm` 是一个基于命令行界面的工具，提供了一系列子命令来控制各个任务。
+
+---
+
+## 0. 全局通用参数
+
+`ncmm` 命令支持以下全局通用参数，可以跟在主命令或任意子命令后：
+
+- `-c` / `--config` (String)：指定配置文件 `config.yaml` 的路径。若未指定，且配置了 `--home`，程序将自动尝试加载 `--home` 目录下的 `config.yaml`；若仍未找到，默认尝试加载 `${HOME}/.ncmm/config.yaml`；若该文件不存在，则会使用程序内置的默认配置值。
+- `--home` (String)：指定数据存储的家目录。默认值为当前用户的系统家目录（`${HOME}`）。该家目录将用于存放运行日志（`log/`）、Cookie 状态文件（`cookie.json`）以及本地 Badger 数据库（`database/`）。通过配合不同 `--home` 路径，可以极简、安全地实现多账号数据物理隔离。
+- `--debug` (Boolean)：开启命令行调试模式。开启后，日志会强制输出到标准输出（Stdout），日志级别临时设为 `debug`，并输出底层的网络请求调试信息。
+
+### WebUI (`ncmm web`)
+
+完整的界面功能与使用教程请参阅 [WebUI 使用说明](webui.md)。
+
+WebUI 不随普通任务命令启动，需要显式运行：
+
+```bash
+ncmm web
+ncmm web --listen 0.0.0.0:3899
+```
+
+- `--listen`：监听地址，默认 `127.0.0.1:3899`。
+- `--web-config`：指定 WebUI 设置文件，默认位于 `--home` 下的 `webui.yaml`。
+- `--secure-cookie`：为 Session Cookie 增加 `Secure`，通过 HTTPS 反向代理访问时启用；也可设置 `NCMM_WEB_SECURE_COOKIE=true`。
+
+`ncmm web` 包含 WebUI 和内置调度器，只按各规则的启用状态与 cron 触发任务，启动时不会立即批量执行。青龙、系统 cron 等外部调度场景应只执行 `ncmm task`，不要与 WebUI 内置调度器共用同一组任务。
+
+首次启动时设置管理员密码。默认最小长度为 1，不强制字母、数字或符号；密码只允许可见 ASCII 字符。密码规则、会话时长及密码保护开关可在“系统设置 → 安全”中调整。
+
+忘记密码时先停止同一 home 的 WebUI，再执行本机恢复命令：
+
+```bash
+ncmm --home /path/to/home auth reset-password
+ncmm --home /path/to/home auth reset-password --password-file ./new-password.txt
+printf '%s\n' 'New#Password123' | ncmm --home /path/to/home auth reset-password --password-stdin
+ncmm --home /path/to/home auth clear --yes
+```
+
+`reset-password` 会撤销全部浏览器会话；交互终端会隐藏输入，也可从 `--password-file`、`--password-stdin` 或 `NCMM_WEB_ADMIN_PASSWORD` 读取。`clear --yes` 只删除新的 `webui-auth.json`（管理员密码和 Session），不会读取或删除任何旧认证文件，也不会修改任务数据；重启 WebUI 后重新执行首次设置。
+
+版本检查和安装也可以通过命令行执行：
+
+```bash
+ncmm update
+ncmm update --apply
+```
+
+单文件安装更新后需重启 `ncmm`。官方 Docker 镜像仅允许检查版本，应通过宿主机拉取新镜像。
+
+---
+
+## 1. 账号登录 (`ncmm login`)
+
+进行歌曲播放前，必须执行登录操作以保存登录凭证。
+
+> [!IMPORTANT]
+> **多账号管理与自动回写逻辑 (v1.1.2+)**：
+> 1. **默认身份**：所有的登录子命令（扫码、手机号、Cookie 导入、CookieCloud 同步）**默认将账号作为辅助账号（Secondary）**处理，防止误覆盖主号。
+> 2. **主账号登录**：必须显式传入 `-m` 或 `--main` 参数（例如 `ncmm login qrcode -m`），才会登录并保存为**主账号（Main）**。
+> 3. **配置自动回写**：登录成功后，程序会**自动将新账号的 Cookie 路径写入/追加至本地 `config.yaml` 配置文件**的 `accounts` 节点下。如果是主账号，更新 `accounts.main`；如果是辅助账号且该路径不在 `accounts.secondary` 中，会自动追加进去。
+> 4. **自动添加昵称注释**：回写时，程序将通过 YAML AST 语法树分析，自动在对应的账号配置行后添加 `# 昵称: 用户的实际昵称` 注释，用于直观管理区分。同时，会完整保留其他未改动账号的历史注释。
+> 5. **文件名智能推导**：
+>    - **主账号**：路径由 `accounts.main` 决定（若配置文件中没有该项，则默认保存为 `${HOME}/.ncmm/cookie.json`）。
+>    - **辅助账号**：优先根据原始输入推导文件名。如 `cookie` 导入中通过 `-f <文件名>.txt` 导入，推导为 `<文件名>.json`；使用 `phone <手机号>` 登录，推导为 `<手机号>.json`；扫码（`qrcode`）或 `cookiecloud` 同步无原始输入，则默认以 `fan_<UID>.json` 形式自动命名。
+>    - 所有的相对路径都会自适应拼装至全局 `--home` 目录下。
+
+### 💡 顶级通用登录 Flag
+所有登录子命令均支持以下通用 Flag（可以加在子命令后）：
+- `-m` / `--main` (Bool): 是否作为主账号登录。默认 `false`，即默认作为辅助（刷歌）账号登录。
+
+`--no-config-write` 与 `--json-result` 是 WebUI 调用登录子进程时使用的集成参数：前者禁止子进程直接修改 `config.yaml`，后者输出带版本的结构化登录结果。普通命令行登录无需指定；直接使用时，调用方必须自行安全登记生成的 Cookie 路径。
+
+---
+
+### 二维码扫码登录 (`qrcode`)
+```bash
+ncmm login qrcode [-m] [-t 超时时间] [-d 图片输出目录] [-l 二维码纠错等级] [-o Cookie输出文件]
+
+# 示例 1：作为辅助账号登录（默认），二维码图片保存在当前目录
+ncmm login qrcode
+
+# 示例 2：作为主账号登录（显式传入 -m）
+ncmm login qrcode -m
+
+# 示例 3：作为辅助账号登录并指定 Cookie 输出文件名
+ncmm login qrcode -o fan1.json
+```
+- `-t` / `--timeout` (Duration): 扫码等待和状态轮询的超时时长，默认 `5m` (5分钟)，可填 `10m`、`30s` 等。
+- `-d` / `--dir` (String): 保存临时二维码图片 `qrcode.png` 的目录路径，默认当前工作目录。登录成功或超时后该文件会自动清理。
+- `-o` / `--output` (String): 自定义登录成功后的 Cookie 输出文件。未指定时保持自动命名：主账号优先使用 `accounts.main`，未配置时使用 `cookie.json`；辅助账号使用 `fan_<UID>.json`。
+- `-l` / `--level` (Int): 二维码纠错等级（`0` -> 7%, `1` -> 15% 默认, `2` -> 25%, `3` -> 30%）。
+
+### 手机号登录 (`phone`) (⚠️ 存在高风控拦截风险，不推荐)
+```bash
+# 示例 1：作为辅助账号登录（控制台交互提示输入验证码）
+ncmm login phone 188xxxx8888
+
+# 示例 2：作为主账号登录并提供密码
+ncmm login phone 188xxxx8888 -m -p "YourPassword"
+```
+- `-p` / `--password` (String): 登录账号密码。不提供该参数时，系统将使用验证码登录。
+- `--countrycode` (Int): 国家及地区代码，默认 `86` (中国大陆)。
+- `-t` / `--timeout` (Duration): 登录操作的超时时间，默认 `10m` (10分钟)。
+
+### Cookie 直接导入 (`cookie`)
+支持自动识别 Header 字符串、JSON 数组、Netscape 文件等多种 Cookie 格式，并可将解析出的标准化 JSON 格式 Cookie 写入到指定输出 file，且自动登记回写至配置文件中：
+```bash
+# 1. 导入 Cookie 字符串（默认作为辅助账号，自动另存为 fan_<UID>.json 并自动追加到 config.yaml）
+ncmm login cookie 'MUSIC_U=xxxx; __csrf=yyyy;'
+
+# 2. 显式作为主账号导入 Cookie 字符串（保存至主账号路径，默认为 cookie.json，并更新至 config.yaml）
+ncmm login cookie 'MUSIC_U=xxxx; __csrf=yyyy;' -m
+
+# 3. 从外部 Cookie 文本文件导入主账号（保存至主账号路径，默认为 cookie.json）
+ncmm login cookie -f ./cookie.txt -m
+
+# 4. 从外部文件导入辅助账号（不指定 -o，系统会根据输入文件名自动另存为 fan1.json，并自动回写追加到 config.yaml）
+ncmm login cookie -f ./fan1.txt
+
+# 5. 导入辅助账号并手动指定输出的 Cookie 文件名（例如导入为 my_fan.json，相对路径自适应拼装至 --home）
+ncmm login cookie -f ./my_fan.txt -o my_fan.json
+```
+- `-f` / `--file` (String): 存放 Cookie 的输入文件路径。如果指定此参数，将从该文件中读取 Cookie。
+- `-o` / `--output` (String): 保存解析后的 JSON Cookie 文件名。
+  - **自动保存（无需手动指定 `-o`）**：如果您使用 `-f ./fan1.txt` 导入，系统会自动为您另存为 `fan1.json`；若直接传入 Cookie 字符串导入，主账号默认保存为 `cookie.json`，辅助账号默认保存为 `fan_<UID>.json`。
+  - **手动保存**：如果您想给导入的 Cookie 起个别名，也可以用 `-o` 强行指定文件名（例如 `-o fan2.json`）。
+  - **存放目录**：如果您填写的是相对路径（如 `fan1.json`），系统会自动将它保存到您通过 `--home` 参数指定的运行工作目录下。
+- `--format` (String): 手动指定导入 Cookie 文件的格式（支持 `json`、`netscape` 或 `header`），不指定则程序会自动探测并尝试三种格式。
+
+### CookieCloud 同步 (`cookiecloud`)
+```bash
+ncmm login cookiecloud -u <UUID> -p <密码> -s <服务器地址> [-m]
+```
+- `-u` / `--uuid` (String): CookieCloud 账户的 UUID，必填。
+- `-p` / `--password` (String): CookieCloud 账户的密码，必填。
+- `-s` / `--server` (String): CookieCloud 服务器端点地址，默认 `http://127.0.0.1:8088`。
+- `-t` / `--timeout` (Duration): 请求 CookieCloud 服务器的超时时长，默认 `30s`。
+- `-H` / `--headers` (String): 请求 CookieCloud 时的自定义 HTTP 头部信息，格式为 `key1=value1,key2=value2`。
+
+---
+
+## 2. 模拟播放 (`ncmm playids`)
+
+该命令用于模拟播放指定歌曲列表。
+
+```bash
+ncmm playids --ids <songId列表> [--ids-file <文件>] [--num <播放数量>] [--gap-min <秒>] [--gap-max <秒>] [--daily-min <下限>] [--daily-max <上限>]
+```
+
+### 📌 参数说明
+
+| 参数/Flag | 说明 | 默认值 |
+| :--- | :--- | :--- |
+| `--ids` | 逗号分隔的歌曲 ID 列表 | 空 |
+| `--ids-file` | 从文本文件或远程网络 URL 读取歌曲 ID 列表（每行一个 ID，支持 `#` 注释，支持本地路径及 `http://`/`https://` 远程链接） | 空 |
+| `--num` | 本次运行最大播放的歌曲数量（`0` 表示播到今日目标上限为止） | `0` |
+| `--gap-min` | 歌曲切换之间的最小随机等待间隔（秒） | 配置项 `gap_min` / `10` |
+| `--gap-max` | 歌曲切换之间的最大随机等待间隔（秒） | 配置项 `gap_max` / `30` |
+| `--daily-min` | 当天首次启动时，随机目标的最小歌曲数限制 | 配置项 `daily_min` / `50` |
+| `--daily-max` | 当天首次启动时，随机目标的最大歌曲数限制 | 配置项 `daily_max` / `200` |
+| `--run-min` | 单次运行的最小歌曲数量设定 | 配置项 `run_min` / `0` |
+| `--run-max` | 单次运行的最大歌曲数量设定 | 配置项 `run_max` / `0` |
+
+### 💡 使用示例
+```bash
+# 1. 播放指定的多个歌曲 ID（在默认系统家目录下的 .ncmm 工作区运行）
+ncmm playids --ids 3373818852,3373845775
+
+# 2. 从歌曲 ID 列表文件读取并播放
+ncmm playids --ids-file ./songs.txt
+
+# 3. 调试播放：只播放 1 首，且无等待间隔
+ncmm playids --ids 3373818852 --num 1 --gap-min 0 --gap-max 0
+
+# 4. 配合 --home 在指定的隔离工作目录下运行播放任务（自动加载 run/config.yaml 并在该目录下轮询辅助账号进行播放）
+ncmm --home run playids --ids 3373818852,3373845775
+```
+
+`songs.txt` 文件示例：
+```text
+# 这是一行注释，系统会自动跳过
+3373818852
+3373845775
+```
+
+---
+
+## 3. 每日任务签到 (`ncmm sign`)
+
+该命令用于一键执行每日的多项任务签到，包含：音乐人签到、云豆领取、云贝中心日常签到与做任务自动打卡、VIP 乐签及成长值领取。
+
+```bash
+# 1. 在默认系统家目录工作区执行日常一键签到与云贝任务打卡
+ncmm sign
+
+# 2. 配合 --home 在指定的隔离工作目录下执行日常一键签到与做任务（自动加载 run/config.yaml 轮询该目录下的所有账号）
+ncmm --home run sign
+```
+
+### 💡 运行流程
+1. **音乐人签到**：自动调用 `/api/creator/user/access` 完成音乐人中心签到。
+2. **领取云豆**：自动拉取当前的音乐人任务列表，并自动对所有“已完成未领取”状态的任务领取对应的云豆奖励。
+3. **云贝日常签到**：自动执行云贝中心每日签到。
+4. **云贝做任务（前置查询与串行执行）**：
+   - 自动查询当前账号的待完成任务列表。
+   - 依次串行执行未完成的浏览、点赞、小众歌曲听歌、关注歌手、红心、收藏歌曲、预约等任务，并在每项任务打卡成功后自动一键申领云贝。
+   - 特别针对“探索小众歌曲”任务，每首歌曲模拟听歌播放 31~50 秒，交替调用云贝凭证分配与听歌记录上报接口，避免触发系统的防作弊检测。
+5. **VIP 乐签及成长值**：若是 VIP 会员，则自动进行每日黑胶乐签，并一键领取当前可领取的成长值奖励。
+
+### 💡 运行日志示例
+```text
+[sign] >>>>>> 开始主账号签到 (run/cookie.json) <<<<<<
+  [当前账号信息] Uid: 1024****01 | 等级: 黑胶·伍 (Lv.5)
+  --- 音乐人任务 ---
+  ✅ 音乐人签到成功
+  --- 云豆任务 ---
+  ✅ 云豆领取成功: 任务="每日听歌15分钟", 奖励=20云豆
+  --- 云贝任务 ---
+  ✅ 云贝签到成功
+  👉 成功获取云贝任务列表:
+    - 任务: 浏览会员中心    | 状态: 未完成 | 奖励: 100 云贝
+    - 任务: 探索小众歌曲    | 状态: 未完成 | 奖励: 150 云贝
+    - 任务: 点赞评论、动态  | 状态: 已完成 | 奖励: 200 云贝
+  👉 正在检查 [预约领云贝] 状态...
+  ℹ️ 当前预约状态: [上次奖励已领，新活动已预约]，无须做预约或领奖操作
+  👉 开始执行 [浏览会员中心] 任务...
+  ⏳ 已模拟触发浏览会员中心任务，随机浏览 21 秒...
+  ✅ 浏览会员中心模拟结束
+  👉 开始执行 [探索小众歌曲] 听歌任务...
+  👉 已拉取到 10 首推荐小众歌曲，开始依次串行听歌打卡...
+  ⏳ 正在听第 1/10 首小众歌曲: ID=3389465125 , 歌名=旧游记 (模拟播放 42秒)...
+  🎉 [听歌打卡 1/10] 成功申请云贝分配凭证
+  ✅ [听歌打卡 1/10] (歌曲 ID: 3389465125) 听歌完毕，成功上报
+  ...
+  ✅ 探索小众歌曲 10 首打卡完毕
+  👉 重新获取任务列表并领取奖励...
+  🎉 成功领取云贝 [浏览会员中心] 任务奖励，获得云贝: 100
+  🎉 成功领取云贝 [探索小众歌曲] 任务奖励，获得云贝: 150
+  --- VIP签到 ---
+  ✅ VIP乐签成功, 获得经验=10
+  ✅ 黑胶成长值已一键领取成功
+```
+
+---
+
+## 4. 音乐人任务 (`ncmm musician`)
+
+该命令用于一键自动化完成网易云音乐人的日常任务（日常签到、周期/阶段任务领云豆）与黑胶会员“进阶任务”（`musician`），从而保持或获取黑胶会员权益。
+
+```bash
+# 1. 在默认系统家目录工作区执行日常音乐人日常与进阶任务
+ncmm musician
+
+# 2. 配合 --home 在指定的隔离工作目录下执行日常音乐人任务（自动加载 run/config.yaml 读取辅助账号接力刷播）
+ncmm --home run musician
+```
+
+### 💡 运行流程与原理
+1. 检测音乐人状态：优先读取本地音乐人身份缓存；缓存命中非音乐人时直接跳过，缓存未命中时调用移动端 EAPI 身份接口并写入缓存。
+2. 第一阶段：日常任务：先拉取周期/阶段任务列表展示执行前状态，再调用 `/api/creator/user/access` 完成音乐人中心签到，随后刷新任务列表并领取可领取云豆，最后展示执行后状态。
+3. 第二阶段：VIP进阶任务：若进阶任务天数未达标，自动调用公共的 Note 笔记服务发布图文笔记，并在成功后自动删除。
+4. 有效播放次数任务：若进阶任务中“有效播放次数”未达标，程序将自动调用本地播放逻辑：
+   - 多辅助号接力刷播：程序会自动从配置的 `accounts.secondary` 辅助号池中依次读取 Cookie 文件。主账号用于查询任务状态，辅助号池用于执行播放任务。
+   - 自动额度分摊与上限回退：若某个辅助号在播放过程中触发了本地今日随机上限，程序会自动计算该账号已贡献的有效主歌播放量，将剩余未完成的播放额度回退，并自动重新分配给下一个可用的辅助账号（例如从 `fan1.json` 自动转移接力到 `fan2.json`）继续完成，实现全自动化接力，直至任务完全达标或所有辅助号均达上限。
+   - 混听风控与本人过滤：在每个账号刷歌时，支持掺杂网易云每日推荐歌曲（占比 30% 可配）。程序会在任务启动时自动拉取一次日推列表（通常 30 首）并缓存在内存中，在每一轮（Round）播放开始前重新随机抽选对应占比 of 日推 ID 并与主歌洗牌打乱，既完美模拟了真实用户在列表中随机挑选播放的行为，又避免了频繁拉取接口触发反作弊系统。并且程序会自动拦截歌手/DJ本人歌曲的播放，如果发现播放歌池中含有当前听歌账号本人的作品，会自动跳过，避免无效自刷被平台惩罚。
+
+### 💡 `musician-sign` 运行日志示例
+```text
+[musician sign] >>>>>> 开始主账号音乐人日常签到 (.ncmm/cookie.json) <<<<<<
+  👉 检查音乐人身份...
+  ✅ 已认证音乐人 | 用户ID: 436078691 | 音乐人ID: 124014713
+  👉 [第一阶段] 开始执行音乐人日常任务 (日常签到与云豆领奖)...
+    👉 [deviceId] 使用 Cookie 中的设备 ID: YD-xxxxxxxx
+    👉 音乐人任务列表（执行前）...
+    - 任务: 音乐人中心签到              | 未完成 | 进度: 0/0 | 云豆: 1
+    - 任务: 发布一条歌曲MV             | 未完成 | 进度: 0/0 | 云豆: 5
+    👉 开始音乐人日常签到...
+    ✅ 音乐人日常签到成功
+    🎉 成功领取 [音乐人中心签到]云豆奖励：+1
+    👉 音乐人任务列表（执行后）...
+    - 任务: 音乐人中心签到              | 已完成 | 进度: 1/1 | 云豆: 1
+    - 任务: 发布一条歌曲MV             | 未完成 | 进度: 0/0 | 云豆: 5
+[musician sign] 所有音乐人日常签到任务执行完毕！
+```
+
+### 💡 多辅助号接力刷播运行日志示例
+以下为 `ncmm musician` 运行时的真实多账号接力日志（敏感的 UID、数字和昵称已脱敏混淆）：
+```text
+[musician] 处理播放任务...
+[musician] 当前进度: 120/200, 今日尚缺有效播放: 80 次
+[musician] >>>>>> 分摊任务开始: 选用账号 (run/fan1.json), 本次需刷总数(含日推): 30 首, 尚缺主歌有效数: 80 次 <<<<<<
+[2026-06-04 16:30:00] [playids] 当前账号：uid=1024****68 昵称="粉丝一号"
+[2026-06-04 16:30:00] [playids] 今日风控目标: 已完成=50首, 今日随机上限=80首
+[2026-06-04 16:30:00] [playids] 正在调用接口获取歌曲详情...
+[2026-06-04 16:30:01] [playids] 启用混听干扰风控：自动拉取辅助账号每日推荐...
+[2026-06-04 16:30:02] [playids] 混听风控设置：成功获取到 30 首可用日推，每轮将随机选出 9 首掺杂播放
+[2026-06-04 16:30:02] [playids] 播放任务启动：本次目标刷播=30首, 今日已播累计=50首, 今日随机上限=80首
+[2026-06-04 16:30:02] [playids] ====== 开始第 1 轮播放 (本轮共 30 首) ======
+[2026-06-04 16:30:02] [playids] 正在播放：第1/30首，第1轮第1首，songId=1934****66, 歌名="歌曲A", 时长=4m10s
+[2026-06-04 16:30:02] [playids] 开始拉取资源：songId=1934****66
+[2026-06-04 16:30:05] [playids] 拉取完成：songId=1934****66, 来源=CDN, 已耗时=3.25s, 补等待=4m10s
+[2026-06-04 16:30:05] [playids] 播放进度: 0s/4m10s (0%) ...
+...
+[2026-06-04 16:34:15] [playids] 播放进度: 4m10s/4m10s (100%) [====================]
+[2026-06-04 16:34:15] [playids] 播放上报成功：songId=1934****66, 上报时长=250s
+[2026-06-04 16:34:15] [playids] 本首结果：第1/30首，成功，songId=1934****66, 歌名="歌曲A"
+...
+[2026-06-04 16:45:10] [playids] 播放上报成功：songId=3381****72, 上报时长=120s
+[2026-06-04 16:45:10] [playids] ⚠️ 触发今日风控随机播放总上限 (80首)，优雅退出当前运行
+[2026-06-04 16:45:10] [playids] 本次实际运行总上报数: 30，成功: 30
+[musician] 账号 (run/fan1.json) 播放完成，实际贡献主歌有效上报数: 21 次
+[musician] >>>>>> 分摊任务开始: 选用账号 (run/fan2.json), 本次需刷总数(含日推): 50 首, 尚缺主歌有效数: 59 次 <<<<<<
+[2026-06-04 16:45:11] [playids] 当前账号：uid=1024****69 昵称="粉丝二号"
+[2026-06-04 16:45:11] [playids] 今日风控目标: 已完成=0首, 今日随机上限=120首
+[2026-06-04 16:45:11] [playids] 正在调用接口获取歌曲详情...
+[2026-06-04 16:45:12] [playids] 启用混听干扰风控：自动拉取辅助账号每日推荐...
+[2026-06-04 16:45:13] [playids] 混听风控设置：成功获取到 30 首可用日推，每轮将随机选出 15 首掺杂播放
+[2026-06-04 16:45:13] [playids] 播放任务启动：本次目标刷播=50首, 今日已播累计=0首, 今日随机上限=120首
+[2026-06-04 16:45:13] [playids] ====== 开始第 1 轮播放 (本轮共 50 首) ======
+...
+[musician] ✅ 经过多个辅助账号的接力刷歌，主账号的播放任务已圆满达标！
+```
+
+---
+
+## 5. 乐迷团任务 (`ncmm fansgroup`)
+
+该命令用于执行当前账号已加入乐迷团的日常任务，也可以通过 `ncmm task --fansgroup` 或配置 `task.fansGroup: true` 由批量任务入口自动执行。可通过 `fansgroup.groupIds` 配置多个乐迷团 `groupId`，同一账号会按配置顺序逐个查询并执行各团独立任务。
+
+```bash
+# 1. 使用默认配置中的乐迷团账号执行
+ncmm fansgroup
+
+# 2. 指定单个 Cookie 文件执行
+ncmm fansgroup --cookie-file run/fan1.json
+
+# 3. 配合 --home 在指定工作目录下执行
+ncmm --home run fansgroup
+
+# 4. 通过批量任务入口只执行乐迷团任务
+ncmm --home run task --fansgroup
+```
+
+### 💡 运行流程与原理
+1. **账号选择**：命令行传入 `--cookie-file` 时只执行该账号；否则根据 `fansGroup.enableMain` 和 `fansGroup.enableSecondaries` 读取 `accounts.main` / `accounts.secondary`。
+2. **任务状态查询**：自动拉取乐迷团详情、加入状态和任务列表，日志中按“已完成 / 未完成”展示当前进度。
+3. **按剩余进度执行**：每项任务执行次数按 `allProgress - currentProgress` 计算，例如 `发布图文笔记 (0/2)` 会发布 2 次，`(1/2)` 只补 1 次。
+4. **播放任务**：解析任务按钮中的 `songIds`，直接上报 `weapi/feedback/weblog` 的 `startplay` 事件；网页侧点击播放即可完成的任务，不需要等待整首歌曲播放完成。
+5. **图文、分享、点赞任务**：图文任务复用 `note` 配置发布并按 `fansGroup.autoDeleteNote` / `note.autoDelete` 自动删除；分享任务提交分享进度；点赞任务从乐迷团推荐内容中过滤本人和已点赞帖子后执行。
+
+### 💡 运行日志示例
+```text
+[task] >>> 开始执行 [乐迷团任务] <<<
+[fansgroup] 开始处理账号 (./fan1.json)
+[fansgroup] 当前账号: uid=1024****68 nickname="粉丝一号"
+[fansgroup] 查询粉丝团详情...
+[fansgroup] 粉丝团: 音乐合伙人的乐迷团 (groupId=1872529203038486609, boardId=13827903)
+[fansgroup] 已加入：Joined=true, Level=1 (萌新乐迷)
+  [未完成] 播放歌曲 (0/2)
+  [未完成] 发布图文笔记 (0/2)
+  [已完成] 分享歌曲 (1/1)
+  [未完成] 点赞乐迷笔记 (0/5)
+[fansgroup] 处理播放任务 [播放歌曲]（剩余 2/2）
+  触发 startplay，选择歌曲 3387115952
+  已上报 startplay (1/2)
+  触发 startplay，选择歌曲 3357361025
+  已上报 startplay (2/2)
+[fansgroup] 处理发布笔记任务 [发布图文笔记]（剩余 2/2）
+  [1/2] 准备发布动态："分享好听的歌"
+  [1/2] 动态发布成功，id=37652846861
+  删除动态成功
+  [2/2] 准备发布动态："分享好听的歌"
+  [2/2] 动态发布成功，id=37652859862
+  删除动态成功
+[fansgroup] 处理点赞任务 [点赞乐迷笔记]（剩余 5）
+  [1/5] like success
+  ...
+[fansgroup] 点赞完成：5/5
+```
+
+---
+
+## 6. 每日推歌发布 (`ncmm daily-song-share`)
+
+该命令用于从配置的“高分冷门”歌单中随机选择一首歌曲，复用图文发布链路生成带图片、标题、正文和话题的歌曲分享。也可以通过 `ncmm task --daily-song-share` 或配置 `task.daily-song-share: true` 由批量任务入口执行。
+
+```bash
+# 1. 使用默认配置中的账号执行每日推歌
+ncmm daily-song-share
+
+# 2. 指定单个 Cookie 文件执行
+ncmm daily-song-share --cookie-file run/cookie.json
+
+# 3. 通过批量任务入口只执行每日推歌
+ncmm --home run task --daily-song-share
+```
+
+### 💡 运行流程与原理
+1. **前置校验**：每日推歌必须使用同一移动端会话抓到的移动端 Cookie、匹配的移动端 UA 和 `accounts.antiCheatTokens` 中对应的 token。未配置 token 时，命令会直接跳过，不会发起发布或抽奖请求。
+2. **账号选择**：命令行传入 `--cookie-file` 时只执行该账号；否则将依次读取并执行 `accounts.main`（当 `dailySongShare.enableMain` 为 true 时）以及 `accounts.secondary`（当 `dailySongShare.enableSecondaries` 为 true 时）。
+3. **歌曲选择**：若配置了 `dailySongShare.songId`，则固定分享该歌曲；留空时读取 `dailySongShare.playlistId`，默认使用 `13848930701`，从歌单歌曲中随机选择一首。
+4. **图文素材**：标题和正文优先使用 `dailySongShare` 专属配置，缺省时继承 `note` 的本地/远程内容库；图片可使用歌曲封面、歌单封面或自定义图片池。
+5. **话题挂载**：正文不追加话题文本；有话题/活动 ID 时写入 `activityInfoList`，由发布接口挂载话题。默认话题使用抓包确认 of `13827903`（音乐合伙人的乐迷团）、`195425749`（申请音乐合伙人）和 `200773579`（音乐合伙人星探计划）。
+6. **发布后抽奖**：开启 `dailySongShare.lottery.enabled` 后，会尝试报名/登记每日推歌活动、读取 guide 中的抽奖机会并调用抽奖接口；这些接口走移动端 `XEAPI/AEAPI` 请求形态。
+
+---
+
+## 7. 笔记单独发布 (`ncmm note`)
+
+该命令用于单独发布图文动态/笔记。该服务也同时被 `musician` 和 `sign` 任务内部直接调用。
+
+```bash
+ncmm note [--cookie-file <cookie文件路径>]
+```
+
+### 💡 使用示例
+```bash
+# 1. 使用默认配置中的主账号发布图文笔记（在系统默认家目录下运行）
+ncmm note
+
+# 2. 指定额外的 Cookie 文件路径发布
+ncmm note --cookie-file run/cookie.json
+
+# 3. 配合 --home 在指定的隔离工作目录下发布
+ncmm --home run note
+```
+
+---
+
+## 8. 黑胶会员免费送/领 (`ncmm vip-member-gift`)
+
+该命令用于自动化处理黑胶会员“免费送”活动。支持：
+1. **生成并赠送 Token** (`enableGift`): 将多余的黑胶会员天数生成为赠送 Token 并上报发布到云端。
+2. **从云端自动领取** (`enableClaim`): 自动从云端获取其他用户上报的可用 Token 并尝试领取。
+
+```bash
+ncmm vip-member-gift [--cookie-file <cookie文件路径>]
+```
+
+### 💡 运行流程与原理
+1. **前置校验**：执行会员任务需要使用移动端 Cookie 和对应的移动端 UA（如果是 Android Cookie 则需要 `network.user_agent.xeapi`，如果是 iPhone/iPad Cookie 则需要 `network.user_agent.eapi`）。从云端自动领取时，还必须在 `accounts.antiCheatTokens` 中配置当前账号对应的 token。
+2. **账号选择**：命令行传入 `--cookie-file` 时只执行该账号；否则将依次读取并执行 `accounts.main`（当 `vipMemberGift.enableMain` 为 true 时）以及 `accounts.secondary`（当 `vipMemberGift.enableSecondaries` 为 true 时）。
+3. **云端中转**：默认使用内置的云端服务地址中转 Token。为保护隐私，获取 Token 时上报者的 `donor_uid` 将被自动脱敏，且上传时不会携带您的账号昵称等个人敏感信息。
+3. **自建/私有部署云服务**：如果你希望完全使用自己的专属中转服务器，可以查看项目中的 [vip_member_gift_cloud](../tools/vip_member_gift_cloud/README.md) 自部署文档。通过 Docker 或 Python 即可快速完成私有云端服务搭建。配置时将 `vipMemberGift.cloud.baseUrl` 指向你的私有服务地址，`vipMemberGift.cloud.token` 填入你的自定义服务密钥即可。
+

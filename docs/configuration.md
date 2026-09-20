@@ -1,0 +1,383 @@
+# ⚙️ 配置文件说明 (`config.yaml`)
+
+默认配置文件路径为 `~/config.yaml`（支持在运行时通过 `-c` 或 `--config` 指定）。配置字段说明如下：
+
+```yaml
+# 配置文件版本
+version: 1.1.14
+
+# 顶级多账号管理
+accounts:
+  # 音乐人主账号 Cookie 文件路径
+  main: "./cookie.json"
+  # 辅助账号 Cookie 列表
+  secondary:
+    - "./fan1.json"
+    - "./fan2.json" # 不要的账号可以删除或者前面加#注释
+  # 每个 Cookie 对应的移动端 X-antiCheatToken（从各自的移动端抓包获取，每个设备/账号唯一）
+  # 目前需要 antiCheatToken 的任务有：dailySongShare 和 vipMemberGift(领取)。
+  # 同时需要移动端 Cookie 和匹配的移动端 UA。没有配置 token 的账号会自动跳过需要该 token 的任务。
+  # iphone/ipad的UA填在network.user_agent.eapi； Android的UA两个都要填network.user_agent.xeapi、network.user_agent.eapi。
+  antiCheatTokens:
+    "./cookie.json": ""
+    # "./fan1.json": ""
+
+# ncmm task 批量任务执行配置总开关。
+# 若命令行没有指定任何具体任务(例如运行 ncmm task)，则会执行 task 中所有配置为 true 的任务。
+# 若命令行指定了任意具体任务(例如运行 ncmm task --sign --playids)，则仅会执行这些被命令行明确开启的任务，而忽略其他未指定的任务。
+task:
+  # 是否在批量执行中包含日常一键签到
+  sign: true
+  # 是否在批量执行中包含播放指定歌曲任务
+  playids: true
+  # 是否在批量执行中包含音乐人日常签到任务（每日）
+  musician-sign: true
+  # 是否在批量执行中包含音乐人VIP进阶任务（每月）
+  musician-vip: false
+  # 是否在批量执行中包含自动发布/删除图文笔记任务
+  note: false
+  # 是否开启每日分享歌曲并抽奖，需要填写antiCheatTokens
+  daily-song-share: true
+  # 是否开启赠送和领取VIP任务，需要填写antiCheatTokens
+  vip-member-gift: true
+  # 是否在批量执行中包含乐迷团任务
+  fansgroup: true
+
+  # 任务调度与队列配置
+  # 执行模式:
+  #   - "by-task-group": 跨账号分群组串行。所有账号跑完快任务，再开始跑慢任务。
+  #   - "by-account": 单账号自包容串行。每个账号执行完快任务和慢任务后，再轮到下一个账号。
+  mode: "by-task-group"
+
+  # 快任务列表。包含所有耗时秒级的常规打卡任务。正常不需要修改
+  fast_tasks:
+    - daily-song-share     # 每日推歌发布任务
+    - VipTask              # 黑胶 VIP 任务
+    - Reserve              # 预约领云贝
+    - ViewVipCenter        # 浏览会员中心
+    - LikeComment          # 点赞评论和动态
+    - FollowArtist         # 关注歌手
+    - LikeSong             # 红心歌曲
+    - CollectSong          # 收藏歌曲
+    - PublishNote          # 发布图文动态
+    - musician-sign        # 音乐人日常签到
+    - note                 # 自动发布/删除图文笔记任务
+    - vip-member-gift      # 黑胶会员赠送和领取任务（云端）
+    - fansgroup            # 乐迷团任务
+
+  # 慢任务列表。包含所有听歌、刷播放量等耗时数分钟到数十分钟的任务。
+  slow_tasks:
+    - ListenIndie          # 探索小众歌曲 (约7分钟)
+    - PlayDailyRecommend   # 日推歌曲播放 (约30~45分钟)
+    - playids              # 播放指定歌曲任务
+    - musician-vip         # 音乐人VIP进阶任务 (含播放任务)
+
+
+# 网络模块配置
+network:
+  # 是否开启 resty 调试日志输出
+  debug: false
+  # 全局请求超时时间
+  timeout: 60s
+  # 网络请求失败重试次数
+  retry: 3
+  # 全局自定义 User-Agent 配置
+  user_agent:
+    # 默认兜底 User-Agent。当下面 weapi 或 eapi 留空时会自动退回使用此值。
+    default: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) NeteaseMusicDesktop/2.3.17.1034"
+    # Web网页端与PC桌面客户端（weapi协议接口）所使用的 User-Agent
+    weapi: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) NeteaseMusicDesktop/2.3.17.1034"
+    # 移动手机APP客户端（eapi协议接口，如音乐人做任务、防风控套件相关API）所使用的 User-Agent
+    eapi: "NeteaseMusic 9.4.95/6806 (iPhone; iOS 16.6.1; zh_CN)"
+    # XEAPI/AEAPI Android 移动客户端 User-Agent。Android 每日推歌、Android vipMemberGift 需要填写抓包移动端 UA。
+    xeapi: ""
+
+
+
+# playids 播放指定歌曲配置
+playids:
+  enableMain: false      # 默认不启用主账号刷歌
+  enableSecondaries: true   # 启用所有辅助账号刷歌
+  # 每日播放歌曲随机下限 (每天首次启动时在此范围内随机生成当日上限目标)
+  daily_min: 40
+  # 每日播放歌曲随机上限
+  daily_max: 100
+  # 单次运行播放歌曲随机下限 (为 0 表示不限制，直到跑完今日剩余目标)
+  run_min: 20
+  # 单次运行播放歌曲随机上限
+  run_max: 40
+  # 播放间隔范围最小值（秒）
+  gap_min: 0
+  # 播放间隔范围最大值（秒）
+  gap_max: 5
+  # 默认歌曲 ID 池（会与命令行参数指定的列表进行并集去重合并）
+  ids: "3366663042,3373818852,3373845775,3372894655,3372989897,3370932775,3370931988,3381788772,3372050296,3372046163"
+  # 默认歌曲 ID 文件路径（支持本地路径与远程 http/https 链接，会与命令行参数指定的列表并集去重合并。支持单个字符串或数组列表形式的多源配置）
+  # 示例 (多源配置):
+  idsFile:
+    - "https://mum.cc.cd/34p793j2"
+    # - "./ids.txt"
+  # 播放账号控制（命令行参数未指定 --cookie-file 时生效）
+
+# 签到任务配置
+sign:
+  # 是否在签到过程中自动领取/完成日常云贝、VIP等进阶任务奖励
+  automatic: true
+  # 是否启用主账号日常一键签到（云贝、黑胶 VIP 签到）
+  enableMain: true
+  # 是否启用所有辅助账号日常一键签到
+  enableSecondaries: true
+  # 是否开启黑胶 VIP 会员任务（自动乐签、红心VIP歌曲、调音大师、云贝中心浏览、站外分享、免费福利及成长值领取）
+  enableVipTask: true
+  # 云贝精细化做任务配置
+  yunbeiTask:
+    # 浏览会员中心任务开关
+    enableViewVipCenter: true
+    # 点赞评论和动态任务开关
+    enableLikeComment: true
+    # 探索小众歌曲任务开关
+    enableListenIndie: true
+    # 预约领云贝任务开关
+    enableReserve: true
+    # 关注歌手任务开关
+    enableFollowArtist: true
+    # 红心歌曲任务开关
+    enableLikeSong: true
+    # 收藏歌曲任务开关
+    enableCollectSong: true
+    # 发布图文动态任务开关
+    enablePublishNote: true
+    # 分享歌曲任务开关
+    enableShareSong: true
+    # 是否启用云贝签到中的日推歌曲播放任务（31~45随机分钟）开关
+    enablePlayDailyRecommend: false
+
+# 模拟播放日推干扰配置
+mixPlay:
+  # 是否启用混听日推干扰风控策略
+  enabled: true
+  # 日推歌曲混听占比范围（例如 0.3 代表混听中含有 30% 比例 of 随机日推歌）
+  dailyRecommendRatio: 0.3
+  # 混听的日推歌曲是否计入播放目标（若为 false，则每日/单次目标仅统计主歌，日推只起风控干扰作用，不占任务额度；若为 true，则日推也算在目标数内）
+  countTarget: false
+
+# note 笔记发布公共配置
+note:
+  # 笔记标题列表。每次发布图文笔记时会从中随机选择一个作为标题（若有 titlesFile 则会进行并集合并）
+  titles:
+    - "今日音乐分享"
+    - "音乐人的日常"
+    - "分享好听的歌"
+    - "每日歌单推荐"
+  # 动态发布标题列表文件路径 (支持本地路径与远程 http/https 链接，会与 titles 并集合并。支持单个字符串或数组列表形式的多源配置)
+  # 示例 (多源配置):
+  titlesFile:
+    - "https://mum.cc.cd/4pjvv5j7"
+    # - "local/titles.txt"
+  # 笔记文字内容。每次发布时会从中随机选择一条作为正文（若有 messagesFile 则会进行并集合并）
+  messages:
+    - "穿梭在拥挤的人潮里，耳机隔开外界的喧闹，一首喜欢的歌，就是奔波路上最安稳的小港湾。"
+    - "生活难免有疲惫和委屈，好在总有动听的音乐相伴，一点点抚平心底积攒下来的负面情绪。"
+    - "暂时抛开生活里的琐碎压力，寻一处角落静静听歌，让思绪跟着音符漫无目的地自由飘荡。"
+    - "三餐四季，烟火寻常，闲时放一首爱听的曲子，再普通的日常也能品出温柔的滋味。"
+    - "年少听歌只觉得旋律悦耳，长大之后再细品歌词，才慢慢读懂人生里的遗憾与和解。"
+    - "夏夜晚风拂过肩头，耳机里的歌声缓缓流淌，把这个季节独有的浪漫与温柔尽数收藏。"
+  # 动态发布文本列表文件路径 (支持本地路径与远程 http/https 链接，会与 messages 并集合并。支持单个字符串或数组列表形式的多源配置)
+  # 示例 (多源配置):
+  messagesFile:
+    - "https://mum.cc.cd/457fuy38"
+    # - "local/messages.txt"
+  # 图片 URL 链接池。支持配置本地图片路径、直链，或本地及远程包含链接的文本列表（支持单个字符串或数组列表形式的多源配置。每次发布时会从中随机选择一个可用的图片并下载上传）
+  # 示例 (多源配置):  
+  imageUrls:
+    - "https://picsum.photos/800/600"
+  # 动态类型: 35=普通动态, 39=图文笔记
+  type: 39
+  # 是否在笔记发布成功后自动删除（秒删），以保持个人主页整洁。默认开启
+  autoDelete: true
+
+# 每日推歌发布配置
+# 重要：每日推歌需要使用同一移动端会话抓到的移动端 Cookie、匹配的移动端 UA 和 antiCheatToken。
+# Android Cookie 走 network.user_agent.xeapi；iPhone/iPad Cookie 走 network.user_agent.eapi。
+# antiCheatToken 为空时任务会直接跳过；Android 线 network.user_agent.xeapi 为空时会跳过。
+dailySongShare:
+  enableMain: true
+  enableSecondaries: false
+  songId: ""   # 指定歌曲 ID。留空时继续从 playlistId 随机选歌；填写后固定分享该歌曲。
+  playlistId: "13848930701" #音乐合伙人歌单
+  # 指定 songId 时不会额外读取歌单封面，playlistCover 会降级到歌曲封面。
+  imageMode: "songCover" # 可选：songCover / playlistCover / custom
+  imageUrls: []     # songCover是自动歌单封面
+  titleMode: "note" # 可选：note / song
+  titles: []
+#    - "今日推荐：{song}"
+#    - "分享一首值得听的歌"
+  titlesFile: []  #titles、titlesFile、messages、messagesFile留空沿用note任务配置
+  messages: []
+  messagesFile: []
+  autoDelete: true # 是否自动删除
+  # 发布时候带上的话题
+  topics:
+    - name: "音乐合伙人的乐迷团"
+      id: "13827903"
+      type: 3
+      subType: 11
+    - name: "申请音乐合伙人"
+      id: "195425749"
+      type: 2
+      subType: 0
+    - name: "音乐合伙人星探计划"
+      id: "200773579"
+      type: 2
+      subType: 0
+  ## 是否自动抽奖
+  lottery:
+    enabled: true
+    activityId: ""
+    autoRegister: true
+
+# 黑胶会员免费送任务配置
+# Android Cookie 会按 network.user_agent.xeapi 走 XEAPI；iPhone/iPad Cookie 会按 network.user_agent.eapi 走 EAPI。
+# 领取需要配置 accounts.antiCheatTokens 中对应的 token，赠送不需要。
+vipMemberGift:
+  enableMain: true         # 主号是否启用任务
+  enableSecondaries: false # 辅助账号是否启用任务
+  enableGift: true         # 是否发布赠送会员 token 到云端
+  enableClaim: true        # 是否从云端领取会员
+  cloud:
+    baseUrl: "" # 云端服务地址，留空使用作者云端共享库
+    token: "" # 云端服务token，留空使用作者云端共享库
+
+# 音乐人任务配置
+musician:
+  # 是否启用主账号执行音乐人任务（日常签到、领云豆、发笔记及接力刷播放量）
+  enableMain: true
+  # 是否启用所有辅助账号执行音乐人任务
+  enableSecondaries: false
+  # 音乐人身份状态的本地缓存时间（单位：天），默认永久有效。
+  # 设置为 0 代表永久有效；设置为 -1 可关闭缓存。
+  identityCacheDays: 0
+  # 是否在VIP进阶任务中自动发布笔记（默认开启）
+  enableVipNote: true
+  # 是否在VIP进阶任务中自动接力刷播放量（默认开启）
+  enableVipPlay: true
+  # 播放任务配置 (专门用于进阶任务的接力刷歌)
+  play:
+    # 进阶任务专属覆盖的歌曲 ID（留空继承 playids.ids，支持并集去重合并）
+    ids: ""
+    # 进阶任务专属覆盖的歌曲 ID 文件路径（留空继承 playids.idsFile，支持并集去重合并。支持单个字符串或数组列表形式的多源配置）
+    idsFile: ""
+    # 进阶任务单日播放歌曲随机目标下限 (为 0 则继承 playids.daily_min)
+    daily_min: 0
+    # 进阶任务单日播放歌曲随机目标上限 (为 0 则继承 playids.daily_max)
+    daily_max: 0
+    # 进阶任务单次运行的播放歌曲随机目标下限 (为 0 则继承 playids.run_min)
+    run_min: 0
+    # 进阶任务单次运行的播放歌曲随机目标上限 (为 0 则继承 playids.run_max)
+    run_max: 0
+    # 两首歌曲之间的最小随机等待间隔（秒，为 0 则继承 playids.gap_min）
+    gap_min: 0
+    # 两首歌曲之间的最大随机等待间隔（秒，为 0 则继承 playids.gap_max）
+    gap_max: 0
+
+# 乐迷团任务配置 (音乐合伙人的乐迷团)
+fansgroup:
+  # 是否启用主账号执行乐迷团任务
+  enableMain: true
+  # 是否启用辅助账号执行乐迷团任务
+  enableSecondaries: true
+  # Fans group IDs 自己抓包 可以多个，默认是音乐合伙人的乐迷团.
+  groupIds:
+    - "1872529203038486609"
+  # 乐迷团发布笔记后是否自动删除（留空则继承 note.autoDelete 配置）
+  # autoDeleteNote: true
+
+# 自动更新与版本检测配置
+updater:
+  # 是否启用新版本检测与日志提醒（默认开启。每天最多请求一次 GitHub API）
+  check: true
+  # 是否在检测到新版本时自动下载并热替换二进制（默认开启。容器环境将自动忽略此项）
+  auto_update: true
+  # 代理镜像列表，由上至下顺序尝试直到成功。留空或未配置则使用内置默认列表。
+  # 系统会自动首先尝试直连，失败后才会按顺序尝试下方的代理镜像。
+  proxy_mirrors:
+    - "https://gh-proxy.com/"
+    - "https://ghproxy.net/"
+    - "https://githubproxy.cc/"
+
+# 运行失败通知（策略在此；通道凭证见独立文件 notify.yaml）
+# 仅在有失败或（on_skip=true 时的）跳过时，于进程结束汇总推送一条消息；成功不推送。
+notify:
+  # 总开关，默认关闭
+  enabled: false
+  # 任务被跳过（如缺 antiCheatToken）时是否纳入汇总推送，默认关闭
+  on_skip: false
+  # 推送标题前缀，便于多机区分
+  title_prefix: "ncmm"
+  # 单通道请求超时
+  timeout: 10s
+  # 通道配置文件路径（相对路径相对于 config.yaml 所在目录；无自定义 config 时相对 --home）
+  file: "notify.yaml"
+
+# log 日志模块配置
+log:
+  # 应用名称
+  app: ncm
+  # 日志输出格式: text / json
+  format: text
+  # 日志级别: debug < info < warn < error
+  level: info
+  # 日志是否输出到标准输出 (控制台)
+  stdout: false
+  # 滚动日志配置
+  rotate:
+    # 日志文件保存路径
+    filename: "./log/ncm.log"
+    # 单个日志文件最大大小 (单位: MB)
+    maxsize: 100
+    # 日志文件保留天数
+    maxage: 7
+    # 日志文件保留最大数量
+    maxbackups: 3
+    # 日志打印是否使用本地时间
+    localtime: true
+    # 日志文件是否启用 gzip 压缩
+    compress: true
+
+# 数据缓存配置 (主要记录播放状态进度)
+database:
+  # 缓存驱动，目前仅支持 badger
+  driver: badger
+  # 缓存目录路径
+  path: "./database/badger/"
+```
+
+## 失败通知
+
+运行失败汇总推送说明见 [notify.md](notify.md)。
+
+`config.yaml` 中仅配置策略（通道凭证放独立文件 `notify.yaml`，示例见仓库 `config/notify.yaml`）：
+
+```yaml
+notify:
+  enabled: false      # 总开关，默认关闭
+  on_skip: false       # 跳过是否纳入汇总推送，默认 false
+  title_prefix: "ncmm"
+  timeout: 10s
+  file: "notify.yaml" # 相对路径相对于 config.yaml 所在目录
+```
+
+## 配置写入与并发
+
+从 `v1.2.0` 开始，程序通过 `config.yaml.lock` 协调 WebUI、任务子进程和独立 CLI 进程，并使用同目录临时文件原子替换 `config.yaml`。读取方只会看到完整旧配置或完整新配置；锁文件长期存在是正常现象，它不包含凭据，也不代表进程仍在运行。
+
+WebUI 还会在规范化后的 home 中维护 `webui.instance.lock`。它使用 Linux `flock` 或 Windows `LockFileEx` 保证一个 home 同时只有一个 WebUI 控制实例，并保存 PID、启动时间、监听地址、版本和 instance ID 供启动冲突诊断。该文件退出后不会删除，但 OS 锁会在正常或异常退出时自动释放；不要根据文件是否存在判断 WebUI 是否运行，也不要在实例运行期间手工覆盖它。
+
+管理员认证独立保存在 `webui-auth.json`，不使用业务 Badger 数据库。文件只包含 PBKDF2 密码 hash、SHA-256 Session Token hash、密码/会话策略和会话元数据，不包含明文密码或明文 Session Token；`webui-auth.json.lock` 用于跨进程事务协调。浏览器 Session Cookie 为 HttpOnly、SameSite=Strict，默认 7 天绝对有效期和 1 小时服务端空闲超时，可在 WebUI“系统”页调整；最多保留 128 个会话。认证文件损坏时 WebUI 会安全拒绝启动，不会退化为无密码模式；停止实例后可用 `ncmm auth reset-password` 直接替换，或用 `ncmm auth clear --yes` 清除并重新设置。
+
+v1.2.0 将 WebUI 认证视为全新状态，不读取或迁移旧版管理令牌。没有 `webui-auth.json` 时进入首次设置；此过程以及 `auth reset-password` / `auth clear` 仅操作认证文件，不会修改 `config.yaml`、Cookie、业务数据库、`webui.yaml` 调度规则或 `log/runs` 运行记录。
+
+WebUI 获取配置时会同时收到内容哈希 `revision`。保存配置必须提交该 revision：缺失时 API 返回 `428 Precondition Required`；配置已被其他页面、登录流程或 CLI 更新时返回 `409 Conflict`，此时应重新加载后再保存。每次 WebUI 保存仍会原子更新 `config.yaml.bak` 作为人工恢复副本。
+
+Cookie 导入和二维码登录由子进程完成登录验证与 Cookie 落盘，但 `accounts` 更新由 WebUI 父进程统一提交。若登录期间配置发生变化，Cookie 文件会保留，页面会明确提示配置提交冲突，不会覆盖较新的配置。
+

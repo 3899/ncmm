@@ -1,0 +1,330 @@
+# NCMM 核心配置。建议优先使用 WebUI；手动修改后需重启服务。
+# 字符串、路径和持续时间建议保留引号；布尔值仅使用 true / false。
+# 配置文件版本，由程序用于识别配置结构，请勿手动降级。
+version: 1.2.2
+
+# 账号与移动端凭据
+accounts:
+  # 主账号 Cookie JSON 文件路径。
+  main: "./cookie.json"
+  # 辅助账号 Cookie 文件列表；不需要的账号可删除对应行。
+  secondary:
+    - "./fan1.json"
+    - "./fan2.json"
+
+  # Cookie 文件与移动端 X-antiCheatToken 的一一映射。
+  # 每日推歌和领取会员需要同一移动端会话的 Cookie、UA 与 Token；缺失时自动跳过。
+  antiCheatTokens:
+    "./cookie.json": ""
+    # "./fan1.json": ""
+
+# 网络请求与多端协议 UA
+network:
+  # 输出 HTTP 调试日志，仅排查接口问题时开启。
+  debug: false
+  # 单次请求全局超时，使用 Go duration 格式，如 15s、1m。
+  timeout: 60s
+  # 网络请求失败后的最大重试次数，0 表示不重试。
+  retry: 3
+  user_agent:
+    # 默认兜底 UA；协议专用 UA 留空时可能回退到此值。
+    default: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) NeteaseMusicDesktop/2.3.17.1034"
+    # Web / PC 客户端 WEAPI 请求使用的 UA。
+    weapi: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) NeteaseMusicDesktop/2.3.17.1034"
+    # iPhone / iPad 移动端 EAPI 请求使用的抓包 UA。
+    eapi: "NeteaseMusic 9.4.95/6806 (iPhone; iOS 16.6.1; zh_CN)"
+    # Android XEAPI / AEAPI 请求使用的抓包 UA；Android 推歌和领会员需要配置。
+    xeapi: ""
+
+# 批量任务总控。仅执行 ncmm task 且命令行未指定具体任务时使用下列开关。
+task:
+  # 在批量执行中包含日常一键签到。
+  sign: true
+  # 在批量执行中包含指定歌曲播放。
+  playids: true
+  # 在批量执行中包含音乐人每日签到与云豆领取。
+  musician-sign: true
+  # 在批量执行中包含音乐人 VIP 月度进阶，可能耗时较长。
+  musician-vip: false
+  # 在批量执行中包含每日推歌与抽奖，需要移动端 Token。
+  daily-song-share: true
+  # 在批量执行中包含黑胶会员赠送与领取；领取需要移动端 Token。
+  vip-member-gift: true
+  # 在批量执行中包含乐迷团日常打卡。
+  fansgroup: true
+  # 在批量执行中包含公共图文笔记发布任务。
+  note: false
+
+  # by-task-group：所有账号先执行快任务，再执行慢任务。
+  # by-account：每个账号依次执行全部任务。
+  mode: "by-task-group"
+
+  # 快任务内部执行顺序，通常为秒级任务，非开发调试无需修改。
+  fast_tasks:
+    - VipTask          # 黑胶 VIP 日常任务
+    - Reserve          # 预约领云贝
+    - ViewVipCenter    # 浏览会员中心
+    - LikeComment      # 点赞评论和动态
+    - FollowArtist     # 关注歌手
+    - LikeSong         # 红心歌曲
+    - CollectSong      # 收藏歌曲
+    - PublishNote      # 发布图文动态
+    - musician-sign    # 音乐人每日签到
+    - note             # 公共图文笔记
+    - vip-member-gift  # 黑胶会员赠送与领取
+    - fansgroup        # 乐迷团打卡
+    - daily-song-share # 每日推歌与抽奖
+  # 慢任务内部执行顺序，包含真实等待或连续播放，可能耗时数分钟至数十分钟。
+  slow_tasks:
+    - ListenIndie        # 探索小众歌曲，约 7 分钟
+    - PlayDailyRecommend # 日推播放，约 31～45 分钟
+    - playids            # 指定歌曲播放，耗时取决于目标与间隔
+    - musician-vip       # 音乐人 VIP 进阶，可能包含长时播放
+
+# 签到、云贝与会员成长值任务
+sign:
+  # 自动完成并领取可用的日常任务奖励。
+  automatic: true
+  # 主账号执行云贝和黑胶 VIP 签到。
+  enableMain: true
+  # 所有辅助账号依次执行签到。
+  enableSecondaries: true
+  # 执行黑胶会员成长值任务与福利领取。
+  enableVipTask: true
+  # 云贝子任务开关；仅影响 sign 中对应步骤。
+  yunbeiTask:
+    # 浏览会员中心。
+    enableViewVipCenter: true
+    # 点赞评论和动态。
+    enableLikeComment: true
+    # 探索小众歌曲，约需 7 分钟。
+    enableListenIndie: true
+    # 预约新歌领取云贝。
+    enableReserve: true
+    # 关注歌手。
+    enableFollowArtist: true
+    # 红心歌曲。
+    enableLikeSong: true
+    # 收藏歌曲。
+    enableCollectSong: true
+    # 使用 note 素材发布图文动态。
+    enablePublishNote: true
+    # 分享歌曲。
+    enableShareSong: true
+    # 播放日推歌曲，约需 31～45 分钟，默认关闭。
+    enablePlayDailyRecommend: false
+
+# 指定歌曲播放
+playids:
+  # 主账号参与指定歌曲播放。
+  enableMain: false
+  # 所有辅助账号参与指定歌曲播放。
+  enableSecondaries: true
+
+  # 每日首次运行时在上下限间生成当日随机目标，单位：首。
+  daily_min: 40
+  daily_max: 100
+  # 每次运行在上下限间生成本次目标；run_min=0 表示不限制最低数量。
+  run_min: 20
+  run_max: 40
+  # 两首歌曲之间的随机等待范围，单位：秒。
+  gap_min: 0
+  gap_max: 5
+
+  # 歌曲 ID 使用英文逗号分隔；idsFile 支持本地文件和 HTTP/HTTPS 地址。
+  ids: "3366663042,3373818852,3373845775,3372894655,3372989897,3370932775,3370931988,3381788772,3372050296,3372046163"
+  idsFile:
+    - "https://ncmm.cc.cd/34p793j2"
+    # - "./ids.txt"
+
+# 日推混听。在指定歌曲中穿插每日推荐，降低播放行为单一性。
+mixPlay:
+  # 在指定歌曲中穿插官方日推歌曲。
+  enabled: true
+  # 日推穿插比例，取值 0～1；0.3 表示约 30%。
+  dailyRecommendRatio: 0.3
+  # 是否将穿插的日推歌曲计入每日和单次播放目标。
+  countTarget: false
+
+# 图文动态公共素材
+note:
+  # 动态类型：35=普通动态，39=图文笔记。
+  type: 39
+  # 发布成功后立即删除动态，保持个人主页整洁。
+  autoDelete: true
+  # 随机标题池；与 titlesFile 读取到的内容合并。
+  titles:
+    - "今日音乐分享"
+    - "音乐人的日常"
+    - "分享好听的歌"
+    - "每日歌单推荐"
+  # 标题文本来源，支持本地路径或 HTTP/HTTPS 地址。
+  titlesFile:
+    - "https://ncmm.cc.cd/4pjvv5j7"
+  # 随机正文池；与 messagesFile 读取到的内容合并。
+  messages:
+    - "穿梭在拥挤的人潮里，耳机隔开外界的喧闹，一首喜欢的歌，就是奔波路上最安稳的小港湾。"
+    - "生活难免有疲惫和委屈，好在总有动听的音乐相伴，一点点抚平心底积攒下来的负面情绪。"
+    - "暂时抛开生活里的琐碎压力，寻一处角落静静听歌，让思绪跟着音符漫无目的地自由飘荡。"
+    - "三餐四季，烟火寻常，闲时放一首爱听的曲子，再普通的日常也能品出温柔的滋味。"
+    - "年少听歌只觉得旋律悦耳，长大之后再细品歌词，才慢慢读懂人生里的遗憾与和解。"
+    - "夏夜晚风拂过肩头，耳机里的歌声缓缓流淌，把这个季节独有的浪漫与温柔尽数收藏。"
+  # 正文文本来源，支持本地路径或 HTTP/HTTPS 地址。
+  messagesFile:
+    - "https://ncmm.cc.cd/457fuy38"
+  # 配图来源，支持本地图片、图片直链或包含链接的文本文件。
+  imageUrls:
+    - "https://picsum.photos/800/600"
+
+# 音乐人任务
+musician:
+  # 主账号参与音乐人签到和 VIP 进阶任务。
+  enableMain: true
+  # 具有音乐人身份的辅助账号参与音乐人任务。
+  enableSecondaries: false
+  # 音乐人身份缓存天数：0=永久缓存，-1=每次重新查询。
+  identityCacheDays: 0
+  # VIP 进阶任务自动复用 note 配置发布笔记。
+  enableVipNote: true
+  # VIP 进阶任务执行专属播放目标。
+  enableVipPlay: true
+  # VIP 进阶任务完成且到达领取时间后自动领取黑胶 VIP（每月一次，需要 antiCheatToken）。
+  enableVipClaim: true
+
+  # 留空或填 0 时继承 playids 对应配置。
+  play:
+    ids: ""
+    idsFile: ""
+    daily_min: 0
+    daily_max: 0
+    run_min: 0
+    run_max: 0
+    gap_min: 0
+    gap_max: 0
+
+# 每日推歌。需要对应账号的 antiCheatToken 和移动端 UA。
+dailySongShare:
+  # 主账号执行每日推歌。
+  enableMain: true
+  # 辅助账号执行每日推歌。
+  enableSecondaries: false
+  # 固定分享的歌曲 ID；留空时从 playlistId 随机选择。
+  songId: ""
+  # 未指定 songId 时使用的选歌歌单 ID。
+  playlistId: "13848930701"
+  # 配图模式：songCover=歌曲封面，playlistCover=歌单封面，custom=自定义。
+  imageMode: "songCover"
+  # 自定义配图池，仅 imageMode=custom 时使用。
+  imageUrls: []
+  # 标题模式：note=公共标题池，song=歌曲名。
+  titleMode: "note"
+  # 以下专属素材留空时继承 note 中对应配置。
+  titles: []
+  titlesFile: []
+  messages: []
+  messagesFile: []
+  # 发布完成后自动删除推歌动态。
+  autoDelete: true
+  # 发布时附带的话题对象；type 和 subType 为接口参数。
+  topics:
+    - name: "音乐合伙人的乐迷团"
+      id: "13827903"
+      type: 3
+      subType: 11
+    - name: "申请音乐合伙人"
+      id: "195425749"
+      type: 2
+      subType: 0
+    - name: "音乐合伙人星探计划"
+      id: "200773579"
+      type: 2
+      subType: 0
+  lottery:
+    # 发布后自动参与抽奖。
+    enabled: true
+    # 抽奖活动 ID；留空时自动解析当前活动。
+    activityId: ""
+    # 未报名时自动完成活动报名。
+    autoRegister: true
+
+# 乐迷团打卡
+fansgroup:
+  # 主账号执行乐迷团打卡。
+  enableMain: true
+  # 辅助账号执行乐迷团打卡。
+  enableSecondaries: true
+  # 需要打卡的乐迷团群 ID 列表。
+  groupIds:
+    - "1872529203038486609"
+
+# 黑胶会员赠送与领取。领取需要对应账号的 antiCheatToken。
+vipMemberGift:
+  # 主账号参与会员赠送与领取。
+  enableMain: true
+  # 辅助账号参与会员赠送与领取。
+  enableSecondaries: false
+  # 将可赠送的会员天数发布到云端互助服务。
+  enableGift: true
+  # 从云端互助服务领取会员，需要对应账号的 antiCheatToken。
+  enableClaim: true
+  cloud:
+    # 自建云端服务地址，留空使用内置公共服务。
+    baseUrl: ""
+    # 自建云端服务 Token，使用内置服务时留空。
+    token: ""
+
+# 失败汇总通知。通道凭据在 notify.yaml 中配置。
+notify:
+  # 开启任务失败汇总推送；至少还需在 notify.yaml 启用一个通道。
+  enabled: true
+  # 将缺少凭据等原因导致的“跳过”纳入汇总推送。
+  on_skip: false
+  # 推送标题前缀，便于区分多台实例。
+  title_prefix: "ncmm"
+  # 单个推送通道的请求超时，使用 Go duration 格式。
+  timeout: 10s
+  # 通道凭据文件；相对路径以主配置目录为基准。
+  file: "notify.yaml"
+
+# 更新
+updater:
+  # 检查新版本并记录提醒，每天最多请求一次 GitHub API。
+  check: true
+  # 检测到新版本后自动替换二进制；容器环境会忽略此项。
+  auto_update: true
+  # GitHub 直连失败后按顺序尝试的代理镜像。
+  proxy_mirrors:
+    - "https://gh-proxy.com/"
+    - "https://ghproxy.net/"
+    - "https://githubproxy.cc/"
+
+# 日志
+log:
+  # 日志中的应用标识。
+  app: ncm
+  # 输出格式：text / json。
+  format: text
+  # 最低日志级别：debug / info / warn / error。
+  level: info
+  # 同时输出到标准输出，容器部署通常建议开启。
+  stdout: false
+  rotate:
+    # 滚动日志文件路径。
+    filename: "./log/ncm.log"
+    # 单个日志文件最大大小，单位：MB。
+    maxsize: 100
+    # 历史日志保留天数。
+    maxage: 7
+    # 最多保留的历史日志文件数量。
+    maxbackups: 3
+    # 日志时间使用本地时区。
+    localtime: true
+    # 使用 gzip 压缩历史日志。
+    compress: true
+
+# 任务进度数据库
+database:
+  # 缓存驱动，当前仅支持 badger。
+  driver: badger
+  # 播放进度、身份与 Token 缓存目录。
+  path: "./database/badger/"

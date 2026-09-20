@@ -1,0 +1,16 @@
+services:
+  ncmm-vip-member-gift-cloud:
+    image: ghcr.io/3899/ncmm-vip-member-gift-cloud:latest
+    container_name: ncmm-vip-member-gift-cloud
+    ports:
+      - "3102:3102"
+    volumes:
+      - "./vip-gift-data:/data"
+      - "./vip_member_gift_cloud.py:/app/vip_member_gift_cloud.py"
+      # 挂载宿主机时区文件以同步时区（可选）
+      - "/etc/localtime:/etc/localtime:ro"
+      - "/etc/timezone:/etc/timezone:ro"
+    environment:
+      VIP_GIFT_CLOUD_TOKEN: xxxxxxxxx
+      # 设置容器内的时区环境变量
+      TZ: Asia/Shanghai
