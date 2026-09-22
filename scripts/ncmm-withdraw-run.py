@@ -26,13 +26,157 @@ import subprocess
 #  - Linux 5 位 Cron (分钟级): 59 7,11,17,19,23 * * * (每个放量点前 1 分钟触发)
 # ==============================================================================
 
-def get_run_args():
+def extract_accounts_from_config(cfg_path):
+    """从 config.yaml 解析出主账号与辅助账号列表"""
+    accounts = []
+    try:
+        import yaml
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f)
+            if isinstance(cfg, dict):
+                acc = cfg.get("accounts", {})
+                if isinstance(acc, dict):
+                    main = acc.get("main") or acc.get("primary")
+                    if main:
+                        accounts.append(str(main).strip())
+                    secs = acc.get("secondary")
+                    if isinstance(secs, list):
+                        for s in secs:
+                            if s:
+                                accounts.append(str(s).strip())
+    except Exception:
+        pass
+
+    if not accounts:
+        import re
+        try:
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                text = f.read()
+                m_main = re.search(r'^\s*(?:main|primary):\s*["\']?([^"\'\r\n#]+)', text, re.MULTILINE)
+                if m_main:
+                    accounts.append(m_main.group(1).strip())
+                m_secs = re.findall(r'^\s*-\s*["\']?([^"\'\r\n#]+\.json)', text, re.MULTILINE)
+                for s in m_secs:
+                    if s.strip() and s.strip() not in accounts:
+                        accounts.append(s.strip())
+        except Exception:
+            pass
+
+    return accounts
+
+
+def find_account_path(work_dir):
     """
-    智能合并命令行参数与环境变量/默认值：
+    在执行工作目录或执行工作目录/run 下自动查找账号 Cookie 文件：
+    1. 优先从 config.yaml 提取账号路径，并在工作目录及 run 子目录下定位实际文件；
+    2. 若未配置，则依次扫描工作目录及 run 下常见的 Cookie JSON 文件 (如 9082.json, cookie.json, fan1.json 等)。
+    """
+    search_dirs = [work_dir, os.path.join(work_dir, "run")]
+
+    # 1. 优先从 config.yaml 查找
+    for d in search_dirs:
+        for cfg_name in ["config.yaml", os.path.join("config", "config.yaml")]:
+            cfg_file = os.path.join(d, cfg_name)
+            if os.path.isfile(cfg_file):
+                raw_accounts = extract_accounts_from_config(cfg_file)
+                found_accs = []
+                for acc in raw_accounts:
+                    candidates = [
+                        acc if os.path.isabs(acc) else None,
+                        os.path.join(work_dir, os.path.basename(acc)),
+                        os.path.join(work_dir, acc.lstrip("./")),
+                        os.path.join(work_dir, "run", os.path.basename(acc)),
+                        os.path.join(work_dir, "run", acc.lstrip("./")),
+                        os.path.join(os.path.dirname(cfg_file), acc.lstrip("./")),
+                    ]
+                    for c in candidates:
+                        if c and os.path.isfile(c):
+                            abs_c = os.path.abspath(c)
+                            if abs_c not in found_accs:
+                                found_accs.append(abs_c)
+                            break
+                if found_accs:
+                    return ",".join(found_accs)
+
+    # 2. 直接扫描 Cookie JSON 文件
+    for d in search_dirs:
+        if not os.path.isdir(d):
+            continue
+        for name in ["cookie.json", os.path.join("config", "cookie.json"), os.path.join("temp", "cookie.json")]:
+            p = os.path.join(d, name)
+            if os.path.isfile(p):
+                return os.path.abspath(p)
+
+        try:
+            for fname in os.listdir(d):
+                if fname.endswith(".json") and fname.lower() not in (
+                    "package.json", "plugin.json", "tsconfig.json", "package-lock.json"
+                ):
+                    p = os.path.join(d, fname)
+                    if os.path.isfile(p):
+                        return os.path.abspath(p)
+        except Exception:
+            pass
+
+    return ""
+
+
+def find_notify_path(work_dir):
+    """
+    在执行工作目录或执行工作目录/run 下自动查找 notify.yaml：
+    1. 优先检索执行工作目录 (work_dir) 及执行工作目录/run (work_dir/run)；
+    2. 优先选择实际启用了推送通道 (enabled: true) 的配置文件，避开空的默认模板。
+    """
+    search_dirs = [work_dir, os.path.join(work_dir, "run")]
+    candidate_subpaths = ["notify.yaml", os.path.join("config", "notify.yaml")]
+
+    found_files = []
+    for d in search_dirs:
+        for sub in candidate_subpaths:
+            p = os.path.abspath(os.path.join(d, sub))
+            if os.path.isfile(p) and p not in found_files:
+                found_files.append(p)
+
+    if not found_files:
+        return ""
+
+    # 优先查找是否有已启用推送渠道的文件 (包含 enabled: true)
+    for p in found_files:
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                content = f.read().lower()
+                if "enabled: true" in content or "enabled:true" in content:
+                    return p
+        except Exception:
+            pass
+
+    # 避免默认选中 config/notify.yaml 禁用模板
+    for p in found_files:
+        if not p.endswith(os.path.join("config", "notify.yaml")):
+            return p
+
+    return found_files[0]
+
+
+def find_config_path(work_dir):
+    """在执行工作目录或执行工作目录/run 下自动查找 config.yaml"""
+    search_dirs = [work_dir, os.path.join(work_dir, "run")]
+    for d in search_dirs:
+        for name in ["config.yaml", os.path.join("config", "config.yaml")]:
+            p = os.path.join(d, name)
+            if os.path.isfile(p):
+                return os.path.abspath(p)
+    return ""
+
+
+def get_run_args(work_dir):
+    """
+    智能合并命令行参数与环境变量/自动检测路径：
     1. 若命令行传入了 --help 或 -h，直接透传展示帮助。
     2. 命令行显式传入的参数具有最高优先级。
-    3. 未在命令行传入的参数，将自动回退读取环境变量或使用推荐默认值（如 --snipe auto, --advance 50 等），
-       彻底避免因仅传入 --account 而丢失整点秒杀的核心逻辑。
+    3. 未指定账号或 notify.yaml 时，自动在“执行工作目录”或“执行工作目录/run”下检索，
+       而不是在插件安装目录 plugins/ncmm-withdraw 中查找。
+    4. 自动补全整点秒杀核心参数 (--snipe auto, --advance 50 等)。
     """
     raw_args = sys.argv[1:]
 
@@ -82,8 +226,26 @@ def get_run_args():
     # 6. 指定账号 (account)
     if not has_flag(["--account", "-account", "--cookie", "-cookie", "-a"]):
         account = os.getenv("WITHDRAW_ACCOUNT", "").strip()
+        if not account and work_dir:
+            account = find_account_path(work_dir)
         if account:
             merged_args.extend(["--account", account])
+
+    # 7. 通知配置文件 (notify)
+    if not has_flag(["--notify", "-notify"]):
+        notify = os.getenv("WITHDRAW_NOTIFY", "").strip()
+        if not notify and work_dir:
+            notify = find_notify_path(work_dir)
+        if notify:
+            merged_args.extend(["--notify", notify])
+
+    # 8. 核心配置文件 (config)
+    if not has_flag(["--config", "-config"]):
+        cfg = os.getenv("WITHDRAW_CONFIG", "").strip()
+        if not cfg and work_dir:
+            cfg = find_config_path(work_dir)
+        if cfg:
+            merged_args.extend(["--config", cfg])
 
     return merged_args
 
@@ -134,14 +296,18 @@ if not is_windows and not os.access(binary_path, os.X_OK):
 
 # 智能确定运行工作目录（优先 ncmm 项目根目录，确保相对路径配置文件与 Cookie 能被正确找到）
 work_dir = current_dir
-if os.path.isfile(os.path.join(current_dir, "config.yaml")) or os.path.isdir(os.path.join(current_dir, "plugins")):
+if (os.path.isfile(os.path.join(current_dir, "config.yaml")) or 
+    os.path.isdir(os.path.join(current_dir, "plugins")) or
+    os.path.isdir(os.path.join(current_dir, "run"))):
     work_dir = current_dir
-elif os.path.isfile(os.path.join(parent_dir, "config.yaml")) or os.path.isdir(os.path.join(parent_dir, "plugins")):
+elif (os.path.isfile(os.path.join(parent_dir, "config.yaml")) or 
+      os.path.isdir(os.path.join(parent_dir, "plugins")) or
+      os.path.isdir(os.path.join(parent_dir, "run"))):
     work_dir = parent_dir
 else:
     work_dir = os.path.dirname(binary_path)
 
-run_args = get_run_args()
+run_args = get_run_args(work_dir)
 cmd = [binary_path] + run_args
 
 print("=================================================================")

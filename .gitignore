@@ -12,5 +12,5 @@ ncmm.exe
 Thumbs.db
 __pycache__/
 *.py[cod]
-*.class
+*$py.class
 *.sqlite3

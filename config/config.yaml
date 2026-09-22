@@ -51,7 +51,7 @@ task:
   # 在批量执行中包含黑胶会员赠送与领取；领取需要移动端 Token。
   vip-member-gift: true
   # 在批量执行中包含乐迷团日常打卡。
-  fansgroup: true
+  fansgroup: false
   # 在批量执行中包含公共图文笔记发布任务。
   note: false
 
@@ -88,7 +88,7 @@ sign:
   # 主账号执行云贝和黑胶 VIP 签到。
   enableMain: true
   # 所有辅助账号依次执行签到。
-  enableSecondaries: true
+  enableSecondaries: false
   # 执行黑胶会员成长值任务与福利领取。
   enableVipTask: true
   # 云贝子任务开关；仅影响 sign 中对应步骤。
@@ -252,7 +252,7 @@ fansgroup:
   # 主账号执行乐迷团打卡。
   enableMain: true
   # 辅助账号执行乐迷团打卡。
-  enableSecondaries: true
+  enableSecondaries: false
   # 需要打卡的乐迷团群 ID 列表。
   groupIds:
     - "1872529203038486609"
