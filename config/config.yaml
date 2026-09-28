@@ -131,15 +131,15 @@ playids:
   gap_min: 0
   gap_max: 5
 
+  # 歌单订阅：支持填写网易云歌单 ID 或链接，程序将自动提取歌单中的所有歌曲并去重合并
+  playlistIds:
+    - "18425795840"
+
   # 歌曲 ID 使用英文逗号分隔；idsFile 支持本地文件和 HTTP/HTTPS 地址。
   ids: "3366663042"
   idsFile:
     - "https://ncmm.cc.cd/34p793j2"
     # - "./ids.txt"
-
-  # 公开歌单订阅：支持填写网易云公开歌单 ID 或链接，程序将自动提取歌单中的所有歌曲并去重合并
-  playlistIds:
-    - "18425795840"
 
 # 日推混听。在指定歌曲中穿插每日推荐，降低播放行为单一性。
 mixPlay:
