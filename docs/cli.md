@@ -157,6 +157,7 @@ ncmm playids --ids <songId列表> [--ids-file <文件>] [--num <播放数量>] [
 | :--- | :--- | :--- |
 | `--ids` | 逗号分隔的歌曲 ID 列表 | 空 |
 | `--ids-file` | 从文本文件或远程网络 URL 读取歌曲 ID 列表（每行一个 ID，支持 `#` 注释，支持本地路径及 `http://`/`https://` 远程链接） | 空 |
+| `--playlist-ids` | 订阅网易云公开歌单 ID 或链接，自动提取歌单内全部歌曲 | 空 |
 | `--num` | 本次运行最大播放的歌曲数量（`0` 表示播到今日目标上限为止） | `0` |
 | `--gap-min` | 歌曲切换之间的最小随机等待间隔（秒） | 配置项 `gap_min` / `10` |
 | `--gap-max` | 歌曲切换之间的最大随机等待间隔（秒） | 配置项 `gap_max` / `30` |
@@ -168,23 +169,22 @@ ncmm playids --ids <songId列表> [--ids-file <文件>] [--num <播放数量>] [
 ### 💡 使用示例
 ```bash
 # 1. 播放指定的多个歌曲 ID（在默认系统家目录下的 .ncmm 工作区运行）
-ncmm playids --ids 3373818852,3373845775
+ncmm playids --ids 3366663042
 
 # 2. 从歌曲 ID 列表文件读取并播放
 ncmm playids --ids-file ./songs.txt
 
 # 3. 调试播放：只播放 1 首，且无等待间隔
-ncmm playids --ids 3373818852 --num 1 --gap-min 0 --gap-max 0
+ncmm playids --ids 3366663042 --num 1 --gap-min 0 --gap-max 0
 
 # 4. 配合 --home 在指定的隔离工作目录下运行播放任务（自动加载 run/config.yaml 并在该目录下轮询辅助账号进行播放）
-ncmm --home run playids --ids 3373818852,3373845775
+ncmm --home run playids --ids 3366663042
 ```
 
 `songs.txt` 文件示例：
 ```text
 # 这是一行注释，系统会自动跳过
-3373818852
-3373845775
+3366663042
 ```
 
 ---
