@@ -5,6 +5,8 @@
 /temp/
 ncmm
 ncmm.exe
+proxies.yaml
+proxies.yml
 .idea/
 .vscode/
 .gemini/

@@ -14,3 +14,5 @@ services:
       VIP_GIFT_CLOUD_TOKEN: xxxxxxxxx
       # 设置容器内的时区环境变量
       TZ: Asia/Shanghai
+      # 优先领取的赠送者 UID 列表，逗号分隔，按先后顺序优先（可选，如 "123456,87654321"）
+      VIP_GIFT_PRIORITY_DONORS: ""

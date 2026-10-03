@@ -15,8 +15,9 @@ accounts:
     - "./fan1.json"
     - "./fan2.json" # 不要的账号可以删除或者前面加#注释
   # 每个 Cookie 对应的移动端 X-antiCheatToken（从各自的移动端抓包获取，每个设备/账号唯一）
-  # 目前需要 antiCheatToken 的任务有：dailySongShare 和 vipMemberGift(领取)。
-  # 同时需要移动端 Cookie 和匹配的移动端 UA。没有配置 token 的账号会自动跳过需要该 token 的任务。
+  # 目前只有每日推歌任务（dailySongShare）需要 antiCheatToken。
+  # 黑胶会员领取（vipMemberGift.enableClaim）不校验该 token：留空也能领取，网页版扫码登录得到的 Cookie 可直接领取。
+  # 每日推歌需要移动端 Cookie 和匹配的移动端 UA。没有配置 token 的账号会自动跳过每日推歌。
   # iphone/ipad的UA填在network.user_agent.eapi； Android的UA两个都要填network.user_agent.xeapi、network.user_agent.eapi。
   antiCheatTokens:
     "./cookie.json": ""
@@ -38,7 +39,7 @@ task:
   note: false
   # 是否开启每日分享歌曲并抽奖，需要填写antiCheatTokens
   daily-song-share: true
-  # 是否开启赠送和领取VIP任务，需要填写antiCheatTokens
+  # 是否开启赠送和领取VIP任务；领取不要求antiCheatTokens
   vip-member-gift: true
   # 是否在批量执行中包含乐迷团任务
   fansgroup: true
@@ -241,12 +242,15 @@ dailySongShare:
 
 # 黑胶会员免费送任务配置
 # Android Cookie 会按 network.user_agent.xeapi 走 XEAPI；iPhone/iPad Cookie 会按 network.user_agent.eapi 走 EAPI。
-# 领取需要配置 accounts.antiCheatTokens 中对应的 token，赠送不需要。
+# 没有 os Cookie 的网页版 Cookie 会按 UA 自动识别协议，因此网页版扫码登录的 Cookie 也能直接领取。
+# 领取不校验 accounts.antiCheatTokens（留空即可），赠送不需要 token；每账号每月限领一次。
+# 赠送默认只让主账号执行：辅助账号需要显式把 enableGiftSecondaries 设为 true 才会一起赠送。
 vipMemberGift:
-  enableMain: true         # 主号是否启用任务
-  enableSecondaries: false # 辅助账号是否启用任务
-  enableGift: true         # 是否发布赠送会员 token 到云端
-  enableClaim: true        # 是否从云端领取会员
+  enableMain: true                # 主号是否启用任务
+  enableSecondaries: false        # 辅助账号是否启用任务
+  enableGift: true                # 主账号是否发布赠送会员 token 到云端
+  enableGiftSecondaries: false    # 辅助账号是否也发布赠送（默认 false：只让主号赠送）
+  enableClaim: true               # 是否从云端领取会员（主号与小号都可领，每账号每月一次）
   cloud:
     baseUrl: "" # 云端服务地址，留空使用作者云端共享库
     token: "" # 云端服务token，留空使用作者云端共享库
@@ -298,6 +302,7 @@ fansgroup:
 # 自动更新与版本检测配置
 updater:
   # 是否启用新版本检测与日志提醒（默认开启。每天最多请求一次 GitHub API）
+  # 关闭后同时跳过「强制升级」校验，发布方声明必须升级的版本也会被忽略。
   check: true
   # 是否在检测到新版本时自动下载并热替换二进制（默认开启。容器环境将自动忽略此项）
   auto_update: true
@@ -307,6 +312,14 @@ updater:
     - "https://gh-proxy.com/"
     - "https://ghproxy.net/"
     - "https://githubproxy.cc/"
+  # 关于强制升级：只有发布方在某个 release 的正文里显式声明了 ncmm-force-upgrade 标记，
+  # 该版本才会成为「必须升级」的门槛；普通更新不会写入任何策略，也就不会限制任何用户。
+  # 命中并过了宽限期（默认 1 个月）后：
+  #   - 业务命令（task / sign / playids / musician / note / 推歌 / 会员礼品 / 乐迷团 / plugin）会被拦截，进程以退出码 3 结束；
+  #   - 升级与排障命令始终可用：update / version / web / login / auth / help；
+  #   - WebUI 会整站替换为升级提示页，并拒绝启动任何任务（含定时任务）；
+  #   - 宽限期内只打印一行提醒，功能不受影响；
+  #   - 联网检测失败、状态文件缺失或损坏时一律放行（不会因为网络问题把用户锁死）。
 
 # 运行失败通知（策略在此；通道凭证见独立文件 notify.yaml）
 # 仅在有失败或（on_skip=true 时的）跳过时，于进程结束汇总推送一条消息；成功不推送。
@@ -383,4 +396,26 @@ v1.2.0 将 WebUI 认证视为全新状态，不读取或迁移旧版管理令牌
 WebUI 获取配置时会同时收到内容哈希 `revision`。保存配置必须提交该 revision：缺失时 API 返回 `428 Precondition Required`；配置已被其他页面、登录流程或 CLI 更新时返回 `409 Conflict`，此时应重新加载后再保存。每次 WebUI 保存仍会原子更新 `config.yaml.bak` 作为人工恢复副本。
 
 Cookie 导入和二维码登录由子进程完成登录验证与 Cookie 落盘，但 `accounts` 更新由 WebUI 父进程统一提交。若登录期间配置发生变化，Cookie 文件会保留，页面会明确提示配置提交冲突，不会覆盖较新的配置。
+
+---
+
+## 听歌/播放类任务配置
+
+```yaml
+# 听歌/播放类任务通用配置
+play:
+    # 播放类任务使用网页端会话（请求时剔除 os cookie）。服务端据此按网页端下发带 authSecret 的
+    # 媒体地址，播放才会被计入任务（乐迷团「播放歌曲」、playids 刷歌、日推播放、音乐人有效播放等）。
+    # 关闭后回到旧的 App 会话行为（历史上播放不计数）。默认 true。
+    webSession: true
+```
+
+- **背景**：网易云服务端通过请求里是否存在 `os` cookie 区分客户端类型。带 `os=android` / `iPhone OS` / `pc` 时，`/weapi/song/enhance/player/url/v1` 返回的媒体地址**不含 `authSecret`**，服务端不把这次播放计入任务；剔除 `os`（或置为 `web`）后地址带 `authSecret` 与 `cdntag=mark=os_web,...`，播放即被计入。
+- **影响范围**：只影响播放类请求的 Cookie（取播放地址 / 下载音频 / 上报播放日志都会剔除 `os`）；其它任务（发布动态、签到、云贝、音乐人、每日推歌等）仍使用原 Cookie 与 UA，`antiCheatTokens` 的按文件名索引方式不变。
+- **各任务的差异**：
+  - **乐迷团「播放歌曲」**：剔除 `os` + 上报改真机网页端形态（`startplay` + `play`，无 `time`/`end`）到 `clientlogusf.music.163.com` + 音频完整下载 + 不再等待整首时长（2 首约 15 秒）；
+  - **`playids` 刷歌 / 云贝日推播放 / 音乐人有效播放**：**只同步 Cookie 处理（剔除 `os`）**，上报内容、上报域名与"整首时长等待"逻辑与原实现完全一致——这些任务的时长/有效播放口径依赖真实时长，刻意不改。
+- **排障**：乐迷团播放日志会打印 `播放地址 authSecret=true/false`。若为 `false`，说明该请求被判为 App 会话，播放不会计数（检查是否被自定义配置或代理改写了 Cookie）。
+- **回退**：置 `webSession: false` 即恢复旧行为（乐迷团播放回到旧 `music.163.com` 域名 + `startplay`/`playend` + 等待整首时长；刷歌类回到带 `os` 的原行为）。
+- **注意**：黑胶任务「每日听3首VIP歌曲」实测其计数只走 App 端专有通道，`ncmm` 会跳过并提示需在手机 App 内手动完成。
 

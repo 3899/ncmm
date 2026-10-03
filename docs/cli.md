@@ -51,6 +51,9 @@ ncmm update --apply
 
 单文件安装更新后需重启 `ncmm`。官方 Docker 镜像仅允许检查版本，应通过宿主机拉取新镜像。
 
+> [!IMPORTANT]
+> **强制升级**：如果发布方在某个 release 里声明了必须升级（普通更新不会声明），那么过了宽限期后，业务命令（`task` / `sign` / `playids` / `musician` / `note` / `daily-song-share` / `vip-member-gift` / `fansgroup` / `plugin`）会被拦截，进程以**退出码 3** 结束，并打印要求版本、原因与升级方式；`update`、`version`、`web`、`login`、`auth`、`help` 始终可用，因此随时可以自救。宽限期内只打印一行提醒，功能不受影响。详见 [配置说明](configuration.md) 的 `updater` 一节。
+
 ---
 
 ## 1. 账号登录 (`ncmm login`)
@@ -186,6 +189,8 @@ ncmm --home run playids --ids 3366663042
 # 这是一行注释，系统会自动跳过
 3366663042
 ```
+
+> **关于播放计数**：`playids`（以及复用它的日推播放、音乐人有效播放）会随 `play.webSession`（默认开启）在播放请求中剔除 `os` cookie，让服务端按网页端会话下发带 `authSecret` 的媒体地址；**上报内容、上报域名与"整首时长等待"逻辑与旧版本完全一致**，不会改变刷歌节奏。
 
 ---
 
@@ -349,7 +354,8 @@ ncmm --home run task --fansgroup
 1. **账号选择**：命令行传入 `--cookie-file` 时只执行该账号；否则根据 `fansGroup.enableMain` 和 `fansGroup.enableSecondaries` 读取 `accounts.main` / `accounts.secondary`。
 2. **任务状态查询**：自动拉取乐迷团详情、加入状态和任务列表，日志中按“已完成 / 未完成”展示当前进度。
 3. **按剩余进度执行**：每项任务执行次数按 `allProgress - currentProgress` 计算，例如 `发布图文笔记 (0/2)` 会发布 2 次，`(1/2)` 只补 1 次。
-4. **播放任务**：解析任务按钮中的 `songIds`，直接上报 `weapi/feedback/weblog` 的 `startplay` 事件；网页侧点击播放即可完成的任务，不需要等待整首歌曲播放完成。
+4. **播放任务**：解析任务按钮中的 `songIds`，按**网页端真机形态**上报到 `clientlogusf.music.163.com/weapi/feedback/weblog`（`startplay` + `play`，均带 `mainsiteWeb:"1"`），并完整下载一次音频资源。播放链路默认启用 `play.webSession`（请求剔除 `os` cookie），服务端才会下发带 `authSecret` 的媒体地址并把播放计入任务；日志里会打印 `播放地址 authSecret=true/false` 便于确认。**不再等待整首时长**（实测开播+整文件下载即计数，2 首约 15 秒完成）。
+5. **黑胶「每日听3首VIP歌曲」**：实测该任务计数走 App 端专有通道（6 组对照实验均无法推进进度），命令会跳过并提示"需在 App/手机内手动完成"，不影响其它任务。
 5. **图文、分享、点赞任务**：图文任务复用 `note` 配置发布并按 `fansGroup.autoDeleteNote` / `note.autoDelete` 自动删除；分享任务提交分享进度；点赞任务从乐迷团推荐内容中过滤本人和已点赞帖子后执行。
 
 ### 💡 运行日志示例
@@ -434,16 +440,19 @@ ncmm --home run note
 ## 8. 黑胶会员免费送/领 (`ncmm vip-member-gift`)
 
 该命令用于自动化处理黑胶会员“免费送”活动。支持：
-1. **生成并赠送 Token** (`enableGift`): 将多余的黑胶会员天数生成为赠送 Token 并上报发布到云端。
-2. **从云端自动领取** (`enableClaim`): 自动从云端获取其他用户上报的可用 Token 并尝试领取。
+1. **生成并赠送 Token** (`enableGift`): 将多余的黑胶会员天数生成为赠送 Token 并上报发布到云端。**默认只有主账号执行赠送**；辅助账号需要显式打开 `vipMemberGift.enableGiftSecondaries`，避免小号的会员天数被消耗。
+2. **从云端自动领取** (`enableClaim`): 自动从云端获取其他用户上报的可用 Token 并尝试领取（主号与小号都可以领，每账号每月一次）。
 
 ```bash
 ncmm vip-member-gift [--cookie-file <cookie文件路径>]
 ```
 
 ### 💡 运行流程与原理
-1. **前置校验**：执行会员任务需要使用移动端 Cookie 和对应的移动端 UA（如果是 Android Cookie 则需要 `network.user_agent.xeapi`，如果是 iPhone/iPad Cookie 则需要 `network.user_agent.eapi`）。从云端自动领取时，还必须在 `accounts.antiCheatTokens` 中配置当前账号对应的 token。
-2. **账号选择**：命令行传入 `--cookie-file` 时只执行该账号；否则将依次读取并执行 `accounts.main`（当 `vipMemberGift.enableMain` 为 true 时）以及 `accounts.secondary`（当 `vipMemberGift.enableSecondaries` 为 true 时）。
-3. **云端中转**：默认使用内置的云端服务地址中转 Token。为保护隐私，获取 Token 时上报者的 `donor_uid` 将被自动脱敏，且上传时不会携带您的账号昵称等个人敏感信息。
-3. **自建/私有部署云服务**：如果你希望完全使用自己的专属中转服务器，可以查看项目中的 [vip_member_gift_cloud](../tools/vip_member_gift_cloud/README.md) 自部署文档。通过 Docker 或 Python 即可快速完成私有云端服务搭建。配置时将 `vipMemberGift.cloud.baseUrl` 指向你的私有服务地址，`vipMemberGift.cloud.token` 填入你的自定义服务密钥即可。
+1. **前置校验**：执行会员任务需要一个已登录的 Cookie；协议按 Cookie 里的 `os` 或 `network.user_agent` 自动识别（Android 需要 `network.user_agent.xeapi`，iPhone/iPad 需要 `network.user_agent.eapi`）。没有 `os` 标记的**网页版 Cookie**（如 `ncmm login qrcode` 扫码登录得到的）会按 UA 自动识别，同样可以领取。
+2. **关于 antiCheatToken**：领取接口不校验该 token，`accounts.antiCheatTokens` 中**留空也能正常领取**；未配置时命令会打印一行提示后继续执行。只有每日推歌（`ncmm daily-song-share`）才必须配置它。
+3. **领取频次**：每个账号每月限领一次（由云端互助池记录），重复执行会提示“已领过”并跳过。
+4. **账号选择**：命令行传入 `--cookie-file` 时只执行该账号（并按主账号对待，允许赠送）；否则将依次读取并执行 `accounts.main`（当 `vipMemberGift.enableMain` 为 true 时）以及 `accounts.secondary`（当 `vipMemberGift.enableSecondaries` 为 true 时）。
+5. **赠送角色**：主账号按 `vipMemberGift.enableGift` 决定是否赠送；辅助账号还需要额外打开 `vipMemberGift.enableGiftSecondaries`（默认关闭）。被跳过的辅助账号会打印一行说明。
+6. **云端中转**：默认使用内置的云端服务地址中转 Token。为保护隐私，获取 Token 时上报者的 `donor_uid` 将被自动脱敏，且上传时不会携带您的账号昵称等个人敏感信息。
+7. **自建/私有部署云服务**：如果你希望完全使用自己的专属中转服务器，可以查看项目中的 [vip_member_gift_cloud](../tools/vip_member_gift_cloud/README.md) 自部署文档。通过 Docker 或 Python 即可快速完成私有云端服务搭建。配置时将 `vipMemberGift.cloud.baseUrl` 指向你的私有服务地址，`vipMemberGift.cloud.token` 填入你的自定义服务密钥即可。
 

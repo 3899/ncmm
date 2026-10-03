@@ -1,7 +1,7 @@
 # NCMM 核心配置。建议优先使用 WebUI；手动修改后需重启服务。
 # 字符串、路径和持续时间建议保留引号；布尔值仅使用 true / false。
 # 配置文件版本，由程序用于识别配置结构，请勿手动降级。
-version: 1.2.4
+version: 1.2.5
 
 # 账号与移动端凭据
 accounts:
@@ -13,7 +13,8 @@ accounts:
     - "./fan2.json"
 
   # Cookie 文件与移动端 X-antiCheatToken 的一一映射。
-  # 每日推歌和领取会员需要同一移动端会话的 Cookie、UA 与 Token；缺失时自动跳过。
+  # 每日推歌（dailySongShare）必须使用同一移动端会话抓到的 Cookie、UA 与 Token，缺失时会跳过。
+  # 黑胶会员领取（vipMemberGift）不校验该 token：留空也能领取，网页版扫码登录得到的 Cookie 可直接使用。
   antiCheatTokens:
     "./cookie.json": ""
     # "./fan1.json": ""
@@ -28,11 +29,11 @@ network:
   retry: 3
   user_agent:
     # 默认兜底 UA；协议专用 UA 留空时可能回退到此值。
-    default: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) NeteaseMusicDesktop/2.3.17.1034"
+    default: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36"
     # Web / PC 客户端 WEAPI 请求使用的 UA。
-    weapi: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) NeteaseMusicDesktop/2.3.17.1034"
+    weapi: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36"
     # iPhone / iPad 移动端 EAPI 请求使用的抓包 UA。
-    eapi: "NeteaseMusic 9.4.95/6806 (iPhone; iOS 16.6.1; zh_CN)"
+    eapi: "neteasemusic/9.6.05 (iPhone; iOS 16.6.1; Scale/2.00)"
     # Android XEAPI / AEAPI 请求使用的抓包 UA；Android 推歌和领会员需要配置。
     xeapi: ""
 
@@ -45,10 +46,10 @@ task:
   # 在批量执行中包含音乐人每日签到与云豆领取。
   musician-sign: true
   # 在批量执行中包含音乐人 VIP 月度进阶，可能耗时较长。
-  musician-vip: false
-  # 在批量执行中包含每日推歌与抽奖，需要移动端 Token。
+  musician-vip: true
+  # 在批量执行中包含每日推歌与抽奖，需要移动端 Token（antiCheatTokens）。
   daily-song-share: true
-  # 在批量执行中包含黑胶会员赠送与领取；领取需要移动端 Token。
+  # 在批量执行中包含黑胶会员赠送与领取；领取不要求 antiCheatToken，网页版 Cookie 也可领取。
   vip-member-gift: true
   # 在批量执行中包含乐迷团日常打卡。
   fansgroup: false
@@ -113,6 +114,13 @@ sign:
     enableShareSong: true
     # 播放日推歌曲，约需 31～45 分钟，默认关闭。
     enablePlayDailyRecommend: false
+
+# 听歌/播放类任务通用配置
+play:
+  # 播放类任务使用网页端会话（请求时剔除 os cookie）。服务端据此按网页端下发带 authSecret 的
+  # 媒体地址，播放才会被计入任务（乐迷团「播放歌曲」、playids 刷歌、日推播放、音乐人有效播放等）。
+  # 关闭后回到旧的 App 会话行为；乐迷团播放也将退回旧上报域名与整首等待。默认开启。
+  webSession: true
 
 # 指定歌曲播放
 playids:
@@ -261,15 +269,17 @@ fansgroup:
   groupIds:
     - "1872529203038486609"
 
-# 黑胶会员赠送与领取。领取需要对应账号的 antiCheatToken。
+# 黑胶会员赠送与领取。领取不校验 antiCheatToken：留空也能领，网页版扫码登录的 Cookie 同样可用。
 vipMemberGift:
   # 主账号参与会员赠送与领取。
   enableMain: true
   # 辅助账号参与会员赠送与领取。
-  enableSecondaries: false
-  # 将可赠送的会员天数发布到云端互助服务。
+  enableSecondaries: true
+  # 将可赠送的会员天数发布到云端互助服务（会消耗你自己的会员天数，按需开启）。
   enableGift: true
-  # 从云端互助服务领取会员，需要对应账号的 antiCheatToken。
+  # 辅助账号是否也发布赠送。默认 false：只让主账号赠送，避免小号的会员天数被消耗。
+  enableGiftSecondaries: false
+  # 从云端互助服务领取会员；不需要配置 antiCheatToken，每账号每月一次。
   enableClaim: true
   cloud:
     # 自建云端服务地址，留空使用内置公共服务。
@@ -293,6 +303,7 @@ notify:
 # 更新
 updater:
   # 检查新版本并记录提醒，每天最多请求一次 GitHub API。
+  # 关闭后同时跳过「强制升级」校验：发布方声明必须升级的版本也会被忽略。
   check: true
   # 检测到新版本后自动替换二进制；容器环境会忽略此项。
   auto_update: true
@@ -301,6 +312,8 @@ updater:
     - "https://gh-proxy.com/"
     - "https://ghproxy.net/"
     - "https://githubproxy.cc/"
+  # 说明：强制升级由发布方在 release 正文里声明（普通更新不会触发），
+  # 命中且过了宽限期后，业务命令会被拦截并提示升级，升级与排障命令始终可用。
 
 # 日志
 log:

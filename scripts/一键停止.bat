@@ -9,7 +9,7 @@ if not exist "%NCMM_EXE%" (
     exit /b 1
 )
 
-"%NCMM_EXE%" --home "%~dp0" web stop
+"%NCMM_EXE%" web stop
 if errorlevel 1 (
     echo [ERROR] Failed to stop the WebUI for "%~dp0".
     pause

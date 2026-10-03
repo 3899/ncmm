@@ -4,6 +4,15 @@
 """
 cron: 1 1 1 1 1
 new Env('NCMM 安装、更新')
+
+更新规则（重点）：
+  本脚本**不维护任何自己的更新规则** —— 版本判断、下载源、加速镜像、解压、二进制替换、
+  配置结构升级全部由 ncmm 自己决定，与 ncmm 的自动更新是同一套规则。
+
+  * 已经装好 ncmm：进入 ncmm 程序目录执行 `ncmm update --apply`，
+    脚本只负责"手动触发 + 日志回显 + 记录 VERSION"。
+  * 还没有 ncmm：没有任何可调用的程序，只能由脚本下载 release 安装包完成**首次安装**
+    （仅此一处保留脚本自身的下载逻辑，且只在没有二进制时才会走到）。
 """
 
 import os
@@ -18,11 +27,6 @@ import tarfile
 import time
 import subprocess
 
-# 用户配置中这些键包含动态映射或专属块，更新时必须整块保留，不与模板项按键对齐。
-ATOMIC_BLOCK_KEYS = {
-    'antiCheatTokens', 'topics', 'fast_tasks', 'slow_tasks', 'proxy_mirrors'
-}
-
 # 1. 稳定获取当前脚本所在的真实目录
 current_dir = os.path.dirname(os.path.abspath(__file__))
 target_dir = current_dir  # 直接使用脚本所在目录作为目标目录
@@ -30,10 +34,10 @@ target_dir = current_dir  # 直接使用脚本所在目录作为目标目录
 print(f"[LOG] Python脚本所在目录: {current_dir}")
 print(f"[LOG] 目标二进制目录: {target_dir}")
 
-# 确保目标目录存在（实际上已经存在，不需要额外创建）
-# os.makedirs(target_dir, exist_ok=True)
+# 手动触发更新时给 ncmm 的超时（秒）
+NCMM_UPDATE_TIMEOUT = 600
 
-# 2. 识别系统平台与架构判定逻辑
+# 2. 识别系统平台与架构判定逻辑（仅首次安装时使用）
 def get_platform_info():
     sys_name = platform.system().lower()
     arch_name = platform.machine().lower()
@@ -62,24 +66,7 @@ def get_platform_info():
         
     return os_part, arch_part, ext
 
-# 3. 版本号解析逻辑（用于大小对比）
-def parse_version(ver_str):
-    ver_str = ver_str.strip().lstrip('vV')
-    parts = []
-    for p in ver_str.split('.'):
-        digits = ""
-        for char in p:
-            if char.isdigit():
-                digits += char
-            else:
-                break
-        if digits:
-            parts.append(int(digits))
-        else:
-            parts.append(0)
-    return tuple(parts)
-
-# 4. 获取 GitHub 最新 Release 标签与资产列表
+# 3. 获取 GitHub 最新 Release 标签与资产列表（仅首次安装时使用）
 def get_latest_release():
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
@@ -125,7 +112,7 @@ def get_latest_release():
         
     return None, None
 
-# 5. 进程查杀释放逻辑 (释放被占用的二进制文件)
+# 4. 进程查杀释放逻辑（升级失败时的兜底，用于释放被占用的二进制文件）
 def stop_running_ncmm(binary_name):
     sys_name = platform.system().lower()
     if 'windows' in sys_name:
@@ -198,310 +185,7 @@ def stop_running_ncmm(binary_name):
     # 等待 1.5 秒，确保操作系统完全释放文件锁定
     time.sleep(1.5)
 
-# 6. YAML 解析与合并模块
-def parse_yaml(content):
-    """将 YAML 文本解析为结构化行记录列表，每条记录包含缩进、类型、键路径等信息。"""
-    lines = content.splitlines()
-    parsed_lines = []
-    stack = []
-
-    for i, raw_line in enumerate(lines):
-        indent = len(raw_line) - len(raw_line.lstrip(' '))
-        stripped = raw_line.strip()
-
-        line_type = 'empty'
-        key = None
-        val = None
-
-        if not stripped:
-            line_type = 'empty'
-        elif stripped.startswith('#'):
-            line_type = 'comment'
-        elif stripped.startswith('-'):
-            line_type = 'list_item'
-            # 处理 - key: val 形式
-            after_dash = stripped[1:].strip()
-            if ':' in after_dash:
-                parts = after_dash.split(':', 1)
-                key = parts[0].strip()
-                val = parts[1].strip()
-        elif ':' in stripped:
-            parts = stripped.split(':', 1)
-            key = parts[0].strip()
-            val = parts[1].strip()
-            line_type = 'key'
-        else:
-            line_type = 'comment'
-
-        parsed_lines.append({
-            'index': i,
-            'raw': raw_line,
-            'indent': indent,
-            'stripped': stripped,
-            'type': line_type,
-            'key': key,
-            'val': val,
-            'key_path': None
-        })
-
-    for line in parsed_lines:
-        indent = line['indent']
-        if line['type'] == 'key':
-            while stack and stack[-1][0] >= indent:
-                stack.pop()
-            line['key_path'] = tuple([s[1] for s in stack] + [line['key']])
-            stack.append((indent, line['key']))
-        elif line['type'] == 'list_item':
-            line['key_path'] = tuple([s[1] for s in stack])
-
-    return parsed_lines
-
-def get_block_by_key_name(parsed_lines, target_key):
-    """根据键名获取完整块（适用于 antiCheatTokens, topics 等特异性动态 Block 键）。"""
-    key_idx = -1
-    for i, line in enumerate(parsed_lines):
-        if line['type'] == 'key' and line['key'] == target_key:
-            key_idx = i
-            break
-    if key_idx == -1:
-        return None, -1
-
-    key_line = parsed_lines[key_idx]
-    d = key_line['indent']
-    block_lines = [key_line['raw']]
-    for j in range(key_idx + 1, len(parsed_lines)):
-        line = parsed_lines[j]
-        if line['type'] in ('empty', 'comment'):
-            if line['indent'] > d:
-                block_lines.append(line['raw'])
-                continue
-            has_child = False
-            for k in range(j + 1, len(parsed_lines)):
-                fut = parsed_lines[k]
-                if fut['type'] not in ('empty', 'comment'):
-                    has_child = fut['indent'] > d
-                    break
-            if has_child:
-                block_lines.append(line['raw'])
-            continue
-        if line['indent'] <= d:
-            break
-        block_lines.append(line['raw'])
-    return block_lines, d
-
-def get_data_paths(parsed_lines):
-    """获取所有叶子键路径（即有值的键，不包含纯容器键）。"""
-    all_paths = set()
-    for line in parsed_lines:
-        if line['type'] == 'key':
-            all_paths.add(line['key_path'])
-    data_paths = set()
-    for p in all_paths:
-        is_container = False
-        for other in all_paths:
-            if len(other) > len(p) and other[:len(p)] == p:
-                is_container = True
-                break
-        if not is_container:
-            data_paths.add(p)
-    return data_paths
-
-def get_block_for_path(parsed_lines, path):
-    """提取指定路径的键行及其所有子内容行（值、列表项、嵌套内容）。"""
-    key_idx = -1
-    for i, line in enumerate(parsed_lines):
-        if line['type'] == 'key' and line['key_path'] == path:
-            key_idx = i
-            break
-    if key_idx == -1:
-        return None
-
-    key_line = parsed_lines[key_idx]
-    d = key_line['indent']
-
-    block_lines = [key_line['raw']]
-    for j in range(key_idx + 1, len(parsed_lines)):
-        line = parsed_lines[j]
-        if line['type'] in ('empty', 'comment'):
-            has_child_after = False
-            for k in range(j + 1, len(parsed_lines)):
-                future = parsed_lines[k]
-                if future['type'] not in ('empty', 'comment'):
-                    has_child_after = future['indent'] > d
-                    break
-            if has_child_after:
-                block_lines.append(line['raw'])
-            continue
-        if line['indent'] <= d:
-            break
-        block_lines.append(line['raw'])
-
-    return block_lines
-
-def adjust_block_indent(block_lines, target_indent, source_indent):
-    """将一组行的缩进从 source_indent 基准调整到 target_indent 基准。"""
-    delta = target_indent - source_indent
-    if delta == 0:
-        return block_lines
-    adjusted = []
-    for raw in block_lines:
-        if not raw.strip():
-            adjusted.append(raw)
-            continue
-        current = len(raw) - len(raw.lstrip(' '))
-        new_indent = max(0, current + delta)
-        adjusted.append(' ' * new_indent + raw.lstrip(' '))
-    return adjusted
-
-def merge_yaml(default_content, user_content):
-    """将用户配置值合并到默认配置结构中，保持默认配置的缩进风格与完整中文注释。"""
-    default_lines = parse_yaml(default_content)
-    user_lines = parse_yaml(user_content)
-
-    user_data_paths = get_data_paths(user_lines)
-    default_data_paths = get_data_paths(default_lines)
-
-    output = []
-    skip_depth = -1  # 当前正在跳过的键的缩进层级
-
-    for line in default_lines:
-        if skip_depth != -1:
-            if line['indent'] <= skip_depth and line['type'] != 'empty':
-                skip_depth = -1
-            elif line['indent'] > skip_depth:
-                continue
-            else:
-                skip_depth = -1
-
-        if line['type'] in ('comment', 'empty'):
-            output.append(line['raw'])
-            continue
-
-        if line['type'] == 'list_item':
-            continue
-
-        if line['type'] == 'key':
-            key_name = line['key']
-            path = line['key_path']
-
-            # 处理原子 Block 键 (如 antiCheatTokens, topics, fast_tasks, slow_tasks, proxy_mirrors)
-            if key_name in ATOMIC_BLOCK_KEYS:
-                user_blk, user_d = get_block_by_key_name(user_lines, key_name)
-                if user_blk:
-                    adjusted = adjust_block_indent(user_blk, line['indent'], user_d)
-                    output.extend(adjusted)
-                else:
-                    def_blk, def_d = get_block_by_key_name(default_lines, key_name)
-                    if def_blk:
-                        output.extend(def_blk)
-                    else:
-                        output.append(line['raw'])
-                skip_depth = line['indent']
-                continue
-
-            # 容器键（非叶子）：直接输出默认模板的行
-            if path not in default_data_paths:
-                output.append(line['raw'])
-                continue
-
-            # 叶子数据键：优先使用用户值，否则使用默认值
-            if path in user_data_paths:
-                if path == ('version',):
-                    # 版本号使用新模板中的版本号，避免保留旧版本号导致二进制启动时二次触发配置合并
-                    default_block = get_block_for_path(default_lines, path)
-                    output.extend(default_block if default_block else [line['raw']])
-                    skip_depth = line['indent']
-                    continue
-
-                user_block = get_block_for_path(user_lines, path)
-                if user_block:
-                    user_key_indent = len(user_block[0]) - len(user_block[0].lstrip(' '))
-                    adjusted = adjust_block_indent(user_block, line['indent'], user_key_indent)
-                    output.extend(adjusted)
-                else:
-                    output.append(line['raw'])
-            else:
-                default_block = get_block_for_path(default_lines, path)
-                if default_block:
-                    output.extend(default_block)
-                else:
-                    output.append(line['raw'])
-
-            skip_depth = line['indent']
-
-    return '\n'.join(output) + '\n'
-
-def backup_config_file(config_path, max_backups=2):
-    """在 backups 子目录下备份配置文件，并自动保留最新的 max_backups 份。"""
-    try:
-        if not os.path.exists(config_path) or os.path.getsize(config_path) == 0:
-            return None
-        
-        cfg_dir = os.path.dirname(os.path.abspath(config_path))
-        backup_dir = os.path.join(cfg_dir, "backups")
-        os.makedirs(backup_dir, exist_ok=True)
-        
-        base_name = os.path.basename(config_path)
-        name_part, ext = os.path.splitext(base_name)
-        
-        # 读取当前配置二进制内容
-        with open(config_path, 'rb') as f:
-            current_data = f.read()
-            
-        # 查找已有备份，若最新备份内容与当前一致则不重复备份
-        existing_backups = []
-        for item in os.listdir(backup_dir):
-            if item.startswith(f"{name_part}_") and item.endswith(ext):
-                full_path = os.path.join(backup_dir, item)
-                if os.path.isfile(full_path):
-                    existing_backups.append(full_path)
-                    
-        existing_backups.sort()
-        if existing_backups:
-            latest_backup = existing_backups[-1]
-            try:
-                with open(latest_backup, 'rb') as f:
-                    if f.read() == current_data:
-                        print(f"[LOG] 当前配置与最新备份一致，无需重复创建: {latest_backup}")
-                        return latest_backup
-            except Exception:
-                pass
-                
-        timestamp = time.strftime("%Y%m%d_%H%M%S")
-        backup_name = f"{name_part}_{timestamp}{ext}"
-        backup_path = os.path.join(backup_dir, backup_name)
-        
-        if os.path.exists(backup_path):
-            backup_name = f"{name_part}_{timestamp}_{int(time.time() * 1000) % 1000:03d}{ext}"
-            backup_path = os.path.join(backup_dir, backup_name)
-            
-        shutil.copy2(config_path, backup_path)
-        print(f"[LOG] 升级前已自动备份当前配置文件至: {backup_path}")
-        
-        # 清理超出 max_backups 的历史备份（按修改时间升序排列，删除最旧的）
-        all_backups = []
-        for item in os.listdir(backup_dir):
-            if item.startswith(f"{name_part}_") and item.endswith(ext):
-                full_path = os.path.join(backup_dir, item)
-                if os.path.isfile(full_path):
-                    all_backups.append((os.path.getmtime(full_path), full_path))
-                    
-        all_backups.sort(key=lambda x: x[0])
-        if len(all_backups) > max_backups:
-            to_delete = all_backups[:len(all_backups) - max_backups]
-            for _, del_path in to_delete:
-                try:
-                    os.remove(del_path)
-                    print(f"[LOG] 已清理历史多余备份: {del_path}")
-                except Exception as e:
-                    print(f"[WARNING] 清理历史备份失败 ({del_path}): {e}")
-                    
-        return backup_path
-    except Exception as e:
-        print(f"[WARNING] 备份配置文件时发生异常: {e}")
-        return None
-
-# 7. 带有多镜像重试与原地址兜底的下载模块
+# 5. 带有多镜像重试与原地址兜底的下载模块（仅首次安装时使用）
 PROXIES = [
     "https://gh-proxy.com/",
     "https://ghproxy.net/",
@@ -552,50 +236,98 @@ def download_file_with_fallback(src_url, dst_path, headers=None, timeout=45):
 
     return False
 
-def main():
-    is_windows = 'windows' in platform.system().lower()
-    version_file = os.path.join(target_dir, "VERSION")
-    binary_name = "ncmm.exe" if is_windows else "ncmm"
-    binary_path = os.path.join(target_dir, binary_name)
-    config_path = os.path.join(target_dir, "config.yaml")
-    
-    # 读取本地版本
-    local_version = "0.0.0"
-    if os.path.exists(version_file):
-        try:
-            with open(version_file, 'r', encoding='utf-8') as f:
-                local_version = f.read().strip()
-        except Exception as e:
-            print(f"[WARNING] 无法读取本地 VERSION 文件: {e}")
-            
-    print(f"[LOG] 当前本地版本为: {local_version}")
-    
-    # 获取 GitHub 最新版本
-    remote_tag, assets = get_latest_release()
-    if not remote_tag:
-        print("[ERROR] 无法获取 GitHub 最新版本信息，更新中止。")
-        sys.exit(1)
-        
-    print(f"[LOG] GitHub 最新版本为: {remote_tag}")
-    
-    # 对比版本
-    local_v_parsed = parse_version(local_version)
-    remote_v_parsed = parse_version(remote_tag)
-    
-    if remote_v_parsed <= local_v_parsed:
-        print(f"[LOG] 当前版本 {local_version} 已是最新，无需更新。")
-        sys.exit(0)
-        
-    print(f"[LOG] 检测到新版本 {remote_tag}，准备开始自动升级流程...")
-    
-    # 解析平台架构与后缀
+# 6. 本地 VERSION 文件读写（仅作记录，供面板展示；是否更新完全由 ncmm 判断）
+def read_local_version(version_file):
+    if not os.path.exists(version_file):
+        return "unknown"
+    try:
+        with open(version_file, 'r', encoding='utf-8') as f:
+            return f.read().strip() or "unknown"
+    except Exception as e:
+        print(f"[WARNING] 无法读取本地 VERSION 文件: {e}")
+        return "unknown"
+
+def write_local_version(version_file, version):
+    try:
+        with open(version_file, 'w', encoding='utf-8') as f:
+            f.write(version.strip().lstrip('vV') + '\n')
+        print(f"[LOG] 已更新本地 VERSION 文件为: {version.strip().lstrip('vV')}")
+        return True
+    except Exception as e:
+        print(f"[WARNING] 写入 VERSION 文件失败: {e}")
+        return False
+
+# 7. 调用 ncmm 自身完成更新（手动触发的核心）
+def run_ncmm_cli(binary_path, args, timeout=NCMM_UPDATE_TIMEOUT, capture=False):
+    """在 ncmm 程序目录内执行 ncmm 子命令，返回 (returncode, stdout+stderr)。"""
+    print(f"[LOG] 进入程序目录执行: {os.path.basename(binary_path)} {' '.join(args)}")
+    try:
+        proc = subprocess.run(
+            [binary_path] + args,
+            cwd=target_dir,
+            timeout=timeout,
+            stdout=subprocess.PIPE if capture else None,
+            stderr=subprocess.STDOUT if capture else None,
+            text=True,
+        )
+        output = (proc.stdout or "") if capture else ""
+        return proc.returncode, output
+    except subprocess.TimeoutExpired:
+        print(f"[ERROR] 执行 ncmm {' '.join(args)} 超时（>{timeout}s）")
+        return 124, ""
+    except Exception as e:
+        print(f"[ERROR] 执行 ncmm {' '.join(args)} 失败: {e}")
+        return 1, ""
+
+def query_binary_version(binary_path):
+    """读取二进制自身报告的版本号，仅用于日志与 VERSION 记录。"""
+    code, output = run_ncmm_cli(binary_path, ["--version"], timeout=30, capture=True)
+    if code != 0:
+        return None
+    match = re.search(r'Version:\s*([0-9][0-9A-Za-z\.\-]*)', output)
+    if match:
+        return match.group(1)
+    return None
+
+def update_with_ncmm(binary_path, binary_name):
+    """
+    手动触发 ncmm 更新：只调用 `ncmm update --apply`。
+    检查、下载、镜像、解压、替换、配置升级全部由 ncmm 按自身规则完成。
+    首次失败可能是运行中的进程占用了二进制，释放后重试一次。
+    """
+    code, _ = run_ncmm_cli(binary_path, ["update", "--apply"])
+    if code == 0:
+        return True
+
+    print("[WARNING] ncmm update --apply 首次执行失败，可能是运行中的 ncmm 进程占用了二进制，")
+    print("[WARNING] 正在尝试释放占用后重试一次...")
+    stop_running_ncmm(binary_name)
+    code, _ = run_ncmm_cli(binary_path, ["update", "--apply"])
+    if code == 0:
+        return True
+
+    print(f"[ERROR] ncmm update --apply 执行失败（状态码 {code}），本次更新未完成。")
+    return False
+
+def cleanup_old_binary(binary_path):
+    """ncmm 替换二进制时会留下 *.old，这里做一次尽力而为的清理。"""
+    old_path = binary_path + ".old"
+    if not os.path.exists(old_path):
+        return
+    try:
+        os.remove(old_path)
+        print(f"[LOG] 已清理旧版本备份文件: {old_path}")
+    except Exception as e:
+        print(f"[WARNING] 清理旧版本备份失败（下次 ncmm 启动时会自行清理）: {e}")
+
+# 8. 首次安装（没有任何可调用的 ncmm 二进制时）：下载 release 安装包并落地
+def install_from_archive(remote_tag, assets, binary_name, binary_path, config_path, version_file):
     os_part, arch_part, ext = get_platform_info()
     print(f"[LOG] 判定当前主机系统为: {os_part}, 架构为: {arch_part}, 下载格式为: {ext}")
-    
-    # 查找匹配的下载 URL
+
     download_url = None
     asset_filename = f"ncmm_{os_part}_{arch_part}{ext}"
-    
+
     if assets:
         for asset in assets:
             name = asset.get('name', '')
@@ -603,44 +335,28 @@ def main():
                 download_url = asset.get('browser_download_url')
                 print(f"[LOG] 匹配到 release 资源: {name}")
                 break
-                
+
     if not download_url:
         print("[WARNING] GitHub API 资源匹配失败，尝试手动拼接下载链接...")
         download_url = f"https://github.com/3899/ncmm/releases/download/{remote_tag}/{asset_filename}"
-        
-    # 在终止进程与下载前，优先备份现有配置文件
-    backup_config_file(config_path, max_backups=2)
 
-    # 强制终止有可能占用的进程
-    stop_running_ncmm(binary_name)
-    
-    # 如果二进制文件存在且正在被占用，先尝试删除
-    if os.path.exists(binary_path):
-        try:
-            os.remove(binary_path)
-            print(f"[LOG] 已删除旧的二进制文件: {binary_path}")
-        except Exception as e:
-            print(f"[WARNING] 无法删除旧的二进制文件: {e}，可能被占用，尝试继续...")
-    
     # 创建本地临时解压目录
     temp_dir = os.path.join(current_dir, "_temp_ncmm_update_")
     if os.path.exists(temp_dir):
         shutil.rmtree(temp_dir)
     os.makedirs(temp_dir, exist_ok=True)
-    
+
     archive_tmp_path = os.path.join(temp_dir, asset_filename)
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
     }
-    
+
     try:
-        # 下载压缩包
-        print(f"[LOG] 正在下载升级包到 {archive_tmp_path} ...")
+        print(f"[LOG] 正在下载安装包到 {archive_tmp_path} ...")
         if not download_file_with_fallback(download_url, archive_tmp_path, headers=headers, timeout=45):
-            print("[ERROR] 尝试所有镜像源与原地址均无法成功下载升级包，更新中止。")
-            sys.exit(1)
-            
-        # 解压缩
+            print("[ERROR] 尝试所有镜像源与原地址均无法成功下载安装包，安装中止。")
+            return False
+
         extract_dir = os.path.join(temp_dir, "extracted")
         os.makedirs(extract_dir, exist_ok=True)
         print(f"[LOG] 正在解压至 {extract_dir} ...")
@@ -654,97 +370,105 @@ def main():
                 except TypeError:
                     tar_ref.extractall(extract_dir)
         print("[LOG] 解压成功")
-        
-        # 定位二进制文件与默认配置文件
+
+        # 定位二进制文件
         extracted_binary_path = os.path.join(extract_dir, binary_name)
         if not os.path.exists(extracted_binary_path):
-            # 兼容有可能多一层目录解压的情况
             for root, dirs, files in os.walk(extract_dir):
                 if binary_name in files:
                     extracted_binary_path = os.path.join(root, binary_name)
                     break
-                    
+
         if not os.path.exists(extracted_binary_path):
-            print(f"[ERROR] 解压出的产物中找不到二进制文件: {binary_name}，更新中止。")
-            sys.exit(1)
-            
-        # 查找 config.yaml 默认配置
+            print(f"[ERROR] 解压出的产物中找不到二进制文件: {binary_name}，安装中止。")
+            return False
+
+        # 查找 config.yaml 默认配置；本地已有配置时不覆盖（配置结构升级由 ncmm 启动时自行完成）
         default_config_path = os.path.join(extract_dir, "config.yaml")
         if not os.path.exists(default_config_path):
             for root, dirs, files in os.walk(extract_dir):
                 if "config.yaml" in files:
                     default_config_path = os.path.join(root, "config.yaml")
                     break
-                    
-        # 兼容处理：如果解包产物中无 config.yaml，从 GitHub 仓库直接下载最新默认配置
+
         if not os.path.exists(default_config_path):
+            # 兼容处理：如果解包产物中无 config.yaml，从 GitHub 仓库直接下载最新默认配置
             raw_config_url = f"https://raw.githubusercontent.com/3899/ncmm/{remote_tag}/config/config.yaml"
-            print(f"[LOG] 解压缩产物中缺少 config.yaml，正在从 GitHub 下载默认配置文件备用...")
+            print("[LOG] 解压缩产物中缺少 config.yaml，正在从 GitHub 下载默认配置文件备用...")
             default_config_path = os.path.join(temp_dir, "config.yaml")
             if not download_file_with_fallback(raw_config_url, default_config_path, headers=headers, timeout=15):
-                print("[ERROR] 无法从 GitHub 获取默认配置文件，更新中止。")
-                sys.exit(1)
-                
-        # 处理配置文件合并逻辑
-        if os.path.exists(config_path):
-            print("[LOG] 检测到本地已存在旧版 config.yaml，启动结构化差异对比与非破坏性合并...")
-            backup_config_file(config_path, max_backups=2)
-            try:
-                with open(default_config_path, 'r', encoding='utf-8') as f:
-                    default_yaml_content = f.read()
-                with open(config_path, 'r', encoding='utf-8') as f:
-                    user_yaml_content = f.read()
-                    
-                merged_yaml_content = merge_yaml(default_yaml_content, user_yaml_content)
-                
-                # 写入合并后的配置到临时路径，稍后进行替换
-                temp_merged_config_path = os.path.join(temp_dir, "merged_config.yaml")
-                with open(temp_merged_config_path, 'w', encoding='utf-8') as f:
-                    f.write(merged_yaml_content)
-                    
-                print("[LOG] 差异合并成功完成。")
-                final_config_source = temp_merged_config_path
-            except Exception as e:
-                print(f"[ERROR] 配置文件合并发生异常: {e}，为保证安全，本次更新中止。")
-                sys.exit(1)
-        else:
-            print("[LOG] 本地未发现旧版 config.yaml，将直接采用最新默认配置文件。")
-            final_config_source = default_config_path
-            
-        # 8. 拷贝/覆盖替换主程序、配置文件及 VERSION 文件
-        print("[LOG] 正在写入最新二进制文件...")
+                print("[ERROR] 无法从 GitHub 获取默认配置文件，安装中止。")
+                return False
+
+        print("[LOG] 正在写入二进制文件...")
         shutil.copy2(extracted_binary_path, binary_path)
-        
-        print("[LOG] 正在写入配置文件...")
-        shutil.copy2(final_config_source, config_path)
-        
+
+        if os.path.exists(config_path):
+            print("[LOG] 本地已存在 config.yaml，保留用户配置不覆盖。")
+        else:
+            print("[LOG] 未发现本地 config.yaml，写入默认配置文件。")
+            shutil.copy2(default_config_path, config_path)
+
         # 赋予执行权限
-        if not is_windows:
+        if 'windows' not in platform.system().lower():
             try:
                 os.chmod(binary_path, 0o755)
                 print("[LOG] 成功为二进制文件授予 0755 执行权限。")
             except Exception as e:
                 print(f"[WARNING] 为二进制授权失败: {e}，请稍后手动排查。")
-                
-        # 写入新的版本号到 VERSION 文件
-        print(f"[LOG] 正在写入 VERSION 文件...")
-        with open(version_file, 'w', encoding='utf-8') as f:
-            f.write(remote_tag.lstrip('vV') + '\n')
-            
-        print(f"[SUCCESS] ncmm 已成功升级至 {remote_tag} 版本！")
-        
+
+        write_local_version(version_file, remote_tag)
+        print(f"[SUCCESS] ncmm 已成功安装 {remote_tag} 版本！")
+        return True
+
     except Exception as e:
-        print(f"[ERROR] 升级流程发生严重异常: {e}")
-        sys.exit(1)
-        
+        print(f"[ERROR] 安装流程发生严重异常: {e}")
+        return False
+
     finally:
         # 清理临时文件
         if os.path.exists(temp_dir):
             try:
                 shutil.rmtree(temp_dir)
-                print("[LOG] 已清理临时升级文件目录。")
+                print("[LOG] 已清理临时文件目录。")
             except Exception as e:
                 print(f"[WARNING] 清理临时目录失败: {e}")
+
+def main():
+    is_windows = 'windows' in platform.system().lower()
+    binary_name = "ncmm.exe" if is_windows else "ncmm"
+    binary_path = os.path.join(target_dir, binary_name)
+    config_path = os.path.join(target_dir, "config.yaml")
+    version_file = os.path.join(target_dir, "VERSION")
+
+    # 没有可调用的二进制：只能由脚本完成首次安装（此时不存在"两套更新规则"的问题）
+    if not os.path.exists(binary_path):
+        print(f"[LOG] 未检测到 {binary_name}，判定为首次安装，由脚本下载 release 安装包...")
+        remote_tag, assets = get_latest_release()
+        if not remote_tag:
+            print("[ERROR] 无法获取 GitHub 最新版本信息，安装中止。")
+            sys.exit(1)
+        print(f"[LOG] GitHub 最新版本为: {remote_tag}")
+        ok = install_from_archive(remote_tag, assets, binary_name, binary_path, config_path, version_file)
+        sys.exit(0 if ok else 1)
+
+    # 已有程序：手动触发 ncmm 自身的更新规则，脚本不做任何版本判断
+    print(f"[LOG] 当前 VERSION 记录: {read_local_version(version_file)}")
+    current = query_binary_version(binary_path)
+    if current:
+        print(f"[LOG] 二进制当前版本: {current}")
+    print("[LOG] 交由 ncmm 自身的更新规则执行（ncmm update --apply），脚本仅做手动触发...")
+
+    if not update_with_ncmm(binary_path, binary_name):
+        print("[ERROR] 更新失败，更新中止。")
+        sys.exit(1)
+
+    final_version = query_binary_version(binary_path)
+    if final_version:
+        write_local_version(version_file, final_version)
+    cleanup_old_binary(binary_path)
+    print(f"[SUCCESS] 更新流程完成，当前版本: {final_version or '未知'}")
+    print("[LOG] 提示：如正在运行 ncmm web / 面板服务，请重启后使用新版本。")
 
 if __name__ == '__main__':
     main()

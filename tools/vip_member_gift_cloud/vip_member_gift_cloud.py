@@ -12,12 +12,13 @@ Environment variables:
   VIP_GIFT_HOST              Server host, default: 0.0.0.0
   VIP_GIFT_PORT              Server port, default: 3102
   VIP_GIFT_MIN_AVAILABLE_DAYS Minimum days needed before a token is served, default: 7
+  VIP_GIFT_PRIORITY_DONORS   Optional comma-separated list of priority donor UIDs
 
 Routes:
   GET  /health
   GET  /stats
   GET  /claims/status?month=YYYY-MM&receiverUid=UID
-  GET  /tokens/available?month=YYYY-MM&receiverUid=UID
+  GET  /tokens/available?month=YYYY-MM&receiverUid=UID[&priorityDonors=UID1,UID2]
   POST /tokens/upsert
   POST /claims/success
   POST /tokens/fail
@@ -35,6 +36,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import sqlite3
 import sys
 import time
@@ -122,6 +124,21 @@ def parse_month(value: Any) -> str:
     return current_month()
 
 
+def parse_donor_uids(value: Any) -> list[str]:
+    if not value:
+        return []
+    if isinstance(value, (list, tuple, set)):
+        raw_list = [as_text(x) for x in value]
+    else:
+        raw_list = re.split(r"[,;\s，；]+", as_text(value))
+    result: list[str] = []
+    for uid in raw_list:
+        uid = uid.strip()
+        if uid and uid not in result:
+            result.append(uid)
+    return result
+
+
 def row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
     if row is None:
         return None
@@ -158,9 +175,10 @@ def available_token_row(row: sqlite3.Row | dict[str, Any] | None) -> dict[str, A
 
 
 class VipGiftStore:
-    def __init__(self, db_path: str, min_available_days: int) -> None:
+    def __init__(self, db_path: str, min_available_days: int, priority_donors: Any = None) -> None:
         self.db_path = db_path
         self.min_available_days = min_available_days
+        self.priority_donors = parse_donor_uids(priority_donors) if priority_donors is not None else parse_donor_uids(os.environ.get("VIP_GIFT_PRIORITY_DONORS", ""))
         self.failure_expire_ms = int(os.environ.get("VIP_GIFT_FAILURE_EXPIRE_MS", 3600 * 1000))
         self.init_db()
 
@@ -487,7 +505,13 @@ class VipGiftStore:
             ).fetchone()
             return {"tokenHash": thash, "token": public_token_row(row, include_token=False)}
 
-    def available_token(self, month: str, receiver_uid: str, exclude_donor_uid: str = "") -> dict[str, Any]:
+    def available_token(
+        self,
+        month: str,
+        receiver_uid: str,
+        exclude_donor_uid: str = "",
+        priority_donors: Any = None,
+    ) -> dict[str, Any]:
         self.prune(month=month)
         receiver_key = receiver_hash(receiver_uid) if receiver_uid else ""
         with self.connect() as conn:
@@ -523,6 +547,23 @@ class VipGiftStore:
                 donor_filter = "AND t.donor_uid <> ?"
                 params.append(exclude_donor_uid)
 
+            effective_donors = (
+                parse_donor_uids(priority_donors)
+                if priority_donors is not None
+                else self.priority_donors
+            )
+            if effective_donors:
+                case_whens = " ".join(
+                    f"WHEN ? THEN {idx + 1}" for idx in range(len(effective_donors))
+                )
+                order_clause = (
+                    f"ORDER BY (CASE t.donor_uid {case_whens} ELSE 999 END) ASC, "
+                    f"t.available_days DESC, t.updated_at_ms ASC"
+                )
+                params.extend(effective_donors)
+            else:
+                order_clause = "ORDER BY t.available_days DESC, t.updated_at_ms ASC"
+
             row = conn.execute(
                 f"""
                 SELECT t.*
@@ -533,7 +574,7 @@ class VipGiftStore:
                   AND (t.expire_time_ms = 0 OR t.expire_time_ms > ?)
                   {failure_filter}
                   {donor_filter}
-                ORDER BY t.available_days DESC, t.updated_at_ms ASC
+                {order_clause}
                 LIMIT 1
                 """,
                 params,
@@ -657,7 +698,9 @@ class VipGiftStore:
 
         reason = as_text(body.get("reason") or body.get("status") or "failed").lower()
         message = as_text(body.get("message"))
-        if "不是会员" in message or "12206" in message:
+        # 12200「非法的邀请token」与 12206 都表示这张卡本身已不可用：归类为终态 invalid，
+        # 让它被全局作废，避免继续发放给其他接收者反复失败。
+        if "不是会员" in message or "12200" in message or "12206" in message or "非法" in message:
             reason = "invalid"
         available_days = body.get("availableDays") or body.get("available_days")
         ts = now_ms()
@@ -741,6 +784,7 @@ class ApiHandler(BaseHTTPRequestHandler):
                         "app": APP_NAME,
                         "schemaVersion": SCHEMA_VERSION,
                         "month": current_month(),
+                        "priorityDonors": self.store.priority_donors,
                         "nowMs": now_ms(),
                     }
                 )
@@ -772,7 +816,19 @@ class ApiHandler(BaseHTTPRequestHandler):
                 month = parse_month(first(query, "month"))
                 receiver_uid = as_text(first(query, "receiverUid") or first(query, "receiver_uid"))
                 exclude_donor_uid = as_text(first(query, "excludeDonorUid") or first(query, "exclude_donor_uid"))
-                self.write_json({"ok": True, "data": self.store.available_token(month, receiver_uid, exclude_donor_uid)})
+                priority_donors_raw = first(query, "priorityDonors") or first(query, "priority_donors")
+                priority_donors = parse_donor_uids(priority_donors_raw) if priority_donors_raw else None
+                self.write_json(
+                    {
+                        "ok": True,
+                        "data": self.store.available_token(
+                            month,
+                            receiver_uid,
+                            exclude_donor_uid,
+                            priority_donors=priority_donors,
+                        ),
+                    }
+                )
                 return
 
             if self.command == "POST" and parsed.path == "/tokens/upsert":
@@ -875,17 +931,23 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=int,
         default=parse_int(os.getenv("VIP_GIFT_MIN_AVAILABLE_DAYS"), DEFAULT_MIN_AVAILABLE_DAYS),
     )
+    parser.add_argument(
+        "--priority-donors",
+        default=os.getenv("VIP_GIFT_PRIORITY_DONORS", ""),
+        help="comma-separated list of donor UIDs prioritized when allocating tokens",
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_arg_parser().parse_args(argv)
-    store = VipGiftStore(args.db, max(args.min_available_days, 1))
+    store = VipGiftStore(args.db, max(args.min_available_days, 1), priority_donors=args.priority_donors)
     prune_result = store.prune(min_available_days=store.min_available_days)
     server = VipGiftHTTPServer((args.host, args.port), ApiHandler, store, args.token)
     print(
         f"{APP_NAME} listening on http://{args.host}:{args.port} "
         f"db={args.db} minAvailableDays={store.min_available_days} "
+        f"priorityDonors={store.priority_donors} "
         f"auth={'on' if args.token else 'off'} pruned={prune_result}",
         flush=True,
     )
