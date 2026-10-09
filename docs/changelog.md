@@ -35,6 +35,9 @@
   - 支持配套 QQ 机器人插件生态无缝联动，可在插件中心在线市场直接一键安装或查看主页：[crossgg/ncmm-qqbot: ncmm 配套 qqbot 插件](https://github.com/crossgg/ncmm-qqbot)。
 
 #### 🐞 Bug 修复
+- **修复 Docker 容器内热更新后因健康检查超时导致误判自动回滚的问题**：
+  - 修复 WebUI 开启密码保护时，`ncmm-launcher` 发起的内部健康检查探测请求被鉴权拦截返回 `401 Unauthorized`，导致探测超时误判新服务启动失败而强行自动回滚的问题；
+  - 将健康状态探测接口放行至免登录白名单，同时在 Launcher 中支持多端点健康探测与状态码容错识别。
 - **修复 Docker 镜像云构建 `/cmd` not found 报错**：
   - 修复根目录 `.dockerignore` 缺少 `cmd` 目录白名单导致 Docker 构建上下文缺少 launcher 源码、触发 `failed to compute cache key: "/cmd": not found` 的问题。
 - **修复插件中心常驻后台守护插件无法启动的问题**：
