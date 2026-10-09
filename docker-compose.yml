@@ -6,7 +6,7 @@ services:
     container_name: ncmm
     restart: unless-stopped
     ports:
-      - "127.0.0.1:3899:3899"
+      - 3899:3899
     volumes:
       - ./data:/data
     extra_hosts:

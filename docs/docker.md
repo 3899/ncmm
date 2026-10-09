@@ -21,7 +21,7 @@ services:
     container_name: ncmm
     restart: unless-stopped
     ports:
-      - "127.0.0.1:3899:3899"
+      - 3899:3899
     volumes:
       - ./data:/data
     extra_hosts:
@@ -34,6 +34,8 @@ services:
       # - COOKIECLOUD_UUID=your-uuid
       # - COOKIECLOUD_PASSWORD=your-password
 ```
+
+如果镜像拉取失败，可采用加速代理镜像：ghcr.1ms.run/3899/ncmm:latest
 
 启动容器：
 
