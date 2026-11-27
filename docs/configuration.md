@@ -184,6 +184,14 @@ sign:
     enablePlayDailyRecommend: false
     # 播放日推歌曲使用的播放引擎："" 继承 playids.playMode，可选 legacy / web
     playDailyRecommendMode: ""
+    # 自动领取时段红包雨（每天 4 个时段：00:00~10:00 / 10:00~14:00 / 14:00~19:00 / 19:00~24:00，每时段最多 6 次）
+    enableRedPacket: false
+    # [实验性] 自动执行刮刮乐 / 好运翻卡 / 扭蛋抽奖（仅消耗当前已有次数，不新增）
+    enableLottery: false
+    # [实验性] 模拟激励视频增加抽奖次数，并领取打开应用首页的额外 128 云贝（需配置移动端 antiCheatToken）
+    enableLotteryWatchVideo: false
+    # [实验性] 自动执行看视频赚云贝（共 15 阶段，每天理论上限约 28320 云贝）
+    enableWatchVideoYunbei: false
 
 # 模拟播放日推干扰配置
 mixPlay:
