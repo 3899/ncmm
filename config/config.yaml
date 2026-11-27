@@ -1,7 +1,7 @@
 # NCMM 核心配置。建议优先使用 WebUI；手动修改后需重启服务。
 # 字符串、路径和持续时间建议保留引号；布尔值仅使用 true / false。
 # 配置文件版本，由程序用于识别配置结构，请勿手动降级。
-version: 1.2.10
+version: 1.2.11
 
 # 账号与移动端凭据
 accounts:
@@ -30,8 +30,10 @@ network:
   user_agent:
     # 默认兜底 UA；协议专用 UA 留空时可能回退到此值。
     default: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) NeteaseMusicDesktop/2.3.17.1034"
-    # Web / PC 客户端 WEAPI 请求使用的 UA。
+    # MacOS/WEB 客户端 WEAPI 请求使用的 UA（扫码登录等接口依赖此 UA）。
     weapi: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) NeteaseMusicDesktop/2.3.17.1034"
+    # Web 浏览器播放引擎（playMode=web）专用 UA；留空时使用内置 Chrome 浏览器 UA。
+    web_player: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36"
     # iPhone / iPad 移动端 EAPI 请求使用的抓包 UA。
     eapi: "neteasemusic/9.6.05 (iPhone; iOS 16.6.1; Scale/2.00)"
     # Android XEAPI / AEAPI 请求使用的抓包 UA；Android 推歌和领会员需要配置。
@@ -114,6 +116,8 @@ sign:
     enableShareSong: true
     # 播放日推歌曲，约需 31～45 分钟，默认关闭。
     enablePlayDailyRecommend: false
+    # 播放日推歌曲使用的播放引擎："" 继承 playids，legacy=旧版逻辑，web=独立 Web 浏览器播放引擎。
+    playDailyRecommendMode: ""
     # 自动领取时段红包雨（每天4个时段，每时段最多6次，无风控要求）。
     enableRedPacket: false
     # [实验性] 自动执行刮刮乐/好运翻卡/扭蛋抽奖（仅消耗当前已有次数，需手动开启）。
@@ -129,12 +133,33 @@ play:
   # 因网易云风控升级会导致播放任务异常，现已默认禁用并废弃。
   webSession: false
 
+# 独立 Web 播放引擎通用参数（仅当任务 playMode 设为 web 时生效）
+webPlayback:
+  # Cookie 隔离策略：web_clean=保留网页 Cookie 并剔除 os/appver/deviceId 等客户端字段（推荐），minimal=仅发送 MUSIC_U 与 __csrf。
+  cookieMode: "web_clean"
+  # 音频拉流策略：chunked=边播边分片拉流（推荐），full=每轮拉全量，none=不拉流（仅计入周榜/总榜）。
+  audioMode: "chunked"
+  # chunked 模式下单次 Range 分片大小，单位：KB。
+  chunkSizeKB: 256
+  # chunked 模式下单首目标累计拉取量，单位：KB（实测 1800KB 可触发三项计数；0 表示按间隔持续拉取至播完或文件末尾）。
+  chunkTargetKB: 1800
+  # chunked 模式下基准分片间隔，单位：秒（短歌会自动缩短间隔以在播完前达到目标）。
+  chunkIntervalSec: 30
+  # 是否开启全局 100 秒绝对网格心跳（pl/count + impress）。
+  heartbeat: true
+  # 取流音质：exhigh=极高，standard=标准。
+  level: "standard"
+  # 播完上报 end 字段：ui=真机网页常见切歌/循环值，playend=单曲自然播完值。
+  endMode: "ui"
+
 # 指定歌曲播放
 playids:
   # 主账号参与指定歌曲播放。
   enableMain: false
   # 所有辅助账号参与指定歌曲播放。
   enableSecondaries: true
+  # 播放引擎模式：legacy=旧版逻辑（默认，保持原样），web=独立 Web 浏览器播放引擎。
+  playMode: "legacy"
 
   # 每日首次运行时在上下限间生成当日随机目标，单位：首。
   daily_min: 80
@@ -143,7 +168,7 @@ playids:
   run_min: 40
   run_max: 80
   # 两首歌曲之间的随机等待范围，单位：秒。
-  gap_min: 0
+  gap_min: 1
   gap_max: 5
 
   # 歌单订阅：支持填写网易云歌单 ID 或链接，程序将自动提取歌单中的所有歌曲并去重合并
@@ -212,6 +237,8 @@ musician:
 
   # 留空或填 0 时继承 playids 对应配置。
   play:
+    # 播放引擎模式：留空继承 playids，可选 legacy / web。
+    playMode: ""
     ids: ""
     idsFile: ""
     daily_min: 0
@@ -275,6 +302,10 @@ fansgroup:
   # 需要打卡的乐迷团群 ID 列表。
   groupIds:
     - "1872529203038486609"
+  # 完成点赞乐迷笔记任务后自动取消本次点赞（默认 true）。
+  autoUnlikeNote: true
+  # 乐迷团播放任务引擎模式：legacy=沿用旧开关（默认关闭不执行），web=使用独立 Web 播放引擎（chunked 分片拉流）。
+  playMode: "legacy"
   # 乐迷团是否使用网页端会话（请求时剔除 os cookie），默认关闭（false）。
   # 如遇乐迷团播放任务无法完成且未触发风控时，可按需手动开启（true）。
   webSession: false
@@ -322,6 +353,9 @@ updater:
   auto_restart: true
   # GitHub 直连失败后按顺序尝试的代理镜像。
   proxy_mirrors:
+    - "https://gh-proxy.org/"
+    - "https://axisnow.gh-proxy.org/"
+    - "https://v4.gh-proxy.org/"
     - "https://gh-proxy.com/"
     - "https://ghproxy.net/"
     - "https://githubproxy.cc/"

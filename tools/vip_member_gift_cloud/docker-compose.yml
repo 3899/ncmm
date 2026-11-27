@@ -16,3 +16,8 @@ services:
       TZ: Asia/Shanghai
       # 优先领取的赠送者 UID 列表，逗号分隔，按先后顺序优先（可选，如 "123456,87654321"）
       VIP_GIFT_PRIORITY_DONORS: ""
+      # 优先策略开关：
+      # - first_time_fallback（默认）：仅从未领过 VIP 的新账号优先领优先 ID；领过的老账号优先发普通池，普通池为空时才用优先 ID 兜底
+      # - always：所有账号无条件优先领优先 ID
+      # - first_time_only：领过的老账号完全排除优先 ID（普通池为空也不兜底）
+      VIP_GIFT_PRIORITY_MODE: "first_time_fallback"

@@ -4,7 +4,7 @@
 
 ```yaml
 # 配置文件版本
-version: 1.1.14
+version: 1.2.11
 
 # 顶级多账号管理
 accounts:
@@ -86,19 +86,46 @@ network:
   user_agent:
     # 默认兜底 User-Agent。当下面 weapi 或 eapi 留空时会自动退回使用此值。
     default: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) NeteaseMusicDesktop/2.3.17.1034"
-    # Web网页端与PC桌面客户端（weapi协议接口）所使用的 User-Agent
+    # MacOS/WEB 客户端 WEAPI 请求使用的 UA（扫码登录等接口依赖此 UA，避免 Chrome UA 触发 8821 风控）
     weapi: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) NeteaseMusicDesktop/2.3.17.1034"
+    # Web 浏览器播放引擎（playMode=web）与 Web 手机验证码登录专用 UA；留空时使用内置 Chrome 浏览器 UA
+    web_player: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36"
     # 移动手机APP客户端（eapi协议接口，如音乐人做任务、防风控套件相关API）所使用的 User-Agent
     eapi: "NeteaseMusic 9.4.95/6806 (iPhone; iOS 16.6.1; zh_CN)"
     # XEAPI/AEAPI Android 移动客户端 User-Agent。Android 每日推歌、Android vipMemberGift 需要填写抓包移动端 UA。
     xeapi: ""
 
 
+# 听歌/播放类任务通用配置
+play:
+  # [已废弃] 播放类任务使用网页端会话（请求时剔除 os cookie），现已锁定为 false。
+  webSession: false
+
+# 独立 Web 播放引擎通用参数（仅当任务 playMode 设为 web 时生效）
+webPlayback:
+  # Cookie 隔离策略：web_clean=保留网页 Cookie 并剔除 os/appver/deviceId 等客户端字段（推荐），minimal=仅发送 MUSIC_U 与 __csrf
+  cookieMode: "web_clean"
+  # 音频拉流策略：chunked=边播边分片拉流（推荐），full=每轮拉全量，none=不拉流（仅计入周榜/总榜）
+  audioMode: "chunked"
+  # chunked 模式下单次 Range 分片大小，单位：KB
+  chunkSizeKB: 256
+  # chunked 模式下单首目标累计拉取量，单位：KB（实测 1800KB 可触发周榜/总榜/最近播放/listenSongs 计数；0 表示持续拉取至播完或文件末尾）
+  chunkTargetKB: 1800
+  # chunked 模式下基准分片间隔，单位：秒（短歌会自动缩短间隔以在播完前达到目标）
+  chunkIntervalSec: 30
+  # 是否开启全局 100 秒绝对网格心跳（pl/count + impress）
+  heartbeat: true
+  # 取流音质：exhigh=极高，standard=标准
+  level: "standard"
+  # 播完上报 end 字段：ui=真机网页常见切歌/循环值，playend=单曲自然播完值
+  endMode: "ui"
 
 # playids 播放指定歌曲配置
 playids:
   enableMain: false      # 默认不启用主账号刷歌
   enableSecondaries: true   # 启用所有辅助账号刷歌
+  # 播放引擎模式：legacy=旧版逻辑（默认，保持原样），web=独立 Web 浏览器播放引擎
+  playMode: "legacy"
   # 每日播放歌曲随机下限 (每天首次启动时在此范围内随机生成当日上限目标)
   daily_min: 40
   # 每日播放歌曲随机上限
@@ -155,6 +182,8 @@ sign:
     enableShareSong: true
     # 是否启用云贝签到中的日推歌曲播放任务（31~45随机分钟）开关
     enablePlayDailyRecommend: false
+    # 播放日推歌曲使用的播放引擎："" 继承 playids.playMode，可选 legacy / web
+    playDailyRecommendMode: ""
 
 # 模拟播放日推干扰配置
 mixPlay:
@@ -270,6 +299,8 @@ musician:
   enableVipPlay: true
   # 播放任务配置 (专门用于进阶任务的接力刷歌)
   play:
+    # 播放引擎模式：留空继承 playids.playMode，可选 legacy / web
+    playMode: ""
     # 进阶任务专属覆盖的歌曲 ID（留空继承 playids.ids，支持并集去重合并）
     ids: ""
     # 进阶任务专属覆盖的歌曲 ID 文件路径（留空继承 playids.idsFile，支持并集去重合并。支持单个字符串或数组列表形式的多源配置）
@@ -298,6 +329,8 @@ fansgroup:
     - "1872529203038486609"
   # 乐迷团发布笔记后是否自动删除（留空则继承 note.autoDelete 配置）
   # autoDeleteNote: true
+  # 乐迷团点赞笔记任务完成后是否自动取消本次点赞（默认 true）
+  autoUnlikeNote: true
 
 # 自动更新与版本检测配置
 updater:

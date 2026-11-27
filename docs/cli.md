@@ -97,17 +97,31 @@ ncmm login qrcode -o fan1.json
 - `-o` / `--output` (String): 自定义登录成功后的 Cookie 输出文件。未指定时保持自动命名：主账号优先使用 `accounts.main`，未配置时使用 `cookie.json`；辅助账号使用 `fan_<UID>.json`。
 - `-l` / `--level` (Int): 二维码纠错等级（`0` -> 7%, `1` -> 15% 默认, `2` -> 25%, `3` -> 30%）。
 
-### 手机号登录 (`phone`) (⚠️ 存在高风控拦截风险，不推荐)
+> **说明**：扫码登录会使用全新隔离的临时会话启动（不沿用旧文件中的 `os=pc` 等客户端残留），请求沿用 `network.user_agent.weapi`（默认 `NeteaseMusicDesktop`）以避免 Chrome UA 无易盾指纹时触发 `8821` 风控；二维码格式与 `x-login-chain-id` 请求头对齐官网 `ctWebLogin`，轮询间隔为 **2~3 秒随机抖动**，手机扫码后（`802`）会实时回显扫码账号昵称，登录成功后自动补齐网页前端标识 Cookie（`WNMCID`、`WEVNSM`、`_ntes_nuid`、`_ntes_nnid` 等），生成的 Cookie 可直接用于 `playMode: web` 播放计分。
+
+### 手机号登录 (`phone`)
+支持 **Web 网页模式（默认，推荐）** 与 **PC 客户端模式** 两种通道：
+
 ```bash
-# 示例 1：作为辅助账号登录（控制台交互提示输入验证码）
+# 示例 1：Web 网页模式（默认）——启动本地一次性验证页，在浏览器拖动易盾滑块获取短信并登录
 ncmm login phone 188xxxx8888
 
-# 示例 2：作为主账号登录并提供密码
-ncmm login phone 188xxxx8888 -m -p "YourPassword"
+# 示例 2：Web 网页模式（服务器/远程场景自定义监听地址）
+ncmm login phone 188xxxx8888 --addr 0.0.0.0:18923 -o fan1.json
+
+# 示例 3：PC 客户端模式（旧版 EAPI 通道，支持验证码或密码）
+ncmm login phone 188xxxx8888 --mode pc
+ncmm login phone 188xxxx8888 --mode pc -p "YourPassword"
 ```
-- `-p` / `--password` (String): 登录账号密码。不提供该参数时，系统将使用验证码登录。
-- `--countrycode` (Int): 国家及地区代码，默认 `86` (中国大陆)。
+- `--mode` (String): 登录通道，可选 `web`（默认，走官网 URS SM4 + VDF + 易盾滑块，签发纯净网页版 Cookie 并补齐网页前端标识字段）或 `pc`（旧版 PC EAPI 通道；若未显式传 `--mode` 但传入了 `-p` / `--captcha` / `--send-only`，会自动切换为 `pc` 模式）。
+- `--addr` (String): `web` 模式下本地易盾验证页监听地址，默认 `127.0.0.1:0`（随机空闲端口）；远程访问可指定如 `0.0.0.0:18923`。
+- `-o` / `--output` (String): 自定义登录成功后的 Cookie 输出文件名（如 `fan1.json`）。
+- `--countrycode` / `--ctcode` (Int): 国家及地区代码，默认 `86` (中国大陆)。
 - `-t` / `--timeout` (Duration): 登录操作的超时时间，默认 `10m` (10分钟)。
+- `-p` / `--password` (String): 登录账号密码（仅 `pc` 模式）。
+- `--captcha` (String): 直接传入短信验证码跳过交互输入（仅 `pc` 模式）。
+- `--send-only` (Bool): 仅发送短信验证码后退出（仅 `pc` 模式）。
+- `-n` / `--nickname` (String): 回收手机号注册新账号时的昵称（`8860`，仅 `pc` 模式）。
 
 ### Cookie 直接导入 (`cookie`)
 支持自动识别 Header 字符串、JSON 数组、Netscape 文件等多种 Cookie 格式，并可将解析出的标准化 JSON 格式 Cookie 写入到指定输出 file，且自动登记回写至配置文件中：
@@ -168,6 +182,12 @@ ncmm playids --ids <songId列表> [--ids-file <文件>] [--num <播放数量>] [
 | `--daily-max` | 当天首次启动时，随机目标的最大歌曲数限制 | 配置项 `daily_max` / `200` |
 | `--run-min` | 单次运行的最小歌曲数量设定 | 配置项 `run_min` / `0` |
 | `--run-max` | 单次运行的最大歌曲数量设定 | 配置项 `run_max` / `0` |
+| `--cookie-file` | 指定单个 Cookie 文件运行（覆盖配置中的主/辅账号选择） | 空 |
+| `--play-mode` | 播放引擎模式：`legacy`（旧版逻辑）或 `web`（独立 Web 浏览器播放引擎） | 继承配置 `playids.playMode` |
+| `--only` | 仅播放命令行 `--ids` / `--ids-file` 指定的歌曲，不合并配置歌池、不混听日推、不插入兜底歌 | `false` |
+| `--count` | 本次精确播放首数（快捷覆盖 `--run-min` 与 `--run-max`） | `0` |
+| `--verify-rank` | 播放前后查询听歌周榜、总榜、最近播放及 `listenSongs` 并输出差值对比 | `false` |
+| `--rank-only` | 仅查询并打印账号当前 `listenSongs`、周榜、总榜与最近播放，不执行播放 | `false` |
 
 ### 💡 使用示例
 ```bash
@@ -177,10 +197,13 @@ ncmm playids --ids 3366663042
 # 2. 从歌曲 ID 列表文件读取并播放
 ncmm playids --ids-file ./songs.txt
 
-# 3. 调试播放：只播放 1 首，且无等待间隔
-ncmm playids --ids 3366663042 --num 1 --gap-min 0 --gap-max 0
+# 3. 调试播放：使用 Web 引擎精确播放 1 首并验收排行/最近播放/listenSongs 变化
+ncmm playids --cookie-file ./fan1.json --play-mode web --ids 3366663042 --only --count 1 --verify-rank
 
-# 4. 配合 --home 在指定的隔离工作目录下运行播放任务（自动加载 run/config.yaml 并在该目录下轮询辅助账号进行播放）
+# 4. 仅查询账号当前排行、最近播放与累计听歌数（不播放）
+ncmm playids --cookie-file ./fan1.json --rank-only
+
+# 5. 配合 --home 在指定的隔离工作目录下运行播放任务（自动加载 run/config.yaml 并在该目录下轮询辅助账号进行播放）
 ncmm --home run playids --ids 3366663042
 ```
 
@@ -190,7 +213,9 @@ ncmm --home run playids --ids 3366663042
 3366663042
 ```
 
-> **关于播放计数**：`playids`（以及复用它的日推播放、音乐人有效播放）会随 `play.webSession`（默认开启）在播放请求中剔除 `os` cookie，让服务端按网页端会话下发带 `authSecret` 的媒体地址；**上报内容、上报域名与"整首时长等待"逻辑与旧版本完全一致**，不会改变刷歌节奏。
+> **关于播放引擎与计分**：
+> - `play.webSession` 已于 v1.2.8 废弃并锁定为 `false`。
+> - v1.2.11 新增独立 Web 浏览器播放引擎（`--play-mode web` 或在 `config.yaml` 中设置 `playids.playMode: "web"`）：在沙箱 Cookie Jar 中自动剥离 `os`/`appver`/`deviceId` 等客户端字段、补齐并持久化网页前端标识 Cookie（`WNMCID`、`WEVNSM`、`_ntes_nuid`、`_ntes_nnid`），按真机浏览器行为执行边播边分片拉流（`chunked`）、100 秒绝对网格心跳（`pl/count` + `impress`）及 `clientlogusf.music.163.com/weapi/feedback/weblog` 播放上报；默认 `legacy` 模式保持原有行为不变。
 
 ---
 
@@ -356,7 +381,7 @@ ncmm --home run task --fansgroup
 3. **按剩余进度执行**：每项任务执行次数按 `allProgress - currentProgress` 计算，例如 `发布图文笔记 (0/2)` 会发布 2 次，`(1/2)` 只补 1 次。
 4. **播放任务**：解析任务按钮中的 `songIds`，按**网页端真机形态**上报到 `clientlogusf.music.163.com/weapi/feedback/weblog`（`startplay` + `play`，均带 `mainsiteWeb:"1"`），并完整下载一次音频资源。播放链路默认启用 `play.webSession`（请求剔除 `os` cookie），服务端才会下发带 `authSecret` 的媒体地址并把播放计入任务；日志里会打印 `播放地址 authSecret=true/false` 便于确认。**不再等待整首时长**（实测开播+整文件下载即计数，2 首约 15 秒完成）。
 5. **黑胶「每日听3首VIP歌曲」**：实测该任务计数走 App 端专有通道（6 组对照实验均无法推进进度），命令会跳过并提示"需在 App/手机内手动完成"，不影响其它任务。
-5. **图文、分享、点赞任务**：图文任务复用 `note` 配置发布并按 `fansGroup.autoDeleteNote` / `note.autoDelete` 自动删除；分享任务提交分享进度；点赞任务从乐迷团推荐内容中过滤本人和已点赞帖子后执行。
+5. **图文、分享、点赞任务**：图文任务复用 `note` 配置发布并按 `fansgroup.autoDeleteNote` / `note.autoDelete` 自动删除；分享任务提交分享进度；点赞任务从乐迷团推荐内容中过滤本人和已点赞帖子后逐条点赞，并在开启 `fansgroup.autoUnlikeNote`（默认 `true`）时，等待数秒后按原顺序自动取消本次点赞。
 
 ### 💡 运行日志示例
 ```text

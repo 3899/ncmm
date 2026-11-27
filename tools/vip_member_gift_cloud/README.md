@@ -7,7 +7,7 @@
 
 服务已包含并实现了以下核心接口：
 * `POST /tokens/upsert`：发布/刷新赠送 token
-* `GET /tokens/available`：给领取端取可用 token（支持 `?priorityDonors=UID1,UID2` 动态传参指定优先赠送者列表）
+* `GET /tokens/available`：给领取端取可用 token（支持 `?priorityDonors=UID1,UID2` 和 `?priorityMode=...` 动态传参覆盖优先名单与分配策略）
 * `GET /claims/status`：查询当前账号本月是否已领
 * `POST /claims/success`：领取成功后按 `accept.duration` 扣除可用天数
 * `POST /tokens/fail`：标记 token 对某账号失败，或全局过期/耗尽。`reason` 取值：
@@ -16,7 +16,7 @@
   * 为避免坏卡被反复发放，服务端会把 `message` 中含“不是会员”“12200”“12206”“非法”的失败统一升级为终态 `invalid`。
 * `GET/POST /claims/failures/clear`：清空记录的防重复获取失败关联。支持 `?receiverUid=xxx` 清理单账号，或不传清理全局。
 * `POST /maintenance/prune`：删除可用天数小于 7、月份过期或时间过期的 token
-* `GET /health`：服务健康检查（包含当前已生效的 `priorityDonors` 优先级配置）
+* `GET /health`：服务健康检查（包含当前已生效的 `priorityDonors` 与 `priorityMode` 配置）
 * `GET /stats`：运行数据与 token 统计
 
 ## 部署方法
@@ -40,6 +40,10 @@ Docker 镜像已基于轻量级 `python:3.12-alpine` 构建，解压后体积仅
    * `VIP_GIFT_PORT` 或 `--port`：服务绑定的端口，默认为 `3102`
    * `VIP_GIFT_MIN_AVAILABLE_DAYS` 或 `--min-available-days`：token 的最少所需可用天数（低于该天数则不可再分发），默认 `7`
    * `VIP_GIFT_PRIORITY_DONORS` 或 `--priority-donors`：优先领取的赠送者 UID 列表（支持逗号分隔，例如 `"123456,87654321"`）。**按指定先后顺序优先分配**，只有在指定人的赠送码满足可用条件（天数充足、未过期、未被记录失败且非自领）时才优先返回；若指定人的码不可用或领完，**自动平滑回退到普通按剩余可用天数降序匹配**。
+   * `VIP_GIFT_PRIORITY_MODE` 或 `--priority-mode`：优先名单分配策略开关，可选值：
+     * `first_time_fallback`（**默认**）：仅**史上从未领过 VIP** 的账号（`vip_gift_claims` 中无任何历史记录）才会优先领取 `priorityDonors`；曾经领过 VIP 的老账号会优先从普通池按可用天数降序匹配，只有当普通池没有可用 token 时才回退使用 `priorityDonors` 兜底。
+     * `always`：所有账号无条件优先领取 `priorityDonors`（旧版行为）。
+     * `first_time_only`：曾经领过 VIP 的老账号完全屏蔽 `priorityDonors`，即使普通池为空也不会用 `priorityDonors` 兜底。
    * `VIP_GIFT_FAILURE_EXPIRE_MS` (环境变量)：由于用户配置错误或网络原因造成的领取失败，被记录排除时的过期时间（毫秒）。默认值：`3600000`（1小时）。超时后会允许重新请求，也可调用 `/claims/failures/clear` 自助清空。
 
    示例：配置指定人优先与自定义 Token 运行

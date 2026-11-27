@@ -13,12 +13,19 @@ Environment variables:
   VIP_GIFT_PORT              Server port, default: 3102
   VIP_GIFT_MIN_AVAILABLE_DAYS Minimum days needed before a token is served, default: 7
   VIP_GIFT_PRIORITY_DONORS   Optional comma-separated list of priority donor UIDs
+  VIP_GIFT_PRIORITY_MODE     Priority allocation mode:
+                               first_time_fallback (default): only receivers with no
+                                 prior claim record prioritize priority donors; returning
+                                 receivers use non-priority donors first and fall back
+                                 to priority donors only when the normal pool is empty.
+                               always: all receivers prioritize priority donors.
+                               first_time_only: returning receivers exclude priority donors.
 
 Routes:
   GET  /health
   GET  /stats
   GET  /claims/status?month=YYYY-MM&receiverUid=UID
-  GET  /tokens/available?month=YYYY-MM&receiverUid=UID[&priorityDonors=UID1,UID2]
+  GET  /tokens/available?month=YYYY-MM&receiverUid=UID[&priorityDonors=UID1,UID2][&priorityMode=...]
   POST /tokens/upsert
   POST /claims/success
   POST /tokens/fail
@@ -39,6 +46,7 @@ import os
 import re
 import sqlite3
 import sys
+import threading
 import time
 import traceback
 from datetime import datetime
@@ -51,6 +59,9 @@ from urllib.parse import parse_qs, urlparse
 APP_NAME = "vip-member-gift-cloud"
 SCHEMA_VERSION = 1
 DEFAULT_MIN_AVAILABLE_DAYS = 7
+DEFAULT_PRIORITY_MODE = "first_time_fallback"
+PRIORITY_MODES = {"first_time_fallback", "always", "first_time_only"}
+DEFAULT_AUTO_PRUNE_INTERVAL_MS = 60_000
 MAX_BODY_BYTES = 1024 * 1024
 
 TERMINAL_TOKEN_STATUSES = {
@@ -139,6 +150,17 @@ def parse_donor_uids(value: Any) -> list[str]:
     return result
 
 
+def normalize_priority_mode(value: Any, default: str = DEFAULT_PRIORITY_MODE) -> str:
+    """Validate and normalize the priority donor allocation mode."""
+    mode = as_text(value).lower()
+    if not mode:
+        return default
+    if mode not in PRIORITY_MODES:
+        supported = ", ".join(sorted(PRIORITY_MODES))
+        raise ValueError(f"invalid priority mode '{mode}'; expected one of: {supported}")
+    return mode
+
+
 def row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
     if row is None:
         return None
@@ -174,16 +196,40 @@ def available_token_row(row: sqlite3.Row | dict[str, Any] | None) -> dict[str, A
     return result
 
 
+class _AutoCloseConnection(sqlite3.Connection):
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> bool:
+        try:
+            return super().__exit__(exc_type, exc_val, exc_tb)
+        finally:
+            self.close()
+
+
 class VipGiftStore:
-    def __init__(self, db_path: str, min_available_days: int, priority_donors: Any = None) -> None:
+    def __init__(
+        self,
+        db_path: str,
+        min_available_days: int,
+        priority_donors: Any = None,
+        priority_mode: Any = None,
+    ) -> None:
         self.db_path = db_path
         self.min_available_days = min_available_days
         self.priority_donors = parse_donor_uids(priority_donors) if priority_donors is not None else parse_donor_uids(os.environ.get("VIP_GIFT_PRIORITY_DONORS", ""))
+        self.priority_mode = normalize_priority_mode(
+            priority_mode if priority_mode is not None else os.environ.get("VIP_GIFT_PRIORITY_MODE", "")
+        )
         self.failure_expire_ms = int(os.environ.get("VIP_GIFT_FAILURE_EXPIRE_MS", 3600 * 1000))
+        self._auto_prune_interval_ms = max(
+            parse_int(os.environ.get("VIP_GIFT_AUTO_PRUNE_INTERVAL_MS"), DEFAULT_AUTO_PRUNE_INTERVAL_MS),
+            0,
+        )
+        self._prune_lock = threading.Lock()
+        self._last_prune_ms = 0
+        self._last_prune_month = ""
         self.init_db()
 
     def connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path, timeout=30)
+        conn = sqlite3.connect(self.db_path, timeout=30, factory=_AutoCloseConnection)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
@@ -247,6 +293,8 @@ class VipGiftStore:
                     ON vip_gift_tokens(month, status, available_days, expire_time_ms, updated_at_ms);
                 CREATE INDEX IF NOT EXISTS idx_claims_receiver
                     ON vip_gift_claims(month, receiver_uid);
+                CREATE INDEX IF NOT EXISTS idx_claims_receiver_uid
+                    ON vip_gift_claims(receiver_uid);
                 CREATE INDEX IF NOT EXISTS idx_failures_receiver
                     ON vip_gift_token_failures(month, receiver_uid, token_hash);
                 """
@@ -275,20 +323,46 @@ class VipGiftStore:
                 )
             ]
             if not old_hashes:
-                return {"deletedTokens": 0, "deletedFailures": 0}
-            placeholders = ",".join("?" for _ in old_hashes)
-            token_deleted = conn.execute(
-                f"DELETE FROM vip_gift_tokens WHERE token_hash IN ({placeholders})",
-                old_hashes,
-            ).rowcount
-            failure_deleted = conn.execute(
-                f"DELETE FROM vip_gift_token_failures WHERE token_hash IN ({placeholders})",
-                old_hashes,
-            ).rowcount
-            return {
-                "deletedTokens": max(token_deleted, 0),
-                "deletedFailures": max(failure_deleted, 0),
-            }
+                result = {"deletedTokens": 0, "deletedFailures": 0}
+            else:
+                placeholders = ",".join("?" for _ in old_hashes)
+                token_deleted = conn.execute(
+                    f"DELETE FROM vip_gift_tokens WHERE token_hash IN ({placeholders})",
+                    old_hashes,
+                ).rowcount
+                failure_deleted = conn.execute(
+                    f"DELETE FROM vip_gift_token_failures WHERE token_hash IN ({placeholders})",
+                    old_hashes,
+                ).rowcount
+                result = {
+                    "deletedTokens": max(token_deleted, 0),
+                    "deletedFailures": max(failure_deleted, 0),
+                }
+        self._last_prune_ms = now
+        self._last_prune_month = target_month
+        return result
+
+    def maybe_prune(self, month: str) -> None:
+        """Throttle automatic pruning during hot read paths while keeping month rollovers fresh."""
+        target_month = parse_month(month) if month else current_month()
+        now = now_ms()
+        if (
+            self._auto_prune_interval_ms > 0
+            and self._last_prune_ms > 0
+            and self._last_prune_month == target_month
+            and now - self._last_prune_ms < self._auto_prune_interval_ms
+        ):
+            return
+        with self._prune_lock:
+            now = now_ms()
+            if (
+                self._auto_prune_interval_ms > 0
+                and self._last_prune_ms > 0
+                and self._last_prune_month == target_month
+                and now - self._last_prune_ms < self._auto_prune_interval_ms
+            ):
+                return
+            self.prune(month=target_month)
 
     def delete_test_data(self) -> dict[str, int]:
         with self.connect() as conn:
@@ -505,15 +579,67 @@ class VipGiftStore:
             ).fetchone()
             return {"tokenHash": thash, "token": public_token_row(row, include_token=False)}
 
+    @staticmethod
+    def _priority_filter_and_order(
+        effective_donors: list[str],
+        effective_mode: str,
+        has_prior_claim: bool,
+    ) -> tuple[str, list[Any], str, list[Any]]:
+        if not effective_donors:
+            return "", [], "ORDER BY t.available_days DESC, t.updated_at_ms ASC", []
+
+        if effective_mode == "always" or not has_prior_claim:
+            case_whens = " ".join(
+                f"WHEN ? THEN {idx}" for idx in range(len(effective_donors))
+            )
+            order_clause = (
+                f"ORDER BY (CASE t.donor_uid {case_whens} ELSE {len(effective_donors)} END) ASC, "
+                "t.available_days DESC, t.updated_at_ms ASC"
+            )
+            return "", [], order_clause, list(effective_donors)
+
+        if effective_mode == "first_time_only":
+            placeholders = ",".join("?" for _ in effective_donors)
+            return (
+                f"AND t.donor_uid NOT IN ({placeholders})",
+                list(effective_donors),
+                "ORDER BY t.available_days DESC, t.updated_at_ms ASC",
+                [],
+            )
+
+        # first_time_fallback: returning receivers get non-priority donors first (0),
+        # and fall back to priority donors (1..N) only when the normal pool is empty.
+        case_whens = " ".join(
+            f"WHEN ? THEN {idx + 1}" for idx in range(len(effective_donors))
+        )
+        order_clause = (
+            f"ORDER BY (CASE t.donor_uid {case_whens} ELSE 0 END) ASC, "
+            "t.available_days DESC, t.updated_at_ms ASC"
+        )
+        return "", [], order_clause, list(effective_donors)
+
     def available_token(
         self,
         month: str,
         receiver_uid: str,
         exclude_donor_uid: str = "",
         priority_donors: Any = None,
+        priority_mode: str | None = None,
     ) -> dict[str, Any]:
-        self.prune(month=month)
+        effective_donors = (
+            parse_donor_uids(priority_donors)
+            if priority_donors is not None
+            else self.priority_donors
+        )
+        effective_mode = (
+            normalize_priority_mode(priority_mode)
+            if priority_mode is not None and as_text(priority_mode) != ""
+            else self.priority_mode
+        )
+
+        self.maybe_prune(month)
         receiver_key = receiver_hash(receiver_uid) if receiver_uid else ""
+        ts = now_ms()
         with self.connect() as conn:
             if receiver_key:
                 claim = conn.execute(
@@ -527,7 +653,17 @@ class VipGiftStore:
                 if claim is not None:
                     return {"claimed": True, "claim": row_to_dict(claim), "token": None}
 
-            params: list[Any] = [month, self.min_available_days, now_ms()]
+            has_prior_claim = True
+            if effective_donors and effective_mode != "always" and receiver_key:
+                has_prior_claim = (
+                    conn.execute(
+                        "SELECT 1 FROM vip_gift_claims WHERE receiver_uid = ? LIMIT 1",
+                        (receiver_key,),
+                    ).fetchone()
+                    is not None
+                )
+
+            params: list[Any] = [month, self.min_available_days, ts]
             failure_filter = ""
             if receiver_key:
                 failure_filter = """
@@ -541,28 +677,21 @@ class VipGiftStore:
                     )
                 """
                 params.append(receiver_key)
-                params.append(now_ms() - self.failure_expire_ms)
-            donor_filter = ""
+                params.append(ts - self.failure_expire_ms)
+
+            donor_filters: list[str] = []
             if exclude_donor_uid:
-                donor_filter = "AND t.donor_uid <> ?"
+                donor_filters.append("AND t.donor_uid <> ?")
                 params.append(exclude_donor_uid)
 
-            effective_donors = (
-                parse_donor_uids(priority_donors)
-                if priority_donors is not None
-                else self.priority_donors
+            priority_filter, priority_filter_params, order_clause, order_params = (
+                self._priority_filter_and_order(effective_donors, effective_mode, has_prior_claim)
             )
-            if effective_donors:
-                case_whens = " ".join(
-                    f"WHEN ? THEN {idx + 1}" for idx in range(len(effective_donors))
-                )
-                order_clause = (
-                    f"ORDER BY (CASE t.donor_uid {case_whens} ELSE 999 END) ASC, "
-                    f"t.available_days DESC, t.updated_at_ms ASC"
-                )
-                params.extend(effective_donors)
-            else:
-                order_clause = "ORDER BY t.available_days DESC, t.updated_at_ms ASC"
+            if priority_filter:
+                donor_filters.append(priority_filter)
+                params.extend(priority_filter_params)
+            params.extend(order_params)
+            donor_filter = " ".join(donor_filters)
 
             row = conn.execute(
                 f"""
@@ -785,6 +914,7 @@ class ApiHandler(BaseHTTPRequestHandler):
                         "schemaVersion": SCHEMA_VERSION,
                         "month": current_month(),
                         "priorityDonors": self.store.priority_donors,
+                        "priorityMode": self.store.priority_mode,
                         "nowMs": now_ms(),
                     }
                 )
@@ -818,6 +948,7 @@ class ApiHandler(BaseHTTPRequestHandler):
                 exclude_donor_uid = as_text(first(query, "excludeDonorUid") or first(query, "exclude_donor_uid"))
                 priority_donors_raw = first(query, "priorityDonors") or first(query, "priority_donors")
                 priority_donors = parse_donor_uids(priority_donors_raw) if priority_donors_raw else None
+                priority_mode = first(query, "priorityMode") or first(query, "priority_mode") or None
                 self.write_json(
                     {
                         "ok": True,
@@ -826,6 +957,7 @@ class ApiHandler(BaseHTTPRequestHandler):
                             receiver_uid,
                             exclude_donor_uid,
                             priority_donors=priority_donors,
+                            priority_mode=priority_mode,
                         ),
                     }
                 )
@@ -936,18 +1068,31 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=os.getenv("VIP_GIFT_PRIORITY_DONORS", ""),
         help="comma-separated list of donor UIDs prioritized when allocating tokens",
     )
+    parser.add_argument(
+        "--priority-mode",
+        default=os.getenv("VIP_GIFT_PRIORITY_MODE", DEFAULT_PRIORITY_MODE),
+        help=(
+            "priority allocation mode: first_time_fallback (default), always, or first_time_only"
+        ),
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_arg_parser().parse_args(argv)
-    store = VipGiftStore(args.db, max(args.min_available_days, 1), priority_donors=args.priority_donors)
+    store = VipGiftStore(
+        args.db,
+        max(args.min_available_days, 1),
+        priority_donors=args.priority_donors,
+        priority_mode=args.priority_mode,
+    )
     prune_result = store.prune(min_available_days=store.min_available_days)
     server = VipGiftHTTPServer((args.host, args.port), ApiHandler, store, args.token)
     print(
         f"{APP_NAME} listening on http://{args.host}:{args.port} "
         f"db={args.db} minAvailableDays={store.min_available_days} "
         f"priorityDonors={store.priority_donors} "
+        f"priorityMode={store.priority_mode} "
         f"auth={'on' if args.token else 'off'} pruned={prune_result}",
         flush=True,
     )
